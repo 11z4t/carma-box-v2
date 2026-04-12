@@ -23,8 +23,6 @@ from adapters.ha_api import HAApiClient
 from config.schema import HAConfig
 
 # Patch asyncio.sleep to avoid real delays in retry tests
-pytestmark = pytest.mark.asyncio
-
 
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -109,6 +107,7 @@ def _make_session(responses: list[AsyncMock]) -> AsyncMock:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestGetState:
     """Tests for HAApiClient.get_state()."""
 
@@ -156,6 +155,7 @@ class TestGetState:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestGetStateWithAttributes:
     """Tests for HAApiClient.get_state_with_attributes()."""
 
@@ -190,6 +190,7 @@ class TestGetStateWithAttributes:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestGetStatesBatch:
     """Tests for HAApiClient.get_states_batch()."""
 
@@ -251,6 +252,7 @@ class TestGetStatesBatch:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestCallService:
     """Tests for HAApiClient.call_service()."""
 
@@ -292,6 +294,7 @@ class TestCallService:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestHealthCheck:
     """Tests for HAApiClient.health_check()."""
 
@@ -342,6 +345,7 @@ class TestHealthCheck:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestRetryLogic:
     """Tests for retry behavior on transient failures."""
 
@@ -419,6 +423,7 @@ class TestRetryLogic:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestSessionLifecycle:
     """Tests for session creation and cleanup."""
 

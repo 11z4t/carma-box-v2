@@ -21,8 +21,6 @@ from core.guards import GuardCommand
 from core.mode_change import ModeChangeManager, ModeChangeConfig
 from core.models import Command, CommandType
 
-pytestmark = pytest.mark.asyncio
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -83,6 +81,7 @@ def executor(inverters: dict[str, AsyncMock]) -> CommandExecutor:
 # ===========================================================================
 
 
+@pytest.mark.asyncio
 class TestBatteryModeChange:
     """Battery mode changes route through ModeChangeManager."""
 
@@ -134,6 +133,7 @@ class TestBatteryModeChange:
 # ===========================================================================
 
 
+@pytest.mark.asyncio
 class TestGuardEmergency:
     """Guard commands use emergency bypass."""
 
@@ -170,6 +170,7 @@ class TestGuardEmergency:
 # ===========================================================================
 
 
+@pytest.mark.asyncio
 class TestRateLimiting:
     """Mode change rate limiting."""
 
@@ -227,6 +228,7 @@ class TestRateLimiting:
 # ===========================================================================
 
 
+@pytest.mark.asyncio
 class TestAuditTrail:
     """Every command should produce an audit entry."""
 
@@ -269,6 +271,7 @@ class TestAuditTrail:
 # ===========================================================================
 
 
+@pytest.mark.asyncio
 class TestEVCommands:
     """EV charger command dispatch."""
 
@@ -313,6 +316,7 @@ class TestEVCommands:
 # ===========================================================================
 
 
+@pytest.mark.asyncio
 class TestConsumerCommands:
     """Consumer dispatch."""
 
@@ -346,6 +350,7 @@ class TestConsumerCommands:
 # ===========================================================================
 
 
+@pytest.mark.asyncio
 class TestB7DischargeCheck:
     """B7 regression: discharge_pv must verify fast_charging=OFF."""
 
@@ -391,6 +396,7 @@ class TestB7DischargeCheck:
 # ===========================================================================
 
 
+@pytest.mark.asyncio
 class TestNoOp:
     """NO_OP commands should be skipped."""
 

@@ -25,8 +25,6 @@ from core.models import Scenario
 from core.state_machine import StateMachine, StateMachineConfig
 from tests.conftest import make_battery_state, make_snapshot
 
-pytestmark = pytest.mark.asyncio
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -60,6 +58,7 @@ def _make_engine() -> ControlEngine:
 # ===========================================================================
 
 
+@pytest.mark.asyncio
 class TestFullCycle:
     """Test complete control cycle."""
 
@@ -94,6 +93,7 @@ class TestFullCycle:
 # ===========================================================================
 
 
+@pytest.mark.asyncio
 class TestGuardPhase:
     """Guard runs first and produces evaluation."""
 
@@ -128,6 +128,7 @@ class TestGuardPhase:
 # ===========================================================================
 
 
+@pytest.mark.asyncio
 class TestExceptionHandling:
     """Engine never crashes — errors captured in result."""
 
@@ -151,6 +152,7 @@ class TestExceptionHandling:
 # ===========================================================================
 
 
+@pytest.mark.asyncio
 class TestScenarioTransition:
     """Scenario changes during cycle."""
 
