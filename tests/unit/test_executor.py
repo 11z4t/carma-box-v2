@@ -503,3 +503,145 @@ class TestMissingAdapterErrors:
         )
         result = await executor.execute([cmd])
         assert result.commands_failed == 1
+
+
+# ===========================================================================
+# Coverage: uncovered branches
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestCoverageBranches:
+    """Tests targeting specific uncovered code paths."""
+
+    async def test_all_succeeded_property_true(
+        self, executor: CommandExecutor
+    ) -> None:
+        """all_succeeded is True when no failures (line 88)."""
+        cmd = Command(
+            command_type=CommandType.SET_EMS_POWER_LIMIT,
+            target_id="kontor",
+            value=1000,
+        )
+        result = await executor.execute([cmd])
+        assert result.all_succeeded is True
+
+    async def test_all_succeeded_property_false_on_failure(self) -> None:
+        """all_succeeded is False when there are failures."""
+        inv = {"kontor": _make_inverter()}
+        inv["kontor"].set_ems_power_limit = AsyncMock(return_value=False)
+        exec_ = CommandExecutor(inverters=inv)  # type: ignore[arg-type]
+        cmd = Command(
+            command_type=CommandType.SET_EMS_POWER_LIMIT,
+            target_id="kontor",
+            value=0,
+        )
+        result = await exec_.execute([cmd])
+        assert result.all_succeeded is False
+
+    async def test_guard_non_mode_command_dispatched(
+        self, executor: CommandExecutor, inverters: dict[str, AsyncMock]
+    ) -> None:
+        """Guard non-mode commands go through _dispatch (line 199)."""
+        gcmd = GuardCommand(
+            guard_id="G0",
+            command_type=CommandType.SET_EMS_POWER_LIMIT,
+            target_id="kontor",
+            value=0,
+            reason="G0: zero limit",
+        )
+        result = await executor.execute_guard_commands([gcmd])
+        assert result.commands_succeeded == 1
+        inverters["kontor"].set_ems_power_limit.assert_awaited_with(0)
+
+    async def test_unknown_command_type_returns_false(
+        self, executor: CommandExecutor
+    ) -> None:
+        """Unknown command type in _dispatch returns False (lines 233-240).
+
+        NO_OP is skipped by execute() but reaches _dispatch's else-branch
+        when called directly.
+        """
+        from core.models import CommandType as CT
+        # Call _dispatch directly — NO_OP is not handled by any elif → else branch
+        result = await executor._dispatch(
+            Command(command_type=CT.NO_OP, target_id="x")
+        )
+        assert result is False
+
+    async def test_start_ev_no_charger_returns_false(self) -> None:
+        """_exec_start_ev with no EV charger → False (line 298)."""
+        exec_ = CommandExecutor(inverters={})
+        cmd = Command(
+            command_type=CommandType.START_EV_CHARGING,
+            target_id="ev",
+        )
+        result = await exec_.execute([cmd])
+        assert result.commands_failed == 1
+
+    async def test_stop_ev_no_charger_returns_false(self) -> None:
+        """_exec_stop_ev with no EV charger → False (line 303)."""
+        exec_ = CommandExecutor(inverters={})
+        cmd = Command(
+            command_type=CommandType.STOP_EV_CHARGING,
+            target_id="ev",
+        )
+        result = await exec_.execute([cmd])
+        assert result.commands_failed == 1
+
+    async def test_guard_command_failure_increments_failed(self) -> None:
+        """Guard non-mode command that fails increments commands_failed (line 199)."""
+        inv: dict[str, AsyncMock] = {"kontor": _make_inverter()}
+        inv["kontor"].set_ems_power_limit = AsyncMock(return_value=False)
+        exec_ = CommandExecutor(inverters=inv)  # type: ignore[arg-type]
+        gcmd = GuardCommand(
+            guard_id="G0",
+            command_type=CommandType.SET_EMS_POWER_LIMIT,
+            target_id="kontor",
+            value=0,
+            reason="G0: zero limit",
+        )
+        result = await exec_.execute_guard_commands([gcmd])
+        assert result.commands_failed == 1
+
+    async def test_dispatch_exception_returns_false(self) -> None:
+        """Adapter raising exception in _dispatch returns False (lines 235-240)."""
+        inv: dict[str, AsyncMock] = {"kontor": _make_inverter()}
+        inv["kontor"].set_ems_power_limit = AsyncMock(side_effect=RuntimeError("adapter crash"))
+        exec_ = CommandExecutor(inverters=inv)  # type: ignore[arg-type]
+        cmd = Command(
+            command_type=CommandType.SET_EMS_POWER_LIMIT,
+            target_id="kontor",
+            value=0,
+        )
+        result = await exec_.execute([cmd])
+        assert result.commands_failed == 1
+
+    async def test_rate_limit_passes_after_cooldown(self) -> None:
+        """_check_rate_limit returns True after cooldown elapsed (line 340)."""
+        inv = {"kontor": _make_inverter()}
+        executor = CommandExecutor(
+            inverters=inv,  # type: ignore[arg-type]
+            config=ExecutorConfig(mode_change_cooldown_s=0.001),  # 1ms cooldown
+        )
+        # First mode change
+        cmd = Command(
+            command_type=CommandType.SET_EMS_MODE,
+            target_id="kontor",
+            value="discharge_pv",
+        )
+        await executor.execute([cmd])
+
+        # Wait for cooldown to pass
+        import asyncio
+        await asyncio.sleep(0.01)
+
+        # Second mode change should succeed (cooldown passed)
+        cmd2 = Command(
+            command_type=CommandType.SET_EMS_MODE,
+            target_id="kontor",
+            value="charge_pv",
+        )
+        r2 = await executor.execute([cmd2])
+        assert r2.commands_succeeded == 1
+        assert r2.commands_rate_limited == 0

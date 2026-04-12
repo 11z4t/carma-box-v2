@@ -460,3 +460,60 @@ class TestSessionLifecycle:
         os.environ.pop("TEST_HA_TOKEN", None)
         client = HAApiClient(ha_config)
         assert "Bearer " in client._headers["Authorization"]
+
+    async def test_ensure_session_creates_new_when_none(
+        self, ha_config: HAConfig
+    ) -> None:
+        """_ensure_session should create a session when _session is None."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        client = HAApiClient(ha_config)
+        assert client._session is None
+        mock_session = MagicMock()
+        mock_session.closed = False
+        mock_session.close = AsyncMock()
+        with patch("aiohttp.ClientSession", return_value=mock_session), \
+             patch("aiohttp.TCPConnector"):
+            session = await client._ensure_session()
+        assert session is not None
+        await client.close()
+
+    async def test_ensure_session_reuses_open_session(
+        self, ha_config: HAConfig
+    ) -> None:
+        """_ensure_session should reuse existing open session."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        client = HAApiClient(ha_config)
+        mock_session = MagicMock()
+        mock_session.closed = False
+        mock_session.close = AsyncMock()
+        with patch("aiohttp.ClientSession", return_value=mock_session), \
+             patch("aiohttp.TCPConnector"):
+            session1 = await client._ensure_session()
+            session2 = await client._ensure_session()
+        assert session1 is session2
+        await client.close()
+
+    async def test_ensure_session_recreates_when_closed(
+        self, ha_config: HAConfig
+    ) -> None:
+        """_ensure_session should create a new session if old one is closed."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        client = HAApiClient(ha_config)
+        mock_session1 = MagicMock()
+        mock_session1.closed = False
+        mock_session1.close = AsyncMock()
+        mock_session2 = MagicMock()
+        mock_session2.closed = False
+        mock_session2.close = AsyncMock()
+        with patch("aiohttp.TCPConnector"):
+            with patch("aiohttp.ClientSession", return_value=mock_session1):
+                session1 = await client._ensure_session()
+            # Mark session1 as closed
+            mock_session1.closed = True
+            with patch("aiohttp.ClientSession", return_value=mock_session2):
+                session2 = await client._ensure_session()
+        assert session2 is not session1
+        await client.close()

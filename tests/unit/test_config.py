@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from config.schema import (
     BatteryConfig,
     CarmaConfig,
+    ConsumerConfig,
     EVChargerConfig,
     GridConfig,
     HAConfig,
@@ -263,6 +264,36 @@ class TestGridConfig:
         assert grid.ellevio.margin == 0.5
         with pytest.raises(ValidationError):
             GridConfig(ellevio={"margin": 0.49})  # type: ignore[arg-type]
+
+
+class TestConsumerConfig:
+    """Test ConsumerConfig validation."""
+
+    def _make_consumer(self, **overrides: Any) -> ConsumerConfig:
+        defaults: dict[str, Any] = {
+            "id": "test_consumer",
+            "name": "Test Consumer",
+            "priority": 1,
+            "priority_shed": 1,
+            "power_w": 400,
+        }
+        defaults.update(overrides)
+        return ConsumerConfig(**defaults)
+
+    def test_valid_consumer(self) -> None:
+        consumer = self._make_consumer()
+        assert consumer.type == "on_off"  # default
+
+    def test_valid_types(self) -> None:
+        """All valid types should be accepted."""
+        for t in ("on_off", "variable", "climate"):
+            c = self._make_consumer(type=t)
+            assert c.type == t
+
+    def test_invalid_type_raises(self) -> None:
+        """Invalid consumer type should raise ValidationError."""
+        with pytest.raises(ValidationError, match="type"):
+            self._make_consumer(type="invalid_type")
 
 
 class TestLoggingConfig:

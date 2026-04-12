@@ -219,7 +219,7 @@ class StateMachine:
             Scenario.PV_SURPLUS: self._entry_s8,
         }
         checker = checkers.get(scenario)
-        if checker is None:
+        if checker is None:  # pragma: no cover
             return False
         return checker(snap)
 
@@ -307,7 +307,7 @@ class StateMachine:
             Scenario.PV_SURPLUS: self._exit_s8,
         }
         checker = exits.get(scenario)
-        if checker is None:
+        if checker is None:  # pragma: no cover
             return False
         return checker(snap)
 

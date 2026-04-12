@@ -238,3 +238,58 @@ class TestB3WaitingInFully:
             assert calls[3][0][1] == "set_charger_dynamic_limit"
         finally:
             asyncio.sleep = original_sleep
+
+
+# ===========================================================================
+# Coverage: get_power None and ValueError, get_current None and ValueError
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestReadNullAndError:
+    """Cover None-return and ValueError paths in get_power and get_current."""
+
+    async def test_get_power_none_returns_zero(
+        self, adapter: EaseeAdapter, mock_api: AsyncMock
+    ) -> None:
+        mock_api.get_state.return_value = None
+        result = await adapter.get_power()
+        assert result == 0.0
+
+    async def test_get_power_invalid_returns_zero(
+        self, adapter: EaseeAdapter, mock_api: AsyncMock
+    ) -> None:
+        mock_api.get_state.return_value = "not_a_number"
+        result = await adapter.get_power()
+        assert result == 0.0
+
+    async def test_get_current_none_returns_zero(
+        self, adapter: EaseeAdapter, mock_api: AsyncMock
+    ) -> None:
+        mock_api.get_state.return_value = None
+        result = await adapter.get_current()
+        assert result == 0.0
+
+    async def test_get_current_invalid_returns_zero(
+        self, adapter: EaseeAdapter, mock_api: AsyncMock
+    ) -> None:
+        mock_api.get_state.return_value = "bad_value"
+        result = await adapter.get_current()
+        assert result == 0.0
+
+
+# ===========================================================================
+# Coverage: enforce_smart_charging_off
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestSmartChargingGuard:
+    """enforce_smart_charging_off should return True without API calls."""
+
+    async def test_returns_true(
+        self, adapter: EaseeAdapter, mock_api: AsyncMock
+    ) -> None:
+        result = await adapter.enforce_smart_charging_off()
+        assert result is True
+        mock_api.call_service.assert_not_awaited()

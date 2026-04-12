@@ -152,3 +152,69 @@ class TestWithWebhook:
             assert result is False
         finally:
             del os.environ["TEST_SLACK_WEBHOOK"]
+
+    async def test_send_200_returns_true(self) -> None:
+        """_send returns True when webhook returns 200 (lines 125-134)."""
+        import os
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        os.environ["TEST_SLACK_WEBHOOK"] = "https://hooks.slack.com/test"
+        try:
+            n = SlackNotifier(SlackConfig(webhook_env="TEST_SLACK_WEBHOOK"))
+            mock_resp = MagicMock()
+            mock_resp.status = 200
+            mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+            mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+            mock_session = MagicMock()
+            mock_session.post = MagicMock(return_value=mock_resp)
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session.__aexit__ = AsyncMock(return_value=False)
+
+            with patch("aiohttp.ClientSession", return_value=mock_session):
+                result = await n._send({"text": "hello"})
+            assert result is True
+        finally:
+            del os.environ["TEST_SLACK_WEBHOOK"]
+
+    async def test_send_non_200_returns_false(self) -> None:
+        """_send returns False when webhook returns non-200 (lines 135-138)."""
+        import os
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        os.environ["TEST_SLACK_WEBHOOK"] = "https://hooks.slack.com/test"
+        try:
+            n = SlackNotifier(SlackConfig(webhook_env="TEST_SLACK_WEBHOOK"))
+            mock_resp = MagicMock()
+            mock_resp.status = 400
+            mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+            mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+            mock_session = MagicMock()
+            mock_session.post = MagicMock(return_value=mock_resp)
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session.__aexit__ = AsyncMock(return_value=False)
+
+            with patch("aiohttp.ClientSession", return_value=mock_session):
+                result = await n._send({"text": "hello"})
+            assert result is False
+        finally:
+            del os.environ["TEST_SLACK_WEBHOOK"]
+
+    async def test_send_exception_returns_false(self) -> None:
+        """_send returns False on network exception (lines 139-141)."""
+        import os
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        os.environ["TEST_SLACK_WEBHOOK"] = "https://hooks.slack.com/test"
+        try:
+            n = SlackNotifier(SlackConfig(webhook_env="TEST_SLACK_WEBHOOK"))
+            mock_session = MagicMock()
+            mock_session.__aenter__ = AsyncMock(side_effect=OSError("network down"))
+            mock_session.__aexit__ = AsyncMock(return_value=False)
+
+            with patch("aiohttp.ClientSession", return_value=mock_session):
+                result = await n._send({"text": "hello"})
+            assert result is False
+        finally:
+            del os.environ["TEST_SLACK_WEBHOOK"]

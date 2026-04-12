@@ -500,3 +500,29 @@ class TestGuardPriority:
     def test_headroom_night(self, guard: GridGuard) -> None:
         result = _eval(guard, weighted_avg_kw=3.0, hour=23)
         assert result.headroom_kw == pytest.approx(3.0, abs=0.01)  # 6.0 - 3.0
+
+
+# ===========================================================================
+# Coverage: uncovered branches
+# ===========================================================================
+
+
+class TestCoverageBranches:
+    """Tests targeting specific uncovered branches."""
+
+    def test_old_mode_changes_purged_from_deque(self, guard: GridGuard) -> None:
+        """Entries older than window_s are purged from deque (line 452)."""
+        # Inject an old timestamp (600s ago — outside default window_s=300)
+        guard._mode_changes.appendleft(time.monotonic() - 600)
+        assert len(guard._mode_changes) == 1
+        # Evaluate — purge loop should remove the old entry
+        _eval(guard)
+        assert len(guard._mode_changes) == 0
+
+    def test_is_night_non_wrapping_window(self) -> None:
+        """_is_night with non-wrapping window (start < end) covers line 536."""
+        cfg = GuardConfig(night_start_hour=8, night_end_hour=20)
+        g = GridGuard(cfg)
+        assert g._is_night(10) is True   # inside window
+        assert g._is_night(7) is False   # before start
+        assert g._is_night(20) is False  # at end (exclusive)

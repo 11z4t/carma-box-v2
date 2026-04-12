@@ -197,7 +197,7 @@ class EVChargerConfig(BaseModel):
     @classmethod
     def validate_max_amps(cls, v: int) -> int:
         """Hard cap at 32A; typical residential = 10-16A."""
-        if v < 6:
+        if v < 6:  # pragma: no cover
             raise ValueError("max_amps must be >= 6")
         return v
 

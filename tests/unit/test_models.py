@@ -484,3 +484,13 @@ class TestJsonSerialization:
         dt = datetime(2026, 4, 12, 22, 0, 0, tzinfo=timezone.utc)
         result = json.dumps(dt, cls=ModelEncoder)
         assert "2026-04-12" in json.loads(result)
+
+    def test_unserializable_object_raises_type_error(self) -> None:
+        """Non-serializable objects fall through to super().default() (line 280)."""
+        import json
+
+        class _Unserializable:
+            pass
+
+        with pytest.raises(TypeError):
+            json.dumps(_Unserializable(), cls=ModelEncoder)

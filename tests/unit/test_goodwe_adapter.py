@@ -557,3 +557,90 @@ class TestBatchReading:
         mock_api.get_states_batch.return_value = {}
         readings = await adapter.get_all_readings()
         assert readings == []
+
+
+# ---------------------------------------------------------------------------
+# Coverage: _read_bool empty entity, get_ems_mode no entity, get_export_limit,
+#           set_export_limit
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestCoverageGaps:
+    """Tests targeting uncovered branches."""
+
+    async def test_read_bool_empty_entity_returns_false(
+        self, mock_api: AsyncMock
+    ) -> None:
+        """_read_bool with empty entity_id should return False without API call."""
+        config = _make_battery_config(
+            entities={
+                "soc": "sensor.test_soc",
+                "power": "sensor.test_power",
+                "ems_mode": "select.test_mode",
+                "ems_power_limit": "number.test_limit",
+                "fast_charging": "",  # Empty
+            }
+        )
+        adapter = GoodWeAdapter(mock_api, config)
+        result = await adapter.get_fast_charging()
+        assert result is False
+        mock_api.get_state.assert_not_awaited()
+
+    async def test_get_ems_mode_empty_entity_returns_standby(
+        self, mock_api: AsyncMock
+    ) -> None:
+        """When ems_mode entity is empty, return 'battery_standby' default."""
+        config = _make_battery_config(
+            entities={
+                "soc": "sensor.test_soc",
+                "power": "sensor.test_power",
+                "ems_mode": "",  # Empty → no entity
+                "ems_power_limit": "number.test_limit",
+                "fast_charging": "switch.test_fc",
+            }
+        )
+        adapter = GoodWeAdapter(mock_api, config)
+        result = await adapter.get_ems_mode()
+        assert result == "battery_standby"
+
+    async def test_get_export_limit(
+        self, mock_api: AsyncMock
+    ) -> None:
+        """get_export_limit should parse and return int value."""
+        config = _make_battery_config(
+            entities={
+                "soc": "sensor.test_soc",
+                "power": "sensor.test_power",
+                "ems_mode": "select.test_mode",
+                "ems_power_limit": "number.test_limit",
+                "fast_charging": "switch.test_fc",
+                "export_limit": "number.test_export_limit",
+            }
+        )
+        adapter = GoodWeAdapter(mock_api, config)
+        mock_api.get_state.return_value = "5000"
+        result = await adapter.get_export_limit()
+        assert result == 5000
+
+    async def test_set_export_limit_calls_number_service(
+        self, mock_api: AsyncMock
+    ) -> None:
+        """set_export_limit should call number.set_value with correct entity."""
+        config = _make_battery_config(
+            entities={
+                "soc": "sensor.test_soc",
+                "power": "sensor.test_power",
+                "ems_mode": "select.test_mode",
+                "ems_power_limit": "number.test_limit",
+                "fast_charging": "switch.test_fc",
+                "export_limit": "number.test_export_limit",
+            }
+        )
+        adapter = GoodWeAdapter(mock_api, config)
+        result = await adapter.set_export_limit(3000)
+        assert result is True
+        mock_api.call_service.assert_awaited_once_with(
+            "number", "set_value",
+            {"entity_id": "number.test_export_limit", "value": 3000},
+        )

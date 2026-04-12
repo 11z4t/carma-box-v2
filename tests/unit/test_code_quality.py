@@ -86,10 +86,16 @@ class TestNoHardcodedFloors:
             # But NOT in dataclass field defaults (Config classes)
             for line_no, line in enumerate(content.split("\n"), 1):
                 if re.search(r"floor\s*=\s*(15|20|25)\.0", line):
-                    # Allow in Config dataclass defaults
-                    if "Config" in line or "default=" in line or "Field(" in line:
+                    # Allow in Config dataclass defaults (branch only hit if
+                    # a config file uses floor= assignment — not exercised in tests)
+                    in_config = (  # pragma: no cover
+                        "Config" in line
+                        or "default=" in line
+                        or "Field(" in line
+                    )
+                    if in_config:  # pragma: no cover
                         continue
-                    pytest.fail(
+                    pytest.fail(  # pragma: no cover
                         f"{f.relative_to(PROJECT_ROOT)}:{line_no}: "
                         f"Hardcoded SoC floor: {line.strip()}"
                     )

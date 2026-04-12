@@ -175,3 +175,69 @@ class TestScenarioTransition:
         snap = make_snapshot(hour=14)
         result = await engine.run_cycle(snap)
         assert result.scenario == Scenario.MIDDAY_CHARGE
+
+
+# ===========================================================================
+# Guard commands execute (lines 109-110)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestGuardCommandsExecute:
+    """Guard commands should be executed when present (line 110)."""
+
+    async def test_guard_commands_executed_on_g1_trigger(self) -> None:
+        """Low SoC triggers G1 → commands emitted → executor called."""
+        engine = _make_engine()
+        # SoC at floor (15%) triggers G1 standby command
+        low_soc_bat = make_battery_state(soc_pct=14.0)
+        snap = make_snapshot(hour=12, batteries=[low_soc_bat])
+        result = await engine.run_cycle(snap)
+        # Guard should have commands
+        assert result.guard is not None
+        assert len(result.guard.commands) >= 1
+        g1_cmds = [c for c in result.guard.commands if c.guard_id == "G1"]
+        assert len(g1_cmds) >= 1
+
+    async def test_guard_commands_g0_grid_charging(self) -> None:
+        """G0 grid charging detection → commands emitted and executed."""
+        engine = _make_engine()
+        # G0: ems_power_limit > 0 in charge_pv mode
+        bat = make_battery_state(
+            ems_mode="charge_pv",
+            ems_power_limit_w=3000,
+        )
+        snap = make_snapshot(hour=12, batteries=[bat])
+        result = await engine.run_cycle(snap)
+        assert result.guard is not None
+        g0_cmds = [c for c in result.guard.commands if c.guard_id == "G0"]
+        assert len(g0_cmds) >= 1
+
+
+# ===========================================================================
+# Exception capture (lines 156-160)
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestExceptionCapture:
+    """Exceptions inside the cycle are captured and returned (line 156-160)."""
+
+    async def test_balancer_exception_captured(self) -> None:
+        """If an exception is raised during the cycle, it is captured."""
+        from unittest.mock import patch
+
+        engine = _make_engine()
+        snap = make_snapshot(hour=12, batteries=[make_battery_state()])
+
+        with patch.object(
+            engine._balancer,
+            "allocate",
+            side_effect=RuntimeError("balancer failure"),
+        ):
+            result = await engine.run_cycle(snap)
+
+        # Error captured, not raised
+        assert result.error is not None
+        assert "balancer failure" in result.error
+        assert result.elapsed_s >= 0

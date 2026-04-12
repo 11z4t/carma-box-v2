@@ -407,3 +407,57 @@ class TestTransitionTo:
         sm.transition_to(Scenario.EVENING_DISCHARGE)
         assert sm.state.current == Scenario.EVENING_DISCHARGE
         assert sm.state.previous == Scenario.MIDDAY_CHARGE
+
+
+# ===========================================================================
+# Coverage: exit conditions for S6, S7, S8
+# ===========================================================================
+
+
+class TestExitConditions:
+    """Tests for exit condition branches in _exit_s6, _exit_s7, _exit_s8."""
+
+    def test_exit_s6_at_6am(self, sm: StateMachine) -> None:
+        """S6 exits when hour >= 6 (line 341 covered by _exit_s6)."""
+        sm.state.current = Scenario.NIGHT_LOW_PV
+        snap = _snap(hour=6, pv_today=15.0, bat_soc=60.0)
+        result = sm.evaluate(snap)
+        # Should exit S6 and transition to S1 (6am, high PV, SoC ok)
+        assert result == Scenario.MORNING_DISCHARGE
+
+    def test_exit_s7_at_6am(self, sm: StateMachine) -> None:
+        """S7 exits when hour >= 6 (lines 345-346 covered by _exit_s7)."""
+        sm.state.current = Scenario.NIGHT_GRID_CHARGE
+        snap = _snap(hour=6, pv_today=15.0, bat_soc=60.0)
+        result = sm.evaluate(snap)
+        assert result == Scenario.MORNING_DISCHARGE
+
+    def test_exit_s7_bat_full(self, sm: StateMachine) -> None:
+        """S7 also exits when battery is full (line 348 covered).
+
+        At hour=3 with bat full, exit conditions are met but no valid target
+        is found (S1 requires 6-9am) — state machine logs a warning and stays.
+        """
+        sm.state.current = Scenario.NIGHT_GRID_CHARGE
+        # Battery at or above grid_charge_max_soc (90%) → triggers exit path
+        snap = _snap(hour=3, bat_soc=95.0, pv_today=15.0)
+        result = sm.evaluate(snap)
+        # Exit conditions met but no allowed target passes entry → None (stays)
+        assert result is None
+
+    def test_exit_s8_bat_drops(self, sm: StateMachine) -> None:
+        """S8 exits when bat SoC drops below surplus_exit threshold (lines 353-354)."""
+        sm.state.current = Scenario.PV_SURPLUS
+        # SoC below exit threshold (90%)
+        snap = _snap(hour=13, bat_soc=85.0, pv_total_w=3000.0, grid_power_w=-300.0)
+        result = sm.evaluate(snap)
+        # Should exit S8 (SoC < 90 exit threshold)
+        assert result is not None
+
+    def test_exit_s8_pv_too_low(self, sm: StateMachine) -> None:
+        """S8 exits when PV production drops too low."""
+        sm.state.current = Scenario.PV_SURPLUS
+        snap = _snap(hour=13, bat_soc=96.0, pv_total_w=100.0, grid_power_w=-300.0)
+        result = sm.evaluate(snap)
+        # Should exit S8 (PV < 200W)
+        assert result is not None

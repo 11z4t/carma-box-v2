@@ -187,3 +187,46 @@ class TestSyncTracking:
         rows = _run(db.get_unsynced_rows("cycle_log"))
         assert len(rows) == 1
         assert rows[0]["cycle_id"] == "c2"
+
+
+# ===========================================================================
+# Coverage: uncovered branches
+# ===========================================================================
+
+
+class TestCoverageBranches:
+    """Tests targeting specific uncovered code paths."""
+
+    def test_ensure_db_raises_when_not_initialized(self, tmp_path: Path) -> None:
+        """_ensure_db raises RuntimeError when called before initialize() (line 152)."""
+        db = LocalDB(str(tmp_path / "uninit.db"))
+        with pytest.raises(RuntimeError, match="not initialized"):
+            _run(db._ensure_db())
+
+    def test_cleanup_retention_deletes_old_rows(self, db: LocalDB) -> None:
+        """cleanup_retention removes rows older than cutoff (lines 220-230)."""
+        # Write a cycle entry with a very old timestamp
+        entry = CycleLogEntry(
+            cycle_id="old_cycle",
+            timestamp="2020-01-01T00:00:00",
+            scenario="MIDDAY_CHARGE",
+            guard_level="ok",
+            headroom_kw=1.0,
+            elapsed_s=0.05,
+        )
+        _run(db.write_cycle(entry))
+
+        rows_before = _run(db.get_unsynced_rows("cycle_log"))
+        assert len(rows_before) == 1
+
+        # Delete rows older than 1 day (2020 entry qualifies)
+        deleted = _run(db.cleanup_retention(days=1))
+        assert deleted >= 1
+
+        rows_after = _run(db.get_unsynced_rows("cycle_log"))
+        assert len(rows_after) == 0
+
+    def test_vacuum_runs_without_error(self, db: LocalDB) -> None:
+        """vacuum executes successfully on an initialized database (lines 234-236)."""
+        # Should not raise
+        _run(db.vacuum())

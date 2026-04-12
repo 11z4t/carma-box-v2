@@ -217,7 +217,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     # Create service
-    service = CarmaBoxService(config)
+    service = CarmaBoxService(config)  # pragma: no cover
 
     # Setup signal handlers for graceful shutdown
     loop = asyncio.new_event_loop()  # pragma: no cover

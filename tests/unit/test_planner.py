@@ -183,14 +183,17 @@ class TestEveningPlan:
     """Evening planner: 50/50 split, deficit mode."""
 
     def test_50_50_split(self, planner: Planner) -> None:
-        plan = planner.generate_evening_plan(
+        """Use large battery with low baseload to ensure surplus > 0."""
+        cfg = PlannerConfig(house_baseload_kw=0.5, night_hours=4)
+        p = Planner(cfg)
+        plan = p.generate_evening_plan(
             bat_soc_pct=80.0, bat_cap_kwh=20.0,
             ev_connected=False, ev_soc_pct=80.0,
         )
-        if plan.bat_surplus_kwh > 0:
-            assert plan.evening_allocation_kwh == pytest.approx(
-                plan.morning_allocation_kwh, rel=0.1,
-            )
+        assert plan.bat_surplus_kwh > 0
+        assert plan.evening_allocation_kwh == pytest.approx(
+            plan.morning_allocation_kwh, rel=0.1,
+        )
 
     def test_deficit_no_discharge(self, planner: Planner) -> None:
         """Low SoC → deficit → no evening discharge."""
@@ -208,3 +211,37 @@ class TestEveningPlan:
             ev_connected=True, ev_soc_pct=50.0,
         )
         assert plan.evening_floor_soc_pct >= 15.0  # Always above min_soc
+
+
+# ===========================================================================
+# Coverage: planner helper branches
+# ===========================================================================
+
+
+class TestPlannerCoverage:
+    """Tests targeting specific uncovered branches."""
+
+    def test_calculate_ev_charge_need_at_target_returns_zero(self) -> None:
+        """_calculate_ev_charge_need returns 0.0 when SoC >= target (line 288)."""
+        planner = Planner()
+        result = planner._calculate_ev_charge_need(80.0)  # target=75% by default
+        assert result == 0.0
+
+    def test_calculate_bat_charge_need_at_max_returns_zero(self) -> None:
+        """_calculate_bat_charge_need returns 0.0 when SoC >= grid_charge_max (line 299)."""
+        planner = Planner()
+        # grid_charge_max_soc_pct=90 by default, bat_soc=90 → soc_gap=0
+        result = planner._calculate_bat_charge_need(90.0, 20.0, 5.0)
+        assert result == 0.0
+
+    def test_evening_plan_50_50_allocation_computed(self) -> None:
+        """Evening plan should compute 50/50 allocation when surplus exists (lines 260-269)."""
+        cfg = PlannerConfig(house_baseload_kw=0.2, night_hours=2)
+        planner = Planner(cfg)
+        plan = planner.generate_evening_plan(
+            bat_soc_pct=90.0, bat_cap_kwh=20.0,
+            ev_connected=False, ev_soc_pct=80.0,
+        )
+        assert plan.bat_surplus_kwh > 0
+        assert plan.evening_allocation_kwh > 0
+        assert plan.hourly_rate_w > 0

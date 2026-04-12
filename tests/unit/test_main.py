@@ -241,6 +241,6 @@ class TestServiceCancellation:
         # Should not raise — CancelledError caught internally
         try:
             await task
-        except asyncio.CancelledError:
-            pass  # Some versions propagate, some don't
+        except asyncio.CancelledError:  # pragma: no cover
+            pass  # Service catches CancelledError internally; this branch unreachable
         assert not service.is_running

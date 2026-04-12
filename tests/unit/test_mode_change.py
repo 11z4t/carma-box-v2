@@ -383,3 +383,41 @@ class TestB15ClearLimits:
         await manager.process(executor)  # IDLE → CLEARING
 
         executor.set_ems_power_limit.assert_awaited_with("kontor", 0)
+
+
+# ---------------------------------------------------------------------------
+# Coverage: uncovered branches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestCoverageBranches:
+    """Tests targeting specific uncovered branches."""
+
+    async def test_get_state_returns_idle_when_no_request(
+        self, manager: ModeChangeManager
+    ) -> None:
+        """get_state returns IDLE when battery has no pending request (line 205)."""
+        state = manager.get_state("nonexistent_battery")
+        assert state == ModeChangeState.IDLE
+
+    async def test_target_limit_w_set_when_nonzero(
+        self, manager: ModeChangeManager
+    ) -> None:
+        """set_ems_power_limit called with target_limit_w when > 0 (line 333)."""
+        executor = _make_executor(current_mode="charge_pv")
+        executor.get_ems_mode.return_value = "charge_pv"
+        manager.request_change(
+            "kontor", "charge_pv", target_limit_w=2000, reason="grid charge test"
+        )
+        # Cycle through all steps until COMPLETE
+        for _ in range(10):
+            await manager.process(executor)
+            if manager.get_state("kontor") == ModeChangeState.COMPLETE:
+                break
+        # set_ems_power_limit should have been called with 2000 at SETTING_TARGET
+        calls = [
+            c for c in executor.set_ems_power_limit.await_args_list
+            if c.args == ("kontor", 2000)
+        ]
+        assert len(calls) >= 1
