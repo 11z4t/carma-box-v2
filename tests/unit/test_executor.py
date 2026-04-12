@@ -409,3 +409,97 @@ class TestNoOp:
         result = await executor.execute([cmd])
         assert result.commands_succeeded == 0
         assert result.commands_failed == 0
+
+
+# ===========================================================================
+# ModeChangeExecutor protocol methods
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestModeChangeProtocol:
+    """Direct tests for ModeChangeExecutor protocol methods."""
+
+    async def test_set_ems_mode_delegates(self, executor: CommandExecutor) -> None:
+        result = await executor.set_ems_mode("kontor", "discharge_pv")
+        assert result is True
+
+    async def test_set_ems_mode_missing_inverter(self) -> None:
+        exec_ = CommandExecutor(inverters={})
+        result = await exec_.set_ems_mode("nonexistent", "discharge_pv")
+        assert result is False
+
+    async def test_set_ems_power_limit_delegates(
+        self, executor: CommandExecutor, inverters: dict[str, AsyncMock]
+    ) -> None:
+        result = await executor.set_ems_power_limit("kontor", 2000)
+        assert result is True
+        inverters["kontor"].set_ems_power_limit.assert_awaited_with(2000)
+
+    async def test_set_ems_power_limit_missing(self) -> None:
+        exec_ = CommandExecutor(inverters={})
+        result = await exec_.set_ems_power_limit("x", 0)
+        assert result is False
+
+    async def test_set_fast_charging_delegates(self, executor: CommandExecutor) -> None:
+        result = await executor.set_fast_charging("kontor", False)
+        assert result is True
+
+    async def test_set_fast_charging_missing(self) -> None:
+        exec_ = CommandExecutor(inverters={})
+        result = await exec_.set_fast_charging("x", False)
+        assert result is False
+
+    async def test_get_ems_mode_delegates(self, executor: CommandExecutor) -> None:
+        result = await executor.get_ems_mode("kontor")
+        assert result == "battery_standby"
+
+    async def test_get_ems_mode_missing(self) -> None:
+        exec_ = CommandExecutor(inverters={})
+        result = await exec_.get_ems_mode("x")
+        assert result == "battery_standby"
+
+    async def test_get_fast_charging_delegates(self, executor: CommandExecutor) -> None:
+        result = await executor.get_fast_charging("kontor")
+        assert result is False
+
+    async def test_get_fast_charging_missing(self) -> None:
+        exec_ = CommandExecutor(inverters={})
+        result = await exec_.get_fast_charging("x")
+        assert result is False
+
+
+# ===========================================================================
+# Missing inverter/consumer error paths
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestMissingAdapterErrors:
+    """Commands to nonexistent adapters should fail gracefully."""
+
+    async def test_set_limit_missing_inverter(self, executor: CommandExecutor) -> None:
+        cmd = Command(
+            command_type=CommandType.SET_EMS_POWER_LIMIT,
+            target_id="nonexistent",
+            value=0,
+        )
+        result = await executor.execute([cmd])
+        assert result.commands_failed == 1
+
+    async def test_set_fast_charging_missing_inverter(self, executor: CommandExecutor) -> None:
+        cmd = Command(
+            command_type=CommandType.SET_FAST_CHARGING,
+            target_id="nonexistent",
+            value=False,
+        )
+        result = await executor.execute([cmd])
+        assert result.commands_failed == 1
+
+    async def test_consumer_off_missing(self, executor: CommandExecutor) -> None:
+        cmd = Command(
+            command_type=CommandType.TURN_OFF_CONSUMER,
+            target_id="nonexistent",
+        )
+        result = await executor.execute([cmd])
+        assert result.commands_failed == 1

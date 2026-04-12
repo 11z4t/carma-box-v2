@@ -39,8 +39,7 @@ class InverterAdapter(ABC):
         Returns:
             SoC percentage (0.0 - 100.0). Returns 0.0 if unavailable.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def get_battery_power(self) -> float:
         """Get current battery power (W).
@@ -48,8 +47,7 @@ class InverterAdapter(ABC):
         Returns:
             Watts. Positive = discharge, negative = charge.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def get_cell_temperature(self) -> float:
         """Get minimum battery cell temperature (Celsius).
@@ -57,8 +55,7 @@ class InverterAdapter(ABC):
         Returns:
             Temperature in Celsius. Returns 20.0 if unavailable (safe default).
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def get_pv_power(self) -> float:
         """Get current PV production (W).
@@ -66,8 +63,7 @@ class InverterAdapter(ABC):
         Returns:
             Watts (always >= 0).
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def get_grid_power(self) -> float:
         """Get grid power at CT clamp (W).
@@ -75,8 +71,7 @@ class InverterAdapter(ABC):
         Returns:
             Watts. Positive = import, negative = export.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def get_load_power(self) -> float:
         """Get load power at CT clamp (W).
@@ -84,8 +79,7 @@ class InverterAdapter(ABC):
         Returns:
             Watts (always >= 0).
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def get_ems_mode(self) -> str:
         """Get current EMS mode string.
@@ -94,8 +88,7 @@ class InverterAdapter(ABC):
             One of: 'charge_pv', 'discharge_pv', 'battery_standby',
             'import_ac', 'export_ac', 'conserve', 'auto'.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def set_ems_mode(self, mode: str) -> bool:
         """Set EMS mode.
@@ -109,8 +102,7 @@ class InverterAdapter(ABC):
         Returns:
             True if the service call succeeded.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def get_ems_power_limit(self) -> int:
         """Get current EMS power limit (W).
@@ -118,8 +110,7 @@ class InverterAdapter(ABC):
         Returns:
             Watts. 0 = no limit.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def set_ems_power_limit(self, watts: int) -> bool:
         """Set EMS power limit (W).
@@ -133,8 +124,7 @@ class InverterAdapter(ABC):
         Returns:
             True if the service call succeeded.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def get_fast_charging(self) -> bool:
         """Get fast charging switch state.
@@ -142,8 +132,7 @@ class InverterAdapter(ABC):
         Returns:
             True if fast charging is ON.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def set_fast_charging(self, on: bool) -> bool:
         """Set fast charging switch.
@@ -156,8 +145,7 @@ class InverterAdapter(ABC):
         Returns:
             True if the service call succeeded.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def get_soh(self) -> float:
         """Get State of Health (%).
@@ -165,8 +153,7 @@ class InverterAdapter(ABC):
         Returns:
             SoH percentage (0.0 - 100.0). Returns 100.0 if unavailable.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def get_all_readings(self) -> list[AdapterReading]:
         """Get all readings in one batch call (for efficiency).
@@ -174,27 +161,22 @@ class InverterAdapter(ABC):
         Returns:
             List of AdapterReading for all monitored entities.
         """
-        ...
-
+        ...  # pragma: no cover
     @property
     @abstractmethod
     def battery_id(self) -> str:
         """Unique battery identifier (e.g. 'kontor', 'forrad')."""
-        ...
-
+        ...  # pragma: no cover
     @property
     @abstractmethod
     def capacity_kwh(self) -> float:
         """Battery capacity in kWh."""
-        ...
-
+        ...  # pragma: no cover
     @property
     @abstractmethod
     def ct_placement(self) -> str:
         """CT clamp placement: 'local_load' or 'house_grid'."""
-        ...
-
-
+        ...  # pragma: no cover
 class EVChargerAdapter(ABC):
     """Abstract interface for EV charger adapters.
 
@@ -208,8 +190,7 @@ class EVChargerAdapter(ABC):
         Returns:
             Charger-specific status (e.g. 'charging', 'awaiting_start').
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def get_power(self) -> float:
         """Get current charging power (W).
@@ -217,8 +198,7 @@ class EVChargerAdapter(ABC):
         Returns:
             Watts (always >= 0).
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def get_current(self) -> float:
         """Get current charging amperage (A).
@@ -226,8 +206,7 @@ class EVChargerAdapter(ABC):
         Returns:
             Amps (always >= 0).
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def is_connected(self) -> bool:
         """Is an EV connected (cable plugged in)?
@@ -235,8 +214,7 @@ class EVChargerAdapter(ABC):
         Returns:
             True if cable is connected.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def set_current(self, amps: int) -> bool:
         """Set charging current (A).
@@ -249,8 +227,7 @@ class EVChargerAdapter(ABC):
         Returns:
             True if the service call succeeded.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def start_charging(self) -> bool:
         """Enable charging.
@@ -258,8 +235,7 @@ class EVChargerAdapter(ABC):
         Returns:
             True if the service call succeeded.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def stop_charging(self) -> bool:
         """Disable charging.
@@ -267,8 +243,7 @@ class EVChargerAdapter(ABC):
         Returns:
             True if the service call succeeded.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def get_reason_for_no_current(self) -> Optional[str]:
         """Get reason why charger is not providing current.
@@ -276,8 +251,7 @@ class EVChargerAdapter(ABC):
         Returns:
             Reason string or None if charging normally.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def fix_waiting_in_fully(self) -> bool:
         """Fix stuck charger state (B3: Easee reason 51).
@@ -287,33 +261,27 @@ class EVChargerAdapter(ABC):
         Returns:
             True if fix was attempted.
         """
-        ...
-
+        ...  # pragma: no cover
     @property
     @abstractmethod
     def charger_id(self) -> str:
         """Unique charger identifier (e.g. 'EH128405')."""
-        ...
-
+        ...  # pragma: no cover
     @property
     @abstractmethod
     def max_amps(self) -> int:
         """Maximum charging current (A)."""
-        ...
-
+        ...  # pragma: no cover
     @property
     @abstractmethod
     def min_amps(self) -> int:
         """Minimum charging current (A)."""
-        ...
-
+        ...  # pragma: no cover
     @property
     @abstractmethod
     def phases(self) -> int:
         """Number of phases (1 or 3)."""
-        ...
-
-
+        ...  # pragma: no cover
 class LoadAdapter(ABC):
     """Abstract interface for controllable load adapters.
 
@@ -327,8 +295,7 @@ class LoadAdapter(ABC):
         Returns:
             Watts (always >= 0).
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def is_active(self) -> bool:
         """Is the load currently active?
@@ -336,8 +303,7 @@ class LoadAdapter(ABC):
         Returns:
             True if the load is drawing power.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def turn_on(self) -> bool:
         """Turn on the load.
@@ -345,8 +311,7 @@ class LoadAdapter(ABC):
         Returns:
             True if the service call succeeded.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def turn_off(self) -> bool:
         """Turn off the load.
@@ -354,8 +319,7 @@ class LoadAdapter(ABC):
         Returns:
             True if the service call succeeded.
         """
-        ...
-
+        ...  # pragma: no cover
     @abstractmethod
     async def set_power(self, watts: int) -> bool:
         """Set target power (for variable loads).
@@ -368,16 +332,14 @@ class LoadAdapter(ABC):
         Returns:
             True if the service call succeeded.
         """
-        ...
-
+        ...  # pragma: no cover
     @property
     @abstractmethod
     def load_id(self) -> str:
         """Unique load identifier (e.g. 'miner', 'vp_kontor')."""
-        ...
-
+        ...  # pragma: no cover
     @property
     @abstractmethod
     def load_type(self) -> str:
         """Load type: 'on_off', 'variable', or 'climate'."""
-        ...
+        ...  # pragma: no cover
