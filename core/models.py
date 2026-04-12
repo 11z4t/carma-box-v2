@@ -7,10 +7,11 @@ Pure data — no side effects, no I/O.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum, unique
-from typing import Optional
+from typing import Any, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +139,28 @@ class ConsumerState:
     load_type: str                     # "on_off", "variable", "climate"
 
 
+@dataclass
+class ScenarioState:
+    """Mutable state of the scenario state machine.
+
+    Tracks current scenario, entry time, transition state, and dwell time.
+    NOT frozen — updated by the state machine each cycle.
+    """
+
+    current: Scenario
+    entry_time: datetime
+    previous: Optional[Scenario] = None
+    in_transition: bool = False
+    transition_start: Optional[datetime] = None
+    transition_target: Optional[Scenario] = None
+
+    @property
+    def dwell_s(self) -> float:
+        """Seconds in current scenario since entry."""
+        delta = datetime.now(tz=self.entry_time.tzinfo) - self.entry_time
+        return delta.total_seconds()
+
+
 @dataclass(frozen=True)
 class SystemSnapshot:
     """Complete system state for one control cycle.
@@ -172,6 +195,19 @@ class SystemSnapshot:
     def is_night(self) -> bool:
         """Whether current time is in the night window (22:00-06:00)."""
         return self.hour >= 22 or self.hour < 6
+
+    @property
+    def available_surplus_w(self) -> float:
+        """Available surplus for dispatch (W).
+
+        Calculated as: grid export (negative grid_power) + sum of active consumer power.
+        Positive = surplus available for new consumers.
+        """
+        export_w = max(0.0, -self.grid.grid_power_w)
+        active_consumer_w = sum(
+            c.power_w for c in self.consumers if c.active
+        )
+        return export_w + active_consumer_w
 
 
 # ---------------------------------------------------------------------------
@@ -221,3 +257,29 @@ class CycleDecision:
         return len(self.commands) > 0 and any(
             c.command_type != CommandType.NO_OP for c in self.commands
         )
+
+
+# ---------------------------------------------------------------------------
+# JSON serialization
+# ---------------------------------------------------------------------------
+
+
+class ModelEncoder(json.JSONEncoder):
+    """JSON encoder for CARMA Box dataclasses.
+
+    Handles datetime, Enum, and dataclass serialization for audit trail.
+    """
+
+    def default(self, o: Any) -> Any:
+        if isinstance(o, datetime):
+            return o.isoformat()
+        if isinstance(o, Enum):
+            return o.value
+        if hasattr(o, "__dataclass_fields__"):
+            return asdict(o)
+        return super().default(o)
+
+
+def to_json(obj: Any) -> str:
+    """Serialize any CARMA Box model to JSON string."""
+    return json.dumps(obj, cls=ModelEncoder, ensure_ascii=False)

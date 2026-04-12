@@ -17,11 +17,15 @@ import pytest
 from core.models import (
     Command,
     CommandType,
+    ConsumerState,
     CycleDecision,
     EMSMode,
     GuardResult,
     GuardStatus,
+    ModelEncoder,
     Scenario,
+    ScenarioState,
+    to_json,
 )
 from tests.conftest import (
     make_battery_state,
@@ -315,3 +319,168 @@ class TestCommandType:
         }
         actual = {ct.value for ct in CommandType}
         assert actual == expected
+
+
+# ===========================================================================
+# ScenarioState
+# ===========================================================================
+
+
+class TestScenarioState:
+    """Test ScenarioState mutable state tracking."""
+
+    def test_create(self) -> None:
+        state = ScenarioState(
+            current=Scenario.MIDDAY_CHARGE,
+            entry_time=datetime.now(tz=timezone.utc),
+        )
+        assert state.current == Scenario.MIDDAY_CHARGE
+        assert state.previous is None
+        assert not state.in_transition
+
+    def test_mutable(self) -> None:
+        """ScenarioState is NOT frozen — it's updated by state machine."""
+        state = ScenarioState(
+            current=Scenario.MIDDAY_CHARGE,
+            entry_time=datetime.now(tz=timezone.utc),
+        )
+        state.current = Scenario.EVENING_DISCHARGE
+        assert state.current == Scenario.EVENING_DISCHARGE
+
+    def test_dwell_s(self) -> None:
+        """dwell_s should return seconds since entry."""
+        from datetime import timedelta
+
+        entry = datetime.now(tz=timezone.utc) - timedelta(seconds=120)
+        state = ScenarioState(
+            current=Scenario.MIDDAY_CHARGE,
+            entry_time=entry,
+        )
+        assert state.dwell_s >= 119.0  # Allow small timing variance
+
+    def test_transition_tracking(self) -> None:
+        state = ScenarioState(
+            current=Scenario.MIDDAY_CHARGE,
+            entry_time=datetime.now(tz=timezone.utc),
+            in_transition=True,
+            transition_target=Scenario.EVENING_DISCHARGE,
+        )
+        assert state.in_transition
+        assert state.transition_target == Scenario.EVENING_DISCHARGE
+
+
+# ===========================================================================
+# available_surplus_w
+# ===========================================================================
+
+
+class TestAvailableSurplus:
+    """Test SystemSnapshot.available_surplus_w computed property."""
+
+    def test_no_export_no_consumers(self) -> None:
+        """With grid import and no active consumers, surplus = 0."""
+        snap = make_snapshot(
+            grid=make_grid_state(grid_power_w=500.0),
+            consumers=[],
+        )
+        assert snap.available_surplus_w == 0.0
+
+    def test_export_adds_to_surplus(self) -> None:
+        """Grid export (negative power) is available surplus."""
+        snap = make_snapshot(
+            grid=make_grid_state(grid_power_w=-800.0),
+            consumers=[],
+        )
+        assert snap.available_surplus_w == pytest.approx(800.0)
+
+    def test_active_consumers_add_to_surplus(self) -> None:
+        """Active consumer power is reclaimable surplus."""
+        miner = ConsumerState(
+            consumer_id="miner", name="Miner", active=True,
+            power_w=400.0, priority=1, priority_shed=1, load_type="on_off",
+        )
+        snap = make_snapshot(
+            grid=make_grid_state(grid_power_w=-200.0),
+            consumers=[miner],
+        )
+        assert snap.available_surplus_w == pytest.approx(600.0)  # 200 export + 400 miner
+
+    def test_inactive_consumers_not_counted(self) -> None:
+        """Inactive consumers don't contribute to surplus."""
+        miner = ConsumerState(
+            consumer_id="miner", name="Miner", active=False,
+            power_w=0.0, priority=1, priority_shed=1, load_type="on_off",
+        )
+        snap = make_snapshot(
+            grid=make_grid_state(grid_power_w=-300.0),
+            consumers=[miner],
+        )
+        assert snap.available_surplus_w == pytest.approx(300.0)
+
+    def test_import_means_no_export_surplus(self) -> None:
+        """Grid import means 0 export surplus, but active consumers still count."""
+        miner = ConsumerState(
+            consumer_id="miner", name="Miner", active=True,
+            power_w=400.0, priority=1, priority_shed=1, load_type="on_off",
+        )
+        snap = make_snapshot(
+            grid=make_grid_state(grid_power_w=1000.0),
+            consumers=[miner],
+        )
+        assert snap.available_surplus_w == pytest.approx(400.0)
+
+
+# ===========================================================================
+# JSON serialization
+# ===========================================================================
+
+
+class TestJsonSerialization:
+    """Test JSON serialization for audit trail."""
+
+    def test_snapshot_to_json(self) -> None:
+        """SystemSnapshot should serialize to valid JSON."""
+        import json
+
+        snap = make_snapshot()
+        result = to_json(snap)
+        parsed = json.loads(result)
+        assert "batteries" in parsed
+        assert "grid" in parsed
+        assert parsed["hour"] == 12
+
+    def test_cycle_decision_to_json(self) -> None:
+        """CycleDecision with commands should serialize."""
+        import json
+
+        decision = CycleDecision(
+            timestamp=datetime.now(tz=timezone.utc),
+            scenario=Scenario.EVENING_DISCHARGE,
+            commands=[
+                Command(
+                    command_type=CommandType.SET_EMS_MODE,
+                    target_id="kontor",
+                    value="discharge_pv",
+                )
+            ],
+        )
+        result = to_json(decision)
+        parsed = json.loads(result)
+        assert parsed["scenario"] == "EVENING_DISCHARGE"
+        assert len(parsed["commands"]) == 1
+        assert parsed["commands"][0]["command_type"] == "set_ems_mode"
+
+    def test_enum_serialized_as_value(self) -> None:
+        """Enums should serialize as their string values."""
+        import json
+
+        result = json.dumps(Scenario.MIDDAY_CHARGE, cls=ModelEncoder)
+        assert json.loads(result) == "MIDDAY_CHARGE"
+
+    def test_datetime_serialized_as_iso(self) -> None:
+        """Datetimes should serialize as ISO format strings."""
+        import json
+
+        dt = datetime(2026, 4, 12, 22, 0, 0, tzinfo=timezone.utc)
+        result = json.dumps(dt, cls=ModelEncoder)
+        assert "2026-04-12" in json.loads(result)
