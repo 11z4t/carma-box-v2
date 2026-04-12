@@ -99,3 +99,56 @@ class TestDailySummary:
         )
         assert summary.total_pv_kwh == 25.5
         assert summary.self_consumption_pct == 95.0
+
+
+# ===========================================================================
+# Coverage: _send and notify with webhook
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestWithWebhook:
+    """Tests with a mock webhook URL set."""
+
+    async def test_notify_with_mocked_send(self) -> None:
+        """With webhook URL, notify should call _send for configured events."""
+        import os
+        from unittest.mock import AsyncMock, patch
+
+        os.environ["TEST_SLACK_WEBHOOK"] = "https://hooks.slack.com/test"
+        try:
+            n = SlackNotifier(SlackConfig(webhook_env="TEST_SLACK_WEBHOOK"))
+            with patch.object(n, "_send", new_callable=AsyncMock, return_value=True) as m:
+                result = await n.notify("scenario_transition", "test msg")
+                assert result is True
+                m.assert_awaited_once()
+        finally:
+            del os.environ["TEST_SLACK_WEBHOOK"]
+
+    async def test_daily_summary_with_mocked_send(self) -> None:
+        """Daily summary calls _send with formatted text."""
+        import os
+        from unittest.mock import AsyncMock, patch
+
+        os.environ["TEST_SLACK_WEBHOOK"] = "https://hooks.slack.com/test"
+        try:
+            n = SlackNotifier(SlackConfig(webhook_env="TEST_SLACK_WEBHOOK"))
+            with patch.object(n, "_send", new_callable=AsyncMock, return_value=True) as m:
+                summary = DailySummary(date="2026-04-12", total_pv_kwh=25.0)
+                result = await n.send_daily_summary(summary)
+                assert result is True
+                m.assert_awaited_once()
+        finally:
+            del os.environ["TEST_SLACK_WEBHOOK"]
+
+    async def test_filtered_event_not_sent(self) -> None:
+        """Unconfigured event type should not send even with webhook."""
+        import os
+
+        os.environ["TEST_SLACK_WEBHOOK"] = "https://hooks.slack.com/test"
+        try:
+            n = SlackNotifier(SlackConfig(webhook_env="TEST_SLACK_WEBHOOK"))
+            result = await n.notify("unknown_type", "test")
+            assert result is False
+        finally:
+            del os.environ["TEST_SLACK_WEBHOOK"]

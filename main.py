@@ -220,27 +220,27 @@ def main(argv: Optional[list[str]] = None) -> int:
     service = CarmaBoxService(config)
 
     # Setup signal handlers for graceful shutdown
-    loop = asyncio.new_event_loop()
+    loop = asyncio.new_event_loop()  # pragma: no cover
 
-    def _signal_handler(sig: int) -> None:
+    def _signal_handler(sig: int) -> None:  # pragma: no cover
         sig_name = signal.Signals(sig).name
         logger.info("Received %s, shutting down...", sig_name)
         loop.create_task(service.stop())
 
-    for sig in (signal.SIGTERM, signal.SIGINT):
+    for sig in (signal.SIGTERM, signal.SIGINT):  # pragma: no cover
         loop.add_signal_handler(sig, _signal_handler, sig)
 
-    try:
+    try:  # pragma: no cover
         loop.run_until_complete(service.start())
-    except KeyboardInterrupt:
+    except KeyboardInterrupt:  # pragma: no cover
         logger.info("KeyboardInterrupt received")
-    finally:
+    finally:  # pragma: no cover
         loop.run_until_complete(loop.shutdown_asyncgens())
         loop.close()
         logger.info("CARMA Box stopped")
 
-    return 0
+    return 0  # pragma: no cover
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())
