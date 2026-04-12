@@ -54,7 +54,7 @@ class EllevioConfig(BaseModel):
 
     cost_per_kw_month: float = Field(default=81.25, ge=0.0)
     top_n: int = Field(default=3, ge=1, le=10)
-    tak_kw: float = Field(default=2.0, ge=0.1, le=50.0)
+    tak_kw: float = Field(default=3.0, ge=0.1, le=50.0)
     night_weight: float = Field(default=0.5, ge=0.0, le=1.0)
     day_weight: float = Field(default=1.0, ge=0.0, le=2.0)
     night_start_hour: int = Field(default=22, ge=0, le=23)

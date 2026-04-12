@@ -254,7 +254,7 @@ class TestGridConfig:
         """Default grid config should have correct values."""
         grid = GridConfig()
         assert grid.main_fuse_a == 25
-        assert grid.ellevio.tak_kw == 2.0
+        assert grid.ellevio.tak_kw == 3.0
         assert grid.ellevio.night_weight == 0.5
 
     def test_ellevio_margin_range(self) -> None:
@@ -325,8 +325,8 @@ class TestProductionConfig:
         assert config.ev.battery_kwh == 92.0
 
     def test_ellevio_tak(self, config: CarmaConfig) -> None:
-        """Ellevio weighted target should be 2.0 kW."""
-        assert config.grid.ellevio.tak_kw == 2.0
+        """Ellevio weighted target should be 3.0 kW."""
+        assert config.grid.ellevio.tak_kw == 3.0
 
     def test_cycle_interval(self, config: CarmaConfig) -> None:
         """Control loop cycle should be 30 seconds."""

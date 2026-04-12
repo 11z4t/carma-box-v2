@@ -77,7 +77,7 @@ class GuardConfig:
     """Guard thresholds — populated from CarmaConfig.guards."""
 
     # Ellevio (G3)
-    tak_kw: float = 2.0
+    tak_kw: float = 3.0
     night_weight: float = 0.5
     day_weight: float = 1.0
     night_start_hour: int = 22

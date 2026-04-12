@@ -310,47 +310,47 @@ class TestG3Ellevio:
     """G3 tests: Ellevio weighted average check with effective tak."""
 
     def test_below_margin_no_trigger(self, guard: GridGuard) -> None:
-        """Below 85% of tak = OK."""
-        result = _eval(guard, weighted_avg_kw=1.0, hour=12)
+        """Below 85% of tak (3.0*0.85=2.55) = OK."""
+        result = _eval(guard, weighted_avg_kw=2.0, hour=12)
         assert result.level == GuardLevel.OK
 
     def test_warning_at_margin(self, guard: GridGuard) -> None:
-        """Above 85% of 2.0kW = above 1.7kW → WARNING."""
-        result = _eval(guard, weighted_avg_kw=1.8, hour=12)
+        """Above 85% of 3.0kW = above 2.55kW → WARNING."""
+        result = _eval(guard, weighted_avg_kw=2.7, hour=12)
         assert result.level == GuardLevel.WARNING
 
     def test_critical_at_emergency(self, guard: GridGuard) -> None:
-        """Above 110% of 2.0kW = above 2.2kW → CRITICAL."""
-        result = _eval(guard, weighted_avg_kw=2.3, hour=12)
+        """Above 110% of 3.0kW = above 3.3kW → CRITICAL."""
+        result = _eval(guard, weighted_avg_kw=3.5, hour=12)
         assert result.level == GuardLevel.CRITICAL
 
     def test_breach_above_tak(self, guard: GridGuard) -> None:
-        """Between 2.0kW and 2.2kW → BREACH (above tak but below critical)."""
-        result = _eval(guard, weighted_avg_kw=2.1, hour=12)
+        """Between 3.0kW and 3.3kW → BREACH (above tak but below critical)."""
+        result = _eval(guard, weighted_avg_kw=3.1, hour=12)
         assert result.level == GuardLevel.BREACH
         assert result.replan_needed
 
     def test_far_above_tak_is_critical(self, guard: GridGuard) -> None:
-        """Above 2.2kW (110% of tak) → CRITICAL (highest severity)."""
-        result = _eval(guard, weighted_avg_kw=2.5, hour=12)
+        """Above 3.3kW (110% of tak) → CRITICAL (highest severity)."""
+        result = _eval(guard, weighted_avg_kw=3.5, hour=12)
         assert result.level == GuardLevel.CRITICAL
         assert result.replan_needed
 
-    def test_effective_tak_night_is_4kw(self, guard: GridGuard) -> None:
-        """B13 regression: night tak = 2.0 / 0.5 = 4.0 kW."""
-        # 3.0 kW at night should be fine (< 4.0 kW)
-        result = _eval(guard, weighted_avg_kw=3.0, hour=23)
+    def test_effective_tak_night_is_6kw(self, guard: GridGuard) -> None:
+        """B13 regression: night tak = 3.0 / 0.5 = 6.0 kW."""
+        # 5.0 kW at night should be fine (< 6.0 kW)
+        result = _eval(guard, weighted_avg_kw=5.0, hour=23)
         g3_violations = [v for v in result.violations if "G3" in v]
         assert len(g3_violations) == 0
 
-    def test_effective_tak_day_is_2kw(self, guard: GridGuard) -> None:
-        """Day tak = 2.0 / 1.0 = 2.0 kW. 2.1 kW exceeds tak → BREACH."""
-        result = _eval(guard, weighted_avg_kw=2.1, hour=14)
+    def test_effective_tak_day_is_3kw(self, guard: GridGuard) -> None:
+        """Day tak = 3.0 / 1.0 = 3.0 kW. 3.1 kW exceeds tak → BREACH."""
+        result = _eval(guard, weighted_avg_kw=3.1, hour=14)
         assert result.level == GuardLevel.BREACH
 
-    def test_night_3_5kw_triggers_warning(self, guard: GridGuard) -> None:
-        """Night: 3.5 kW > 4.0 * 0.85 = 3.4 kW → WARNING."""
-        result = _eval(guard, weighted_avg_kw=3.5, hour=1)
+    def test_night_5_2kw_triggers_warning(self, guard: GridGuard) -> None:
+        """Night: 5.2 kW > 6.0 * 0.85 = 5.1 kW → WARNING."""
+        result = _eval(guard, weighted_avg_kw=5.2, hour=1)
         g3_violations = [v for v in result.violations if "G3" in v]
         assert len(g3_violations) >= 1
 
@@ -358,10 +358,10 @@ class TestG3Ellevio:
         """Test all hour boundaries for night/day transition."""
         # Night hours: 22, 23, 0, 1, 2, 3, 4, 5
         for h in [22, 23, 0, 1, 2, 3, 4, 5]:
-            assert guard._effective_tak_kw(h) == 4.0, f"Hour {h} should be night (4.0kW)"
+            assert guard._effective_tak_kw(h) == 6.0, f"Hour {h} should be night (6.0kW)"
         # Day hours: 6-21
         for h in range(6, 22):
-            assert guard._effective_tak_kw(h) == 2.0, f"Hour {h} should be day (2.0kW)"
+            assert guard._effective_tak_kw(h) == 3.0, f"Hour {h} should be day (3.0kW)"
 
 
 # ===========================================================================
@@ -494,9 +494,9 @@ class TestGuardPriority:
 
     def test_headroom_calculated(self, guard: GridGuard) -> None:
         """Headroom = effective_tak - weighted_avg."""
-        result = _eval(guard, weighted_avg_kw=1.5, hour=12)
-        assert result.headroom_kw == pytest.approx(0.5, abs=0.01)
+        result = _eval(guard, weighted_avg_kw=2.0, hour=12)
+        assert result.headroom_kw == pytest.approx(1.0, abs=0.01)  # 3.0 - 2.0
 
     def test_headroom_night(self, guard: GridGuard) -> None:
-        result = _eval(guard, weighted_avg_kw=2.0, hour=23)
-        assert result.headroom_kw == pytest.approx(2.0, abs=0.01)  # 4.0 - 2.0
+        result = _eval(guard, weighted_avg_kw=3.0, hour=23)
+        assert result.headroom_kw == pytest.approx(3.0, abs=0.01)  # 6.0 - 3.0

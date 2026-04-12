@@ -30,7 +30,7 @@ grid:
   ellevio:
     cost_per_kw_month: 81.25
     top_n: 3
-    tak_kw: 2.0
+    tak_kw: 3.0
     night_weight: 0.5
     day_weight: 1.0
     night_start_hour: 22
