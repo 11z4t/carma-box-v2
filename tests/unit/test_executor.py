@@ -66,7 +66,7 @@ def inverters() -> dict[str, AsyncMock]:
 @pytest.fixture()
 def executor(inverters: dict[str, AsyncMock]) -> CommandExecutor:
     return CommandExecutor(
-        inverters=inverters,
+        inverters=inverters,  # type: ignore[arg-type]
         ev_charger=_make_ev(),
         consumers={"miner": _make_consumer()},
         mode_manager=ModeChangeManager(ModeChangeConfig(
@@ -178,7 +178,7 @@ class TestRateLimiting:
         """Two mode changes within cooldown should block the second."""
         inv = {"kontor": _make_inverter()}
         executor = CommandExecutor(
-            inverters=inv,
+            inverters=inv,  # type: ignore[arg-type]
             config=ExecutorConfig(mode_change_cooldown_s=300.0),
         )
 
@@ -205,7 +205,7 @@ class TestRateLimiting:
         """Rate limit is per-battery, not global."""
         inverters = {"kontor": _make_inverter(), "forrad": _make_inverter()}
         executor = CommandExecutor(
-            inverters=inverters,
+            inverters=inverters,  # type: ignore[arg-type]
             config=ExecutorConfig(mode_change_cooldown_s=300.0),
         )
 
@@ -253,7 +253,7 @@ class TestAuditTrail:
         """Failed commands should also be audit-logged."""
         inv = {"kontor": _make_inverter()}
         inv["kontor"].set_ems_power_limit = AsyncMock(return_value=False)
-        executor = CommandExecutor(inverters=inv)
+        executor = CommandExecutor(inverters=inv)  # type: ignore[arg-type]
 
         cmd = Command(
             command_type=CommandType.SET_EMS_POWER_LIMIT,

@@ -20,7 +20,7 @@ TEST_DIR = PROJECT_ROOT / "tests"
 
 def _all_py_files(dirs: list[Path]) -> list[Path]:
     """Collect all .py files from given directories."""
-    files = []
+    files: list[Path] = []
     for d in dirs:
         files.extend(d.rglob("*.py"))
     return [f for f in files if f.name != "__init__.py"]

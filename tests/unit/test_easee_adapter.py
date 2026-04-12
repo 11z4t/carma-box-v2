@@ -18,7 +18,7 @@ import pytest
 
 from adapters.easee import EaseeAdapter
 from adapters.ha_api import HAApiClient
-from config.schema import EVChargerConfig
+from config.schema import EVChargerConfig, EVChargerEntities
 
 
 
@@ -35,16 +35,16 @@ def _make_config() -> EVChargerConfig:
         max_amps=10,
         min_amps=6,
         phases=3,
-        entities={
-            "status": "sensor.easee_home_12840_status",
-            "power": "sensor.easee_home_12840_power",
-            "current": "sensor.easee_home_12840_current",
-            "enabled": "switch.easee_home_12840_is_enabled",
-            "dynamic_charger_limit": "sensor.easee_home_12840_dynamic_charger_limit",
-            "max_charger_limit": "sensor.easee_home_12840_max_charger_limit",
-            "reason_for_no_current": "sensor.easee_home_12840_reason_for_no_current",
-            "override_schedule": "button.easee_home_12840_override_schedule",
-        },
+        entities=EVChargerEntities(
+            status="sensor.easee_home_12840_status",
+            power="sensor.easee_home_12840_power",
+            current="sensor.easee_home_12840_current",
+            enabled="switch.easee_home_12840_is_enabled",
+            dynamic_charger_limit="sensor.easee_home_12840_dynamic_charger_limit",
+            max_charger_limit="sensor.easee_home_12840_max_charger_limit",
+            reason_for_no_current="sensor.easee_home_12840_reason_for_no_current",
+            override_schedule="button.easee_home_12840_override_schedule",
+        ),
     )
 
 
@@ -237,4 +237,4 @@ class TestB3WaitingInFully:
             assert calls[3][0][0] == "easee"
             assert calls[3][0][1] == "set_charger_dynamic_limit"
         finally:
-            asyncio.sleep = original_sleep  # type: ignore[assignment]
+            asyncio.sleep = original_sleep

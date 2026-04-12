@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from core.models import Scenario
+from core.models import Scenario, SystemSnapshot
 from core.state_machine import StateMachine, StateMachineConfig
 from tests.conftest import make_ev_state, make_grid_state, make_snapshot
 
@@ -41,7 +41,7 @@ def _snap(
     grid_power_w: float = 500.0,
     pv_total_w: float = 0.0,
     price_ore: float = 50.0,
-):  # type: ignore[no-untyped-def]
+) -> SystemSnapshot:
     """Create a snapshot with convenient defaults."""
     from tests.conftest import make_battery_state
 
