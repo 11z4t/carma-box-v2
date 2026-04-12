@@ -21,8 +21,6 @@ from adapters.goodwe import GoodWeAdapter
 from adapters.ha_api import HAApiClient
 from config.schema import BatteryConfig
 
-pytestmark = pytest.mark.asyncio
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -132,6 +130,7 @@ class TestProperties:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestReadSuccess:
     """Test read methods with valid HA sensor states."""
 
@@ -251,6 +250,7 @@ class TestReadSuccess:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestReadUnavailable:
     """Test read methods return safe defaults when sensors are unavailable."""
 
@@ -315,6 +315,7 @@ class TestReadUnavailable:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestWriteMethods:
     """Test write methods send correct HA service calls."""
 
@@ -379,6 +380,7 @@ class TestWriteMethods:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestTruthyTrap:
     """Regression tests for ems_power_limit truthy-trap (B9).
 
@@ -427,6 +429,7 @@ class TestTruthyTrap:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestInv3Regression:
     """Regression tests for INV-3 (B7): set_ems_mode independence.
 
@@ -467,6 +470,7 @@ class TestInv3Regression:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestForbiddenModes:
     """Regression tests for B10/B14: auto mode prohibition."""
 
@@ -504,6 +508,7 @@ class TestForbiddenModes:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestBatchReading:
     """Test get_all_readings batch API call."""
 
