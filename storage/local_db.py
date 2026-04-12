@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import aiosqlite
@@ -195,7 +195,7 @@ class LocalDB:
     async def save_state(self, key: str, value: str) -> None:
         """Save key-value state (upsert)."""
         db = await self._ensure_db()
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(tz=timezone.utc).isoformat()
         await db.execute(
             "INSERT OR REPLACE INTO state (key, value, updated_at) VALUES (?, ?, ?)",
             (key, value, now),
