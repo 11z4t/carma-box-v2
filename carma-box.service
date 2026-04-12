@@ -1,0 +1,34 @@
+# /etc/systemd/system/carma-box.service
+[Unit]
+Description=CARMA Box Energy Optimization
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=carma-box
+Group=carma-box
+WorkingDirectory=/opt/carma-box
+EnvironmentFile=/etc/carma-box/env
+ExecStart=/opt/carma-box/venv/bin/python -m main \
+    --config /etc/carma-box/site.yaml
+Restart=on-failure
+RestartSec=30
+WatchdogSec=120
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/carma-box /var/log/carma-box
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=carma-box
+
+[Install]
+WantedBy=multi-user.target

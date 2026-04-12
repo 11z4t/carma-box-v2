@@ -1,0 +1,406 @@
+# CARMA Box Site Configuration
+# Site: Sanduddsvagen 60, Sollentuna
+# Version: 2.0
+
+site:
+  id: "sanduddsvagen-60"
+  name: "Sanduddsvagen 60"
+  timezone: "Europe/Stockholm"
+  latitude: 59.427
+  longitude: 18.005
+  altitude_m: 30
+
+# Home Assistant connection
+homeassistant:
+  url: "http://192.168.5.22:8123"
+  token_env: "CARMA_HA_TOKEN"
+  verify_ssl: false
+  timeout_s: 10
+  retry_count: 3
+  retry_delay_s: 2
+
+# Grid configuration
+grid:
+  main_fuse_a: 25
+  main_fuse_phases: 3
+  voltage_v: 230
+  max_import_kw: 17.25
+
+  # Ellevio peak shaving
+  ellevio:
+    cost_per_kw_month: 81.25
+    top_n: 3
+    tak_kw: 2.0
+    night_weight: 0.5
+    day_weight: 1.0
+    night_start_hour: 22
+    night_end_hour: 6
+    margin: 0.85
+    emergency_factor: 1.10
+    entity_weighted_avg: "sensor.ellevio_viktad_timmedel_pagaende"
+    entity_current_peak: "sensor.ellevio_aktuell_topp"
+    entity_dynamic_tak: "sensor.ellevio_dynamiskt_tak"
+
+# Battery configuration
+batteries:
+  - id: "kontor"
+    name: "Kontor"
+    type: "goodwe_et"
+    cap_kwh: 15.0
+    min_soc_pct: 15.0
+    min_soc_cold_pct: 20.0
+    cold_temp_c: 4.0
+    cold_lock_temp_c: 0.0
+    max_discharge_kw: 5.0
+    max_charge_kw: 5.0
+    efficiency: 0.90
+    ct_placement: "local_load"
+    goodwe_device_id: "696f2a85fed59b45f2ced7fc2663984a"
+
+    goodwe:
+      host: "192.168.1.10"
+      port: 8899
+      comm_addr: 247
+
+    entities:
+      soc: "sensor.goodwe_battery_state_of_charge_kontor"
+      power: "sensor.goodwe_battery_power_kontor"
+      cell_temp: "sensor.goodwe_kontor_battery_temperature"
+      pv_power: "sensor.pv_solar_total"
+      grid_power: "sensor.house_grid_power"
+      load_power: "sensor.goodwe_kontor_load_power"
+      ems_mode: "select.goodwe_kontor_ems_mode"
+      ems_power_limit: "number.goodwe_kontor_ems_power_limit"
+      fast_charging: "switch.goodwe_fast_charging_switch_kontor"
+      fast_charging_power: "number.goodwe_fast_charging_power_kontor"
+      export_limit: "number.goodwe_grid_export_limit_kontor"
+      soh: "sensor.goodwe_kontor_battery_soh"
+
+  - id: "forrad"
+    name: "Forrad"
+    type: "goodwe_et"
+    cap_kwh: 5.0
+    min_soc_pct: 15.0
+    min_soc_cold_pct: 20.0
+    cold_temp_c: 4.0
+    cold_lock_temp_c: 0.0
+    max_discharge_kw: 5.0
+    max_charge_kw: 5.0
+    efficiency: 0.90
+    ct_placement: "house_grid"
+    goodwe_device_id: "e087f4789d3713e9b18f1ff27d4e7cb9"
+
+    goodwe:
+      host: "192.168.1.11"
+      port: 8899
+      comm_addr: 247
+
+    entities:
+      soc: "sensor.goodwe_battery_state_of_charge_forrad"
+      power: "sensor.goodwe_battery_power_forrad"
+      cell_temp: "sensor.goodwe_forrad_battery_temperature"
+      pv_power: "sensor.goodwe_forrad_pv_power"
+      grid_power: "sensor.goodwe_forrad_grid_power"
+      load_power: "sensor.goodwe_forrad_load_power"
+      ems_mode: "select.goodwe_forrad_ems_mode"
+      ems_power_limit: "number.goodwe_forrad_ems_power_limit"
+      fast_charging: "switch.goodwe_fast_charging_switch_forrad"
+      fast_charging_power: "number.goodwe_fast_charging_power_forrad"
+      export_limit: "number.goodwe_grid_export_limit_forrad"
+      soh: "sensor.goodwe_forrad_battery_soh"
+
+# EV Charger configuration
+ev_charger:
+  id: "ev_main"
+  name: "Easee Home"
+  type: "easee"
+  charger_id: "EH128405"
+  max_amps: 10
+  min_amps: 6
+  phases: 3
+  voltage_v: 230
+
+  ramp:
+    start_amps: 6
+    step_amps: 1
+    step_interval_s: 300
+    steps: [6, 8, 10]
+    cooldown_after_start_s: 120
+    cooldown_after_stop_s: 180
+    emergency_cut_amps: 6
+
+  easee:
+    smart_charging: false
+    waiting_in_fully_fix_delay_s: 180
+    max_charger_current_floor: 10
+
+  entities:
+    status: "sensor.easee_home_12840_status"
+    power: "sensor.easee_home_12840_power"
+    current: "sensor.easee_home_12840_current"
+    enabled: "switch.easee_home_12840_is_enabled"
+    dynamic_charger_limit: "sensor.easee_home_12840_dynamic_charger_limit"
+    max_charger_limit: "sensor.easee_home_12840_max_charger_limit"
+    reason_for_no_current: "sensor.easee_home_12840_reason_for_no_current"
+    override_schedule: "button.easee_home_12840_override_schedule"
+
+# EV configuration
+ev:
+  id: "xpeng_g9"
+  name: "XPENG G9"
+  battery_kwh: 92.0
+  efficiency: 0.92
+  daily_target_soc_pct: 75.0
+  weekly_full_charge_days: 7
+  max_soc_jump_pct: 20.0
+
+  entities:
+    soc: "sensor.bil_batteri_soc"
+
+# Dispatchable consumers (surplus chain)
+consumers:
+  - id: "miner"
+    name: "Goldshell SC Box II"
+    type: "on_off"
+    priority: 1
+    priority_shed: 1
+    power_w: 400
+    min_w: 400
+    max_w: 400
+    entity_switch: "switch.shelly1pmg4_a085e3bd1e60"
+    entity_power: "sensor.appliance_total_effekt"
+    start_export_w: 200
+    stop_import_w: 500
+
+  - id: "vp_kontor"
+    name: "VP Kontor"
+    type: "on_off"
+    priority: 3
+    priority_shed: 2
+    power_w: 1500
+    min_w: 1500
+    max_w: 2000
+    entity_switch: "switch.shellypro1pm_30c6f78289b8_switch_0"
+    entity_power: "sensor.shellypro1pm_vp_kontor_power"
+
+  - id: "vp_pool"
+    name: "VP Pool"
+    type: "on_off"
+    priority: 4
+    priority_shed: 3
+    power_w: 2000
+    min_w: 2000
+    max_w: 3000
+    entity_switch: "switch.vp_pool"
+    entity_power: "sensor.vp_pool_power"
+    requires_active: "pump_pool"
+
+  - id: "pool_heater"
+    name: "Pool Heater"
+    type: "on_off"
+    priority: 5
+    priority_shed: 4
+    power_w: 3000
+    min_w: 3000
+    max_w: 3000
+    entity_switch: "switch.pool_heater"
+    entity_power: "sensor.pool_heater_power"
+    requires_active: "pump_pool"
+
+# Surplus chain configuration
+surplus:
+  start_delay_s: 60
+  stop_delay_s: 180
+  bump_delay_s: 60
+  min_surplus_w: 50
+  max_switches_per_window: 2
+  switch_window_min: 30
+  start_threshold_kw: 1.0
+  stop_threshold_kw: 0.5
+  start_delay_min: 5
+  stop_delay_min: 3
+
+  climate_boost:
+    max_degrees: 2.0
+    min_surplus_w: 500
+
+# Price data
+pricing:
+  source: "nordpool"
+  entity: "sensor.nordpool_kwh_se3_sek_3_10_025"
+  cheap_ore: 30
+  expensive_ore: 80
+  fallback_ore: 100
+
+# PV Forecast
+pv_forecast:
+  source: "solcast"
+  entity_today: "sensor.solcast_pv_forecast_forecast_today"
+  entity_tomorrow: "sensor.solcast_pv_forecast_forecast_tomorrow"
+  entity_pv_high_today: "input_boolean.pv_high_today"
+  entity_pv_high_tomorrow: "input_boolean.pv_high_tomorrow"
+  api_calls_per_day: 10
+  p10_safety:
+    threshold_kwh: 5.0
+    confidence_pct: 20.0
+    conservative_kw: 0.5
+    moderate_kw: 1.0
+    normal_kw: 2.0
+
+# Weather
+weather:
+  source: "tempest"
+  entity_pressure: "sensor.tempest_pressure"
+  entity_temp: "sensor.tempest_temperature"
+  entity_uv: "sensor.tempest_uv_index"
+  entity_solar_radiation: "sensor.tempest_solar_radiation"
+
+# Night planning
+night_plan:
+  window_start_hour: 22
+  window_end_hour: 6
+  house_baseload_kw: 2.5
+  night_hours: 8
+  appliance_margin_kwh: 3.0
+  grid_charge_max_kw: 3.0
+  grid_charge_price_threshold_ore: 60
+  grid_charge_max_soc_pct: 90
+
+# Evening planning
+evening_plan:
+  start_hour: 17
+  end_hour: 22
+  evening_allocation_pct: 50
+  morning_allocation_pct: 50
+
+# Control loop timing
+control:
+  cycle_interval_s: 30
+  plan_interval_s: 300
+  mode_change_cooldown_s: 300
+  standby_intermediate_s: 300
+  scenario_transition_s: 300
+  measurement_stale_s: 300
+
+  deadband:
+    normal_w: 100
+    doubled_w: 200
+    doubled_duration_s: 180
+
+  export_target:
+    rolling_avg_minutes: 15
+    max_export_w: 0
+    momentary_tolerance_w: 200
+
+# Safety guards
+guards:
+  g0_grid_charging:
+    enabled: true
+    check_interval_s: 30
+    action: "zero_ems_power_limit"
+
+  g1_soc_floor:
+    enabled: true
+    floor_pct: 15.0
+    cold_floor_pct: 20.0
+    action: "battery_standby"
+
+  g2_fast_charging_conflict:
+    enabled: true
+    action: "fast_charging_off"
+
+  g3_ellevio_breach:
+    enabled: true
+    breach_factor: 1.05
+    action: "kill_loads_max_discharge"
+    recovery_hold_s: 60
+
+  g4_temperature:
+    enabled: true
+    cold_temp_c: 4.0
+    freeze_temp_c: 0.0
+    soc_floor_raise_pct: 5.0
+
+  g5_oscillation:
+    enabled: true
+    max_changes_per_window: 3
+    window_s: 300
+    doubled_deadband_s: 180
+
+  g6_stale_data:
+    enabled: true
+    threshold_s: 300
+    action: "alarm_freeze"
+
+  g7_communication_lost:
+    enabled: true
+    ha_health_timeout_s: 30
+    action: "alarm_freeze"
+
+# Storage
+storage:
+  sqlite:
+    path: "/var/lib/carma-box/carma.db"
+    retention_days: 7
+    vacuum_interval_hours: 24
+
+  postgresql:
+    host: "192.168.5.10"
+    port: 5432
+    database: "energy"
+    user_env: "CARMA_PG_USER"
+    password_env: "CARMA_PG_PASS"
+    sync_interval_s: 300
+    batch_size: 1000
+
+# Notifications
+notifications:
+  slack:
+    webhook_env: "CARMA_SLACK_WEBHOOK"
+    channel: "#energy"
+    notify_on:
+      - scenario_transition
+      - ev_start_stop
+      - guard_trigger
+      - ellevio_breach
+      - communication_lost
+      - daily_summary
+
+  ha_notify:
+    entity: "notify.mobile_app_bmq_iphone"
+    notify_on:
+      - ellevio_breach
+      - communication_lost
+      - guard_trigger
+
+# Manual override
+manual_override:
+  enabled_entity: "input_boolean.carma_manual_override"
+  scenario_entity: "input_select.carma_manual_scenario"
+  strategy_entity: "input_select.goodwe_battery_strategy"
+  discharge_target_entity: "input_number.goodwe_total_discharge_target"
+  scenarios:
+    - "Auto"
+    - "MORNING_DISCHARGE"
+    - "FORENOON_PV_EV"
+    - "MIDDAY_CHARGE"
+    - "EVENING_DISCHARGE"
+    - "NIGHT_HIGH_PV"
+    - "NIGHT_LOW_PV"
+    - "NIGHT_GRID_CHARGE"
+    - "PV_SURPLUS"
+
+# Logging
+logging:
+  level: "INFO"
+  file: "/var/log/carma-box/carma.log"
+  max_bytes: 10485760
+  backup_count: 5
+  cycle_log_to_db: true
+  audit_log_to_db: true
+  event_log_to_db: true
+
+# Health check
+health:
+  port: 8412
+  path: "/health"
