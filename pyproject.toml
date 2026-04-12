@@ -3,4 +3,7 @@
 asyncio_mode = "strict"
 
 [tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
 select = ["F", "E", "W"]
