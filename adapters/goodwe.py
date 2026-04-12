@@ -23,6 +23,7 @@ from config.schema import BatteryConfig
 logger = logging.getLogger(__name__)
 
 # EMS mode strings as used by the GoodWe HACS integration
+# Allowed EMS modes — "auto" intentionally excluded (B10/B14)
 _VALID_EMS_MODES = frozenset({
     "charge_pv",
     "discharge_pv",
@@ -30,11 +31,7 @@ _VALID_EMS_MODES = frozenset({
     "import_ac",
     "export_ac",
     "conserve",
-    "auto",
 })
-
-# Mode "auto" is FORBIDDEN in CARMA Box (B10/B14)
-_FORBIDDEN_MODES = frozenset({"auto"})
 
 
 class GoodWeAdapter(InverterAdapter):
@@ -162,13 +159,6 @@ class GoodWeAdapter(InverterAdapter):
 
         Returns True if the service call succeeded.
         """
-        if mode in _FORBIDDEN_MODES:
-            self._log.error(
-                "Refused to set FORBIDDEN mode '%s' on %s (B10/B14)",
-                mode, self.battery_id,
-            )
-            return False
-
         if mode not in _VALID_EMS_MODES:
             self._log.error(
                 "Unknown EMS mode '%s' for %s", mode, self.battery_id,
