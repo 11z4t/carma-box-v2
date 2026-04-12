@@ -38,7 +38,7 @@ grid:
     margin: 0.85
     emergency_factor: 1.10
     entity_weighted_avg: "sensor.ellevio_viktad_timmedel_pagaende"
-    entity_current_peak: "sensor.ellevio_aktuell_topp"
+    entity_current_peak: "sensor.ellevio_manadens_topp_1"
     entity_dynamic_tak: "sensor.ellevio_dynamiskt_tak"
 
 # Battery configuration
@@ -65,16 +65,16 @@ batteries:
     entities:
       soc: "sensor.goodwe_battery_state_of_charge_kontor"
       power: "sensor.goodwe_battery_power_kontor"
-      cell_temp: "sensor.goodwe_kontor_battery_temperature"
-      pv_power: "sensor.pv_solar_total"
+      cell_temp: "sensor.goodwe_battery_temperature_kontor"
+      pv_power: "sensor.pv_power"
       grid_power: "sensor.house_grid_power"
-      load_power: "sensor.goodwe_kontor_load_power"
+      load_power: "sensor.back_up_load"
       ems_mode: "select.goodwe_kontor_ems_mode"
       ems_power_limit: "number.goodwe_kontor_ems_power_limit"
       fast_charging: "switch.goodwe_fast_charging_switch_kontor"
       fast_charging_power: "number.goodwe_fast_charging_power_kontor"
       export_limit: "number.goodwe_grid_export_limit_kontor"
-      soh: "sensor.goodwe_kontor_battery_soh"
+      soh: "sensor.battery_state_of_health"
 
   - id: "forrad"
     name: "Forrad"
@@ -98,16 +98,16 @@ batteries:
     entities:
       soc: "sensor.goodwe_battery_state_of_charge_forrad"
       power: "sensor.goodwe_battery_power_forrad"
-      cell_temp: "sensor.goodwe_forrad_battery_temperature"
-      pv_power: "sensor.goodwe_forrad_pv_power"
-      grid_power: "sensor.goodwe_forrad_grid_power"
-      load_power: "sensor.goodwe_forrad_load_power"
+      cell_temp: "sensor.goodwe_battery_temperature_forrad"
+      pv_power: "sensor.pv_power_2"
+      grid_power: "sensor.house_grid_power"
+      load_power: "sensor.back_up_load_2"
       ems_mode: "select.goodwe_forrad_ems_mode"
       ems_power_limit: "number.goodwe_forrad_ems_power_limit"
       fast_charging: "switch.goodwe_fast_charging_switch_forrad"
       fast_charging_power: "number.goodwe_fast_charging_power_forrad"
       export_limit: "number.goodwe_grid_export_limit_forrad"
-      soh: "sensor.goodwe_forrad_battery_soh"
+      soh: "sensor.battery_state_of_health_2"
 
 # EV Charger configuration
 ev_charger:
@@ -181,7 +181,7 @@ consumers:
     min_w: 1500
     max_w: 2000
     entity_switch: "switch.shellypro1pm_30c6f78289b8_switch_0"
-    entity_power: "sensor.shellypro1pm_vp_kontor_power"
+    entity_power: "sensor.carma_effekt_vp_kontor"
 
   - id: "vp_pool"
     name: "VP Pool"
@@ -191,8 +191,8 @@ consumers:
     power_w: 2000
     min_w: 2000
     max_w: 3000
-    entity_switch: "switch.vp_pool"
-    entity_power: "sensor.vp_pool_power"
+    entity_switch: "switch.pool_vp_on_off"
+    entity_power: "sensor.carma_effekt_vp_pool"
     requires_active: "pump_pool"
 
   - id: "pool_heater"
@@ -203,8 +203,10 @@ consumers:
     power_w: 3000
     min_w: 3000
     max_w: 3000
-    entity_switch: "switch.pool_heater"
-    entity_power: "sensor.pool_heater_power"
+    # Poolvärmaren styrs via Shelly 1PM — device offline 2026-04-12
+    # Switch-entity saknas i HA (Shelly 1PM utan relay). Placeholder tills device online.
+    entity_switch: "input_boolean.surplus_dispatch_pool_heater"
+    entity_power: "sensor.poolvarmare_shelly_1pm_power"
     requires_active: "pump_pool"
 
 # Surplus chain configuration
@@ -375,6 +377,7 @@ notifications:
 
 # Manual override
 manual_override:
+  # TODO: Skapa dessa helpers i HA vid deploy (Story 10)
   enabled_entity: "input_boolean.carma_manual_override"
   scenario_entity: "input_select.carma_manual_scenario"
   strategy_entity: "input_select.goodwe_battery_strategy"

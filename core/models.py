@@ -184,7 +184,7 @@ class Command:
 
     command_type: CommandType
     target_id: str                     # battery_id, charger_id, or consumer_id
-    value: object = None               # mode string, watts int, amps int, bool
+    value: int | float | str | bool | None = None  # mode string, watts int, amps int, bool
     rule_id: str = ""                  # which rule produced this command
     reason: str = ""                   # human-readable reason for audit trail
 
