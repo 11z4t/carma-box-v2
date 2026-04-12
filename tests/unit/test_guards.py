@@ -24,8 +24,6 @@ from core.guards import (
 from core.models import BatteryState, CommandType, Scenario
 from tests.conftest import make_battery_state
 
-pytestmark = pytest.mark.asyncio
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -326,12 +324,18 @@ class TestG3Ellevio:
     def test_critical_at_emergency(self, guard: GridGuard) -> None:
         """Above 110% of 2.0kW = above 2.2kW → CRITICAL."""
         result = _eval(guard, weighted_avg_kw=2.3, hour=12)
-        assert result.level in (GuardLevel.CRITICAL, GuardLevel.BREACH)
+        assert result.level == GuardLevel.CRITICAL
 
     def test_breach_above_tak(self, guard: GridGuard) -> None:
-        """Above 2.0kW → BREACH."""
-        result = _eval(guard, weighted_avg_kw=2.5, hour=12)
+        """Between 2.0kW and 2.2kW → BREACH (above tak but below critical)."""
+        result = _eval(guard, weighted_avg_kw=2.1, hour=12)
         assert result.level == GuardLevel.BREACH
+        assert result.replan_needed
+
+    def test_far_above_tak_is_critical(self, guard: GridGuard) -> None:
+        """Above 2.2kW (110% of tak) → CRITICAL (highest severity)."""
+        result = _eval(guard, weighted_avg_kw=2.5, hour=12)
+        assert result.level == GuardLevel.CRITICAL
         assert result.replan_needed
 
     def test_effective_tak_night_is_4kw(self, guard: GridGuard) -> None:
@@ -342,8 +346,8 @@ class TestG3Ellevio:
         assert len(g3_violations) == 0
 
     def test_effective_tak_day_is_2kw(self, guard: GridGuard) -> None:
-        """Day tak = 2.0 / 1.0 = 2.0 kW."""
-        result = _eval(guard, weighted_avg_kw=2.5, hour=14)
+        """Day tak = 2.0 / 1.0 = 2.0 kW. 2.1 kW exceeds tak → BREACH."""
+        result = _eval(guard, weighted_avg_kw=2.1, hour=14)
         assert result.level == GuardLevel.BREACH
 
     def test_night_3_5kw_triggers_warning(self, guard: GridGuard) -> None:

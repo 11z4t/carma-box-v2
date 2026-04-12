@@ -364,7 +364,21 @@ class GridGuard:
         warning_threshold = effective_tak * self._config.margin
         critical_threshold = effective_tak * self._config.emergency_factor
 
-        if weighted_avg_kw > effective_tak:
+        # Check order: highest severity FIRST (CRITICAL > BREACH > WARNING)
+        # critical_threshold (tak*1.10) > effective_tak > warning_threshold (tak*0.85)
+        if weighted_avg_kw > critical_threshold:
+            # CRITICAL — far above tak, emergency action needed
+            logger.critical(
+                "G3 CRITICAL: weighted_avg=%.2fkW > emergency=%.2fkW",
+                weighted_avg_kw, critical_threshold,
+            )
+            result.level = GuardLevel.CRITICAL
+            result.violations.append(
+                f"G3: Ellevio CRITICAL {weighted_avg_kw:.2f}kW > {critical_threshold:.2f}kW"
+            )
+            result.replan_needed = True
+
+        elif weighted_avg_kw > effective_tak:
             # BREACH — actual exceeds tak
             logger.critical(
                 "G3 BREACH: weighted_avg=%.2fkW > tak=%.2fkW (effective)",
@@ -375,18 +389,6 @@ class GridGuard:
                 f"G3: Ellevio BREACH {weighted_avg_kw:.2f}kW > {effective_tak:.2f}kW"
             )
             result.replan_needed = True
-
-        elif weighted_avg_kw > critical_threshold:
-            # CRITICAL — approaching breach
-            logger.warning(
-                "G3 CRITICAL: weighted_avg=%.2fkW > emergency=%.2fkW",
-                weighted_avg_kw, critical_threshold,
-            )
-            if result.level not in (GuardLevel.CRITICAL, GuardLevel.BREACH):
-                result.level = GuardLevel.CRITICAL
-            result.violations.append(
-                f"G3: Ellevio CRITICAL {weighted_avg_kw:.2f}kW > {critical_threshold:.2f}kW"
-            )
 
         elif weighted_avg_kw > warning_threshold:
             # WARNING — getting close
@@ -424,10 +426,7 @@ class GridGuard:
                     value="battery_standby",
                     reason=f"G4: freeze temp={bat.cell_temp_c:.1f}°C",
                 ))
-            elif bat.cell_temp_c < self._config.tak_kw:
-                # This uses cold_temp from bat config, not tak_kw.
-                # cold_temp_c check is embedded in _effective_min_soc
-                pass  # G1 handles via _effective_min_soc
+            # Cold (< 4°C) floor raising is handled by G1 via _effective_min_soc
 
     # ------------------------------------------------------------------
     # G5: Oscillation Detection
