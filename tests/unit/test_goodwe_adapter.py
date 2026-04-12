@@ -12,14 +12,14 @@ Tests verify:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
 from adapters.goodwe import GoodWeAdapter
 from adapters.ha_api import HAApiClient
-from config.schema import BatteryConfig, BatteryEntities
+from config.schema import BatteryConfig
 
 pytestmark = pytest.mark.asyncio
 
