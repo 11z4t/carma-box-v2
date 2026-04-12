@@ -76,7 +76,7 @@ class GuardEvaluation:
 class GuardConfig:
     """Guard thresholds — populated from CarmaConfig.guards."""
 
-    # Ellevio
+    # Ellevio (G3)
     tak_kw: float = 2.0
     night_weight: float = 0.5
     day_weight: float = 1.0
@@ -86,15 +86,27 @@ class GuardConfig:
     emergency_factor: float = 1.10
     recovery_hold_s: int = 60
 
-    # Oscillation
+    # SoC floor (G1)
+    normal_floor_pct: float = 15.0
+    cold_floor_pct: float = 20.0
+    freeze_floor_pct: float = 25.0
+    cold_temp_c: float = 4.0
+    freeze_temp_c: float = 0.0
+    hysteresis_pct: float = 5.0
+    soh_warn_pct: float = 80.0       # SoH below this → raise floor
+    soh_crit_pct: float = 70.0       # SoH below this → raise floor more
+    soh_warn_raise_pct: float = 5.0  # Added to floor when SoH < soh_warn
+    soh_crit_raise_pct: float = 10.0  # Added to floor when SoH < soh_crit
+
+    # Oscillation (G5)
     max_changes_per_window: int = 3
     window_s: int = 300
     doubled_deadband_s: int = 180
 
-    # Stale data
+    # Stale data (G6)
     stale_threshold_s: int = 300
 
-    # Communication
+    # Communication (G7)
     ha_health_timeout_s: int = 30
 
 
@@ -109,8 +121,6 @@ class GridGuard:
     Thread-safe: designed for single-threaded asyncio, no locks needed.
     Stateful: tracks oscillation history and G1 hysteresis across cycles.
     """
-
-    HYSTERESIS_PCT = 5.0  # Resume discharge when SoC > floor + this
 
     def __init__(self, config: GuardConfig) -> None:
         self._config = config
@@ -294,11 +304,11 @@ class GridGuard:
 
             elif bat_id in self._at_floor:
                 # Was at floor — check hysteresis
-                if bat.soc_pct > effective_floor + self.HYSTERESIS_PCT:
+                if bat.soc_pct > effective_floor + self._config.hysteresis_pct:
                     logger.info(
                         "G1 RECOVERY: %s at %.1f%%, above floor+hysteresis (%.1f%%)",
                         bat_id, bat.soc_pct,
-                        effective_floor + self.HYSTERESIS_PCT,
+                        effective_floor + self._config.hysteresis_pct,
                     )
                     self._at_floor.discard(bat_id)
                 else:
@@ -311,7 +321,7 @@ class GridGuard:
                         value="battery_standby",
                         reason=(
                             f"G1: hysteresis, soc={bat.soc_pct:.1f}% "
-                            f"< floor+5%={effective_floor + self.HYSTERESIS_PCT:.1f}%"
+                            f"< floor+5%={effective_floor + self._config.hysteresis_pct:.1f}%"
                         ),
                     ))
 
@@ -525,28 +535,25 @@ class GridGuard:
             return hour >= start or hour < end
         return start <= hour < end
 
-    @staticmethod
-    def _effective_min_soc(bat: BatteryState) -> float:
+    def _effective_min_soc(self, bat: BatteryState) -> float:
         """Calculate effective minimum SoC considering temperature and SoH.
 
-        Base: 15% (config min_soc_pct, embedded in BatteryState)
-        Cold (< 4°C): 20%
-        Freeze (< 0°C): 25%
-        SoH < 80%: +5%
-        SoH < 70%: +10%
+        All thresholds from GuardConfig — zero hardcoding.
         """
-        # Base floor from BatteryState (already contains config values)
-        if bat.cell_temp_c < 0.0:
-            floor = 25.0
-        elif bat.cell_temp_c < 4.0:
-            floor = 20.0
-        else:
-            floor = 15.0
+        cfg = self._config
 
-        # SoH degradation
-        if bat.soh_pct < 70.0:
-            floor += 10.0
-        elif bat.soh_pct < 80.0:
-            floor += 5.0
+        # Temperature-based floor
+        if bat.cell_temp_c < cfg.freeze_temp_c:
+            floor = cfg.freeze_floor_pct
+        elif bat.cell_temp_c < cfg.cold_temp_c:
+            floor = cfg.cold_floor_pct
+        else:
+            floor = cfg.normal_floor_pct
+
+        # SoH degradation (crit checked first — it's the larger adjustment)
+        if bat.soh_pct < cfg.soh_crit_pct:
+            floor += cfg.soh_crit_raise_pct
+        elif bat.soh_pct < cfg.soh_warn_pct:
+            floor += cfg.soh_warn_raise_pct
 
         return floor
