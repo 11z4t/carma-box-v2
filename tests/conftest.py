@@ -15,13 +15,8 @@ import pytest
 from config.schema import CarmaConfig, load_config
 from core.models import (
     BatteryState,
-    CommandType,
-    ConsumerState,
-    CycleDecision,
     EVState,
     GridState,
-    GuardResult,
-    GuardStatus,
     Scenario,
     SystemSnapshot,
 )

@@ -7,7 +7,6 @@ Every threshold and entity ID comes from configuration — zero hardcoding.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
