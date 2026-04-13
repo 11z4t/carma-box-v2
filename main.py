@@ -170,7 +170,7 @@ class CarmaBoxService:
             verify_wait_s=30.0,
         ))
         executor = CommandExecutor(
-            inverters=inverters,  # type: ignore[arg-type]
+            inverters=inverters,  # type: ignore[arg-type]  # GoodWeAdapter satisfies InverterPort
             mode_manager=mode_mgr,
             config=ExecutorConfig(
                 mode_change_cooldown_s=config.control.mode_change_cooldown_s,

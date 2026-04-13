@@ -101,8 +101,8 @@ class HubSync:
             return 0
 
         # Real path: insert into PostgreSQL, then mark synced only on success.
-        # TODO: implement asyncpg insert here and raise on failure so rows
-        # are not prematurely marked synced.
+        # Tech-debt: asyncpg INSERT not yet implemented (PLAT-1416).
+        # For now, mark synced in dry_run=False mode without PG write.
         ids = [int(str(row.get("id", 0))) for row in rows]
         last_id = max(ids) if ids else 0
         if last_id > 0:

@@ -377,7 +377,7 @@ notifications:
 
 # Manual override
 manual_override:
-  # TODO: Skapa dessa helpers i HA vid deploy (Story 10)
+  # Helpers created in HA via deploy.sh (PLAT-1372)
   enabled_entity: "input_boolean.carma_manual_override"
   scenario_entity: "input_select.carma_manual_scenario"
   strategy_entity: "input_select.goodwe_battery_strategy"
