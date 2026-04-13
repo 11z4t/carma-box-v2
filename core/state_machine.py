@@ -43,6 +43,7 @@ class StateMachineConfig:
     surplus_exit_soc_pct: float = 90.0   # Bat SoC for surplus mode exit
     surplus_pv_min_w: float = 500.0      # Min PV for surplus entry
     surplus_export_min_w: float = 200.0  # Min export for surplus entry
+    surplus_exit_pv_min_w: float = 200.0  # Min PV to stay in surplus
     grid_charge_max_soc_pct: float = 90.0
     grid_charge_price_threshold_ore: float = 60.0
     ev_target_soc_pct: float = 75.0
@@ -393,5 +394,5 @@ class StateMachine:
         cfg = self._config
         return (
             snap.total_battery_soc_pct < cfg.surplus_exit_soc_pct
-            or snap.grid.pv_total_w < 200.0
+            or snap.grid.pv_total_w < cfg.surplus_exit_pv_min_w
         )
