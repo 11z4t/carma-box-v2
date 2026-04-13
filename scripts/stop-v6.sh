@@ -3,19 +3,26 @@
 #
 # Pre-flight checks:
 #   1. Set both batteries to battery_standby
-#   2. Verify EMS power limit = 0
+#   2. Set EMS power limit = 0 + verify readback
 #   3. Disable v6 custom component in HA
-#   4. Verify no active discharge/charge
 #
 # Usage: ./scripts/stop-v6.sh
+# Requires: HA_TOKEN set in environment or /etc/carma-box/env
 
 set -euo pipefail
+
+# Source env file if it exists (before defaults)
+ENV_FILE="/etc/carma-box/env"
+if [ -f "${ENV_FILE}" ]; then
+    # shellcheck source=/dev/null
+    source "${ENV_FILE}"
+fi
 
 HA_URL="${HA_URL:-http://192.168.5.22:8123}"
 HA_TOKEN="${HA_TOKEN:-}"
 
 if [ -z "${HA_TOKEN}" ]; then
-    echo "ERROR: HA_TOKEN not set"
+    echo "ERROR: HA_TOKEN not set (set in env or ${ENV_FILE})"
     exit 1
 fi
 
@@ -37,6 +44,11 @@ ha_api() {
     fi
 }
 
+ha_get_state() {
+    local entity="$1"
+    ha_api GET "states/${entity}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('state','?'))" 2>/dev/null || echo "?"
+}
+
 echo "=== v6 Safe Shutdown ==="
 
 # 1. Set batteries to standby
@@ -48,21 +60,39 @@ for bat in kontor forrad; do
 done
 sleep 5
 
-# 2. Verify EMS power limit = 0
+# 2. Set EMS power limit = 0
 echo "Step 2: Setting EMS power limits to 0..."
 for bat in kontor forrad; do
     ha_api POST "services/goodwe/set_parameter" \
         "{\"entity_id\": \"number.goodwe_${bat}_ems_power_limit\", \"value\": 0}" \
         > /dev/null 2>&1 || echo "  WARN: failed to zero ${bat} limit"
 done
-sleep 2
+sleep 5
 
-# 3. Verify states
-echo "Step 3: Verifying..."
+# 3. Verify readback — mode AND power limit
+echo "Step 3: Verifying readback..."
+ERRORS=0
 for bat in kontor forrad; do
-    mode=$(ha_api GET "states/select.goodwe_${bat}_ems_mode" | python3 -c "import sys,json; print(json.load(sys.stdin).get('state','?'))" 2>/dev/null || echo "?")
-    echo "  ${bat} mode: ${mode}"
+    mode=$(ha_get_state "select.goodwe_${bat}_ems_mode")
+    limit=$(ha_get_state "number.goodwe_${bat}_ems_power_limit")
+    echo "  ${bat}: mode=${mode}, ems_power_limit=${limit}"
+
+    if [ "${mode}" != "battery_standby" ]; then
+        echo "  ERROR: ${bat} mode is '${mode}', expected 'battery_standby'"
+        ERRORS=$((ERRORS + 1))
+    fi
+    if [ "${limit}" != "0" ] && [ "${limit}" != "0.0" ]; then
+        echo "  ERROR: ${bat} ems_power_limit is '${limit}', expected 0"
+        ERRORS=$((ERRORS + 1))
+    fi
 done
+
+if [ "${ERRORS}" -gt 0 ]; then
+    echo ""
+    echo "ABORT: ${ERRORS} verification failures. Fix manually before cutover."
+    exit 1
+fi
+echo "  All verified OK."
 
 # 4. Disable v6 custom component
 echo "Step 4: Disabling v6 automations..."
@@ -72,5 +102,5 @@ ha_api POST "services/automation/turn_off" \
 
 echo ""
 echo "=== v6 shutdown complete ==="
-echo "Batteries in standby, limits zeroed."
+echo "Batteries in standby, limits verified at 0."
 echo "Start v2: sudo systemctl start carma-box"

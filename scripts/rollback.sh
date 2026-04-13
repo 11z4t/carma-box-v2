@@ -9,11 +9,18 @@
 
 set -euo pipefail
 
+# Source env file if it exists (before defaults)
+ENV_FILE="/etc/carma-box/env"
+if [ -f "${ENV_FILE}" ]; then
+    # shellcheck source=/dev/null
+    source "${ENV_FILE}"
+fi
+
 HA_URL="${HA_URL:-http://192.168.5.22:8123}"
 HA_TOKEN="${HA_TOKEN:-}"
 
 if [ -z "${HA_TOKEN}" ]; then
-    echo "ERROR: HA_TOKEN not set"
+    echo "ERROR: HA_TOKEN not set (set in env or ${ENV_FILE})"
     exit 1
 fi
 
