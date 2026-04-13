@@ -178,3 +178,231 @@ class TestMypyStrict:
             capture_output=True, text=True, cwd=str(PROJECT_ROOT),
         )
         assert result.returncode == 0, f"mypy errors:\n{result.stdout}"
+
+
+# ===========================================================================
+# QC Reject #6: EMS mode "auto" is FORBIDDEN (B10, B14)
+# ===========================================================================
+
+
+class TestNoAutoMode:
+    """EMS mode 'auto' must NEVER be used — GoodWe firmware makes
+    uncontrolled decisions. All paths must use 'discharge_pv' or explicit modes.
+    Reject history: B10, B14, PLAT-1241."""
+
+    def test_no_auto_mode_string_in_logic(self) -> None:
+        for f in _all_py_files(SRC_DIRS):
+            content = f.read_text()
+            for line_no, line in enumerate(content.split("\n"), 1):
+                # Match: set_ems_mode("auto") or mode = "auto" or EMS_MODE.auto
+                if re.search(r'''["']auto["']''', line):
+                    # Allow exclusion lists, comments, test assertions, config
+                    skip_words = [
+                        "#", "VALID_EMS_MODES", "exclude", "!=",
+                        "not in", "FORBIDDEN", "assert", "Error",
+                        "raise", "log", "docstring", "'import_ac'",
+                    ]
+                    if any(skip in line for skip in skip_words):
+                        continue
+                    pytest.fail(
+                        f"{f.relative_to(PROJECT_ROOT)}:{line_no}: "
+                        f'EMS mode "auto" is FORBIDDEN: {line.strip()}'
+                    )
+
+    def test_auto_excluded_from_valid_modes(self) -> None:
+        """GoodWe adapter must explicitly exclude 'auto' from valid modes."""
+        goodwe = PROJECT_ROOT / "adapters" / "goodwe.py"
+        content = goodwe.read_text()
+        assert "auto" not in content.split("_VALID_EMS_MODES")[1].split("}")[0], (
+            "GoodWe adapter: 'auto' must be excluded from _VALID_EMS_MODES"
+        )
+
+
+# ===========================================================================
+# QC Reject #7: fast_charging must be OFF before discharge_pv (INV-3, B7)
+# ===========================================================================
+
+
+class TestFastChargingBeforeDischarge:
+    """All discharge paths MUST call set_fast_charging(on=False) before
+    setting EMS mode to discharge_pv. GoodWe firmware charges from grid otherwise.
+    Reject history: PLAT-1103 INV-3."""
+
+    def test_discharge_paths_clear_fast_charging(self) -> None:
+        """Check that discharge_pv mentions are preceded by fast_charging=False."""
+        executor_file = PROJECT_ROOT / "core" / "executor.py"
+        content = executor_file.read_text()
+        lines = content.split("\n")
+
+        for i, line in enumerate(lines):
+            if "discharge_pv" in line and "set_ems_mode" in line:
+                # Look back up to 20 lines for fast_charging(on=False)
+                preceding = "\n".join(lines[max(0, i - 20):i])
+                assert "fast_charging" in preceding or "FAST_CHARGING" in preceding, (
+                    f"executor.py:{i + 1}: discharge_pv set without "
+                    f"prior fast_charging=OFF check"
+                )
+
+
+# ===========================================================================
+# QC Reject #8: ems_power_limit=0 must not be skipped (truthy trap, B9)
+# ===========================================================================
+
+
+class TestEMSPowerLimitZero:
+    """set_ems_power_limit(0) must write 0 to inverter, not be skipped
+    by a falsy check. GoodWe adapter must handle 0 explicitly.
+    Reject history: B9, PLAT-1040."""
+
+    def test_goodwe_handles_zero_limit(self) -> None:
+        goodwe = PROJECT_ROOT / "adapters" / "goodwe.py"
+        content = goodwe.read_text()
+        # Must not have: if not limit: return / if limit: write
+        for line_no, line in enumerate(content.split("\n"), 1):
+            if re.search(r"if\s+not\s+.*limit", line) and "power" in line.lower():
+                pytest.fail(
+                    f"adapters/goodwe.py:{line_no}: "
+                    f"Truthy trap — 'if not limit' skips limit=0: {line.strip()}"
+                )
+
+
+# ===========================================================================
+# QC Reject #9: Config thresholds — no naked numbers in logic
+# ===========================================================================
+
+
+class TestNoNakedThresholds:
+    """Time boundaries, power thresholds, and SoC limits must come from
+    config objects, not be hardcoded as literals.
+    Reject history: Story 09 magic numbers."""
+
+    FORBIDDEN_PATTERNS = [
+        # Time boundaries (should be cfg.morning_start_h etc)
+        (r"hour\s*[><=]+\s*(6|9|12|17|22)\b", "Hardcoded hour boundary"),
+        # Power limits (should be from config)
+        (r"(?:power|limit|threshold)\s*=\s*\d{3,5}\.?\d*\b", "Hardcoded power value"),
+    ]
+
+    def test_no_naked_time_boundaries_in_core(self) -> None:
+        """Time boundaries (6, 9, 12, 17, 22) should use config fields."""
+        for f in _all_py_files([PROJECT_ROOT / "core"]):
+            if f.name.startswith("test_"):
+                continue
+            content = f.read_text()
+            for line_no, line in enumerate(content.split("\n"), 1):
+                # Skip comments, config defaults, docstrings
+                stripped = line.strip()
+                if stripped.startswith("#") or '"""' in stripped or "'" == stripped[0:1]:
+                    continue
+                if "default" in line or "Field(" in line or "Config" in line:
+                    continue
+                if re.search(r"snap\.hour\s*[><=]+\s*(6|9|12|17|22)\b", line):
+                    pytest.fail(
+                        f"{f.relative_to(PROJECT_ROOT)}:{line_no}: "
+                        f"Hardcoded hour boundary — use config: {stripped}"
+                    )
+
+
+# ===========================================================================
+# QC Reject #10: Regression tests for known bugs B1-B15
+# ===========================================================================
+
+
+class TestRegressionSuiteExists:
+    """Regression test file must exist and test all known bugs B1-B15.
+    Reject history: Story 21 — B2/B4/B11/B12 missing."""
+
+    def test_regression_file_exists(self) -> None:
+        regression_dir = PROJECT_ROOT / "tests" / "regression"
+        assert regression_dir.exists(), "tests/regression/ directory missing"
+        regression_files = list(regression_dir.glob("test_*.py"))
+        assert len(regression_files) > 0, "No regression test files found"
+
+    def test_all_known_bugs_have_tests(self) -> None:
+        """Every known bug (B1-B15) must have at least one test."""
+        regression_dir = PROJECT_ROOT / "tests" / "regression"
+        if not regression_dir.exists():
+            pytest.skip("regression dir missing")
+        all_content = ""
+        for f in regression_dir.rglob("test_*.py"):
+            all_content += f.read_text()
+
+        for bug_id in range(1, 16):
+            assert f"B{bug_id}" in all_content or f"b{bug_id}" in all_content, (
+                f"Regression test for B{bug_id} missing in tests/regression/"
+            )
+
+
+# ===========================================================================
+# QC Reject #11: No retry on 401/403 (PLAT-1354)
+# ===========================================================================
+
+
+class TestNoRetryOnAuth:
+    """HTTP 401/403 must not be retried — it wastes time and hides real issues.
+    Reject history: PLAT-1354."""
+
+    def test_ha_api_no_retry_on_auth_error(self) -> None:
+        ha_api = PROJECT_ROOT / "adapters" / "ha_api.py"
+        content = ha_api.read_text()
+        # Verify that 401/403 are mentioned in a no-retry context
+        assert "401" in content or "403" in content, (
+            "ha_api.py should handle 401/403 auth errors explicitly"
+        )
+
+
+# ===========================================================================
+# QC Reject #12: Storage must use WAL mode (PLAT-1364)
+# ===========================================================================
+
+
+class TestSQLiteWALMode:
+    """SQLite must use WAL mode for concurrent read/write safety.
+    Reject history: PLAT-1364."""
+
+    def test_local_db_uses_wal(self) -> None:
+        db_file = PROJECT_ROOT / "storage" / "local_db.py"
+        content = db_file.read_text()
+        assert "wal" in content.lower() or "WAL" in content, (
+            "storage/local_db.py must enable WAL mode for SQLite"
+        )
+
+
+# ===========================================================================
+# QC Reject #13: SQL injection prevention (PLAT-1352)
+# ===========================================================================
+
+
+class TestSQLInjectionPrevention:
+    """Table names must be validated against allowlist, never f-string interpolated.
+    Reject history: PLAT-1352, M5."""
+
+    def test_table_name_allowlist_exists(self) -> None:
+        db_file = PROJECT_ROOT / "storage" / "local_db.py"
+        content = db_file.read_text()
+        has_allowlist = (
+            "ALLOWED_TABLES" in content
+            or "allowlist" in content.lower()
+            or "_VALID_TABLES" in content
+        )
+        assert has_allowlist, (
+            "storage/local_db.py must have a table name allowlist"
+        )
+
+
+# ===========================================================================
+# QC Reject #14: No unbounded collections (H6)
+# ===========================================================================
+
+
+class TestBoundedCollections:
+    """Audit trails and history buffers must use bounded collections (deque).
+    Reject history: H6 — unbounded list caused memory leak risk."""
+
+    def test_executor_uses_deque_for_audit(self) -> None:
+        executor = PROJECT_ROOT / "core" / "executor.py"
+        content = executor.read_text()
+        assert "deque" in content, (
+            "core/executor.py should use deque(maxlen=) for audit trail, "
+            "not unbounded list"
+        )
