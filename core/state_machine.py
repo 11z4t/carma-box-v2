@@ -45,6 +45,12 @@ class StateMachineConfig:
     grid_charge_max_soc_pct: float = 90.0
     grid_charge_price_threshold_ore: float = 60.0
     ev_target_soc_pct: float = 75.0
+    # Time windows for scenario transitions (QC reject: no hardcoded hours)
+    morning_start_h: int = 6
+    morning_end_h: int = 9
+    forenoon_end_h: int = 12
+    midday_end_h: int = 17
+    evening_end_h: int = 22
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +249,7 @@ class StateMachine:
         """S1 MORNING_DISCHARGE: 06-09, high PV forecast, SoC > 30%."""
         cfg = self._config
         return (
-            6 <= snap.hour < 9
+            cfg.morning_start_h <= snap.hour < cfg.morning_end_h
             and snap.grid.pv_forecast_today_kwh > cfg.pv_medium_threshold_kwh
             and snap.total_battery_soc_pct > cfg.morning_min_soc_pct
         )
@@ -252,7 +258,7 @@ class StateMachine:
         """S2 FORENOON_PV_EV: 06-12, high PV, EV connected + below target."""
         cfg = self._config
         return (
-            6 <= snap.hour < 12
+            cfg.morning_start_h <= snap.hour < cfg.forenoon_end_h
             and snap.grid.pv_forecast_today_kwh > cfg.pv_high_threshold_kwh
             and snap.ev.connected
             and snap.ev.soc_pct < cfg.ev_target_soc_pct
@@ -260,13 +266,17 @@ class StateMachine:
 
     def _entry_s3(self, snap: SystemSnapshot) -> bool:
         """S3 MIDDAY_CHARGE: 12-17."""
-        return 12 <= snap.hour < 17
+        cfg = self._config
+        return cfg.forenoon_end_h <= snap.hour < cfg.midday_end_h
 
     def _entry_s4(self, snap: SystemSnapshot) -> bool:
         """S4 EVENING_DISCHARGE: 17-22, SoC > floor + 10%."""
         cfg = self._config
         min_soc = cfg.normal_floor_pct + cfg.evening_min_soc_above_floor_pct
-        return 17 <= snap.hour < 22 and snap.total_battery_soc_pct > min_soc
+        return (
+            cfg.midday_end_h <= snap.hour < cfg.evening_end_h
+            and snap.total_battery_soc_pct > min_soc
+        )
 
     def _entry_s5(self, snap: SystemSnapshot) -> bool:
         """S5 NIGHT_HIGH_PV: 22-06, high PV tomorrow."""
@@ -328,40 +338,42 @@ class StateMachine:
     def _exit_s1(self, snap: SystemSnapshot) -> bool:
         """Exit S1: hour >= 9 or SoC at floor."""
         cfg = self._config
-        return snap.hour >= 9 or snap.total_battery_soc_pct <= cfg.normal_floor_pct
+        return snap.hour >= cfg.morning_end_h or snap.total_battery_soc_pct <= cfg.normal_floor_pct
 
     def _exit_s2(self, snap: SystemSnapshot) -> bool:
         """Exit S2: hour >= 12 or EV at target or disconnected."""
         cfg = self._config
         return (
-            snap.hour >= 12
+            snap.hour >= cfg.forenoon_end_h
             or snap.ev.soc_pct >= cfg.ev_target_soc_pct
             or not snap.ev.connected
         )
 
     def _exit_s3(self, snap: SystemSnapshot) -> bool:
         """Exit S3: hour >= 17."""
-        return snap.hour >= 17
+        return snap.hour >= self._config.midday_end_h
 
     def _exit_s4(self, snap: SystemSnapshot) -> bool:
         """Exit S4: hour >= 22 or SoC at evening floor."""
         cfg = self._config
         floor = cfg.normal_floor_pct + cfg.evening_min_soc_above_floor_pct
-        return snap.hour >= 22 or snap.total_battery_soc_pct <= floor
+        return snap.hour >= cfg.evening_end_h or snap.total_battery_soc_pct <= floor
 
     def _exit_s5(self, snap: SystemSnapshot) -> bool:
         """Exit S5: hour >= 6."""
-        return 6 <= snap.hour < 22
+        cfg = self._config
+        return cfg.morning_start_h <= snap.hour < cfg.evening_end_h
 
     def _exit_s6(self, snap: SystemSnapshot) -> bool:
         """Exit S6: hour >= 6."""
-        return 6 <= snap.hour < 22
+        cfg = self._config
+        return cfg.morning_start_h <= snap.hour < cfg.evening_end_h
 
     def _exit_s7(self, snap: SystemSnapshot) -> bool:
         """Exit S7: hour >= 6 or bat full."""
         cfg = self._config
         return (
-            (6 <= snap.hour < 22)
+            (cfg.morning_start_h <= snap.hour < cfg.evening_end_h)
             or snap.total_battery_soc_pct >= cfg.grid_charge_max_soc_pct
         )
 

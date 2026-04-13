@@ -17,7 +17,7 @@ from core.balancer import BatteryBalancer, BatteryInfo
 from core.ev_controller import EVAction, EVController, EVControllerConfig
 from core.guards import GridGuard, GuardConfig, GuardLevel
 from core.mode_change import ModeChangeConfig, ModeChangeManager
-from core.models import Scenario
+from core.models import CommandType, Scenario
 from tests.conftest import make_battery_state
 
 
@@ -220,3 +220,113 @@ class TestB15LimitClearedOnTransition:
         await mgr.process(executor)  # IDLE → CLEARING
 
         executor.set_ems_power_limit.assert_awaited_with("kontor", 0)
+
+
+# B2: No direct charge→discharge (must go through standby)
+class TestB2StandbyBetweenChargeDischarge:
+    """B2: No direct charge→discharge. Must go through standby intermediate."""
+
+    @pytest.mark.asyncio
+    async def test_charge_to_discharge_goes_through_standby(self) -> None:
+        from core.mode_change import ModeChangeConfig, ModeChangeManager
+
+        mgr = ModeChangeManager(ModeChangeConfig(
+            clear_wait_s=0, standby_wait_s=0, set_wait_s=0, verify_wait_s=0,
+        ))
+        executor = AsyncMock()
+        executor.set_ems_mode = AsyncMock(return_value=True)
+        executor.set_ems_power_limit = AsyncMock(return_value=True)
+        executor.set_fast_charging = AsyncMock(return_value=True)
+        executor.get_ems_mode = AsyncMock(return_value="discharge_pv")
+        executor.get_fast_charging = AsyncMock(return_value=False)
+
+        mgr.request_change("kontor", "discharge_pv")
+        # Process through all steps
+        for _ in range(6):
+            await mgr.process(executor)
+
+        calls = executor.set_ems_mode.call_args_list
+        modes = [c[0][1] for c in calls]
+        # Must include battery_standby before discharge_pv
+        assert "battery_standby" in modes, "B2: standby must appear before discharge"
+        standby_idx = modes.index("battery_standby")
+        discharge_idx = modes.index("discharge_pv")
+        assert standby_idx < discharge_idx, "B2: standby must come BEFORE discharge"
+
+
+# B4: Easee charger_id, NOT device_id
+class TestB4ChargerIdNotDeviceId:
+    """B4: All Easee service calls use charger_id, never device_id."""
+
+    @pytest.mark.asyncio
+    async def test_set_current_uses_charger_id(self) -> None:
+        from adapters.easee import EaseeAdapter
+        from adapters.ha_api import HAApiClient
+        from config.schema import EVChargerConfig, EVChargerEntities
+
+        mock_api = AsyncMock(spec=HAApiClient)
+        mock_api.call_service = AsyncMock(return_value=True)
+        config = EVChargerConfig(
+            id="ev", name="Easee", charger_id="EH128405",
+            entities=EVChargerEntities(
+                status="s.status", power="s.power",
+                current="s.current", enabled="sw.enabled",
+            ),
+        )
+        adapter = EaseeAdapter(mock_api, config)
+        await adapter.set_current(8)
+        call_data = mock_api.call_service.call_args[0][2]
+        assert "charger_id" in call_data, "B4: must use charger_id"
+        assert call_data["charger_id"] == "EH128405"
+        assert "device_id" not in call_data, "B4: must NOT use device_id"
+
+
+# B11: Night EV not killed by export watchdog during discharge ramp-up
+class TestB11NightEvNotKilledByWatchdog:
+    """B11: During night EV charging, transient discharge ramp-up
+    should NOT trigger export watchdog to kill EV."""
+
+    def test_g3_does_not_stop_ev_at_warning_level(self) -> None:
+        """G3 WARNING should NOT stop EV — only CRITICAL/BREACH."""
+        guard = GridGuard(GuardConfig())
+        bat = make_battery_state(soc_pct=60.0)
+        # Weighted avg just above warning but below breach
+        result = guard.evaluate(
+            batteries=[bat],
+            current_scenario=Scenario.NIGHT_HIGH_PV,
+            weighted_avg_kw=2.7,  # > 3.0*0.85=2.55 (WARNING) but < 3.0 (BREACH)
+            hour=23,
+            ha_connected=True,
+        )
+        # WARNING should NOT emit STOP_EV commands
+        stop_ev = [
+            c for c in result.commands
+            if c.command_type == CommandType.STOP_EV_CHARGING
+        ]
+        assert len(stop_ev) == 0, "B11: WARNING must NOT stop EV"
+
+
+# B12: No ensure_initialized(force=True) during active charging
+class TestB12NoForceInitDuringCharging:
+    """B12: The system must not reset/reinitialize components
+    while EV is actively charging — could cause current spike."""
+
+    def test_ev_controller_no_reset_while_charging(self) -> None:
+        """EVController should not reset state while charging is active."""
+        from core.ev_controller import EVAction, EVController, EVControllerConfig
+
+        ctrl = EVController(EVControllerConfig(
+            step_interval_s=0,
+            cooldown_after_start_s=0,
+            cooldown_after_stop_s=0,
+        ))
+        # Simulate active charging at 8A
+        result = ctrl.evaluate(
+            ev_connected=True, ev_soc_pct=50.0, charging=True,
+            current_amps=8, grid_import_w=2000,
+            ellevio_headroom_w=1000,
+        )
+        # Should NOT produce START action (which would reset current to 6A)
+        assert result.action != EVAction.START, (
+            "B12: must not START (reset to 6A) while already charging"
+        )
