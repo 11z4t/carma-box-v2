@@ -51,6 +51,26 @@ ha_get_state() {
 
 echo "=== v6 Safe Shutdown ==="
 
+# Pre-flight: verify HA is reachable
+echo "Pre-flight: checking HA connectivity..."
+HA_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer ${HA_TOKEN}" \
+    "${HA_URL}/api/" 2>/dev/null || echo "000")
+if [ "${HA_STATUS}" != "200" ]; then
+    echo "ABORT: HA not reachable at ${HA_URL} (HTTP ${HA_STATUS})"
+    exit 1
+fi
+echo "  HA reachable (HTTP 200)"
+
+# Pre-flight: save state snapshot for rollback reference
+echo "Pre-flight: saving state snapshot..."
+for bat in kontor forrad; do
+    mode=$(ha_get_state "select.goodwe_${bat}_ems_mode")
+    limit=$(ha_get_state "number.goodwe_${bat}_ems_power_limit")
+    soc=$(ha_get_state "sensor.goodwe_battery_state_of_charge_${bat}")
+    echo "  ${bat}: mode=${mode}, limit=${limit}, soc=${soc}%"
+done
+
 # 1. Set batteries to standby
 echo "Step 1: Setting batteries to battery_standby..."
 for bat in kontor forrad; do
@@ -84,6 +104,15 @@ for bat in kontor forrad; do
     if [ "${limit}" != "0" ] && [ "${limit}" != "0.0" ]; then
         echo "  ERROR: ${bat} ems_power_limit is '${limit}', expected 0"
         ERRORS=$((ERRORS + 1))
+    fi
+
+    # B7/INV-3: fast_charging must be OFF
+    fc=$(ha_get_state "switch.goodwe_${bat}_fast_charging")
+    if [ "${fc}" = "on" ]; then
+        echo "  WARN: ${bat} fast_charging ON — forcing OFF"
+        ha_api POST "services/switch/turn_off" \
+            "{\"entity_id\": \"switch.goodwe_${bat}_fast_charging\"}" \
+            > /dev/null 2>&1 || true
     fi
 done
 
