@@ -254,6 +254,21 @@ class GridGuard:
                     bat.battery_id, bat.power_w, bat.ems_mode,
                     bat.pv_power_w,
                 )
+                # Full correction: standby + zero limit + fast_charging OFF
+                result.commands.append(GuardCommand(
+                    guard_id="G0",
+                    command_type=CommandType.SET_EMS_POWER_LIMIT,
+                    target_id=bat.battery_id,
+                    value=0,
+                    reason="G0: zero limit, night grid charging",
+                ))
+                result.commands.append(GuardCommand(
+                    guard_id="G0",
+                    command_type=CommandType.SET_FAST_CHARGING,
+                    target_id=bat.battery_id,
+                    value=False,
+                    reason="G0: fast_charging OFF, night grid charging",
+                ))
                 result.commands.append(GuardCommand(
                     guard_id="G0",
                     command_type=CommandType.SET_EMS_MODE,
@@ -387,6 +402,20 @@ class GridGuard:
                 f"G3: Ellevio CRITICAL {weighted_avg_kw:.2f}kW > {critical_threshold:.2f}kW"
             )
             result.replan_needed = True
+            # Emergency commands: stop EV, shed consumers, max discharge
+            result.commands.append(GuardCommand(
+                guard_id="G3",
+                command_type=CommandType.STOP_EV_CHARGING,
+                target_id="ev",
+                reason="G3 CRITICAL: stop EV to reduce grid import",
+            ))
+            result.commands.append(GuardCommand(
+                guard_id="G3",
+                command_type=CommandType.SET_EV_CURRENT,
+                target_id="ev",
+                value=6,
+                reason="G3 CRITICAL: emergency cut to 6A",
+            ))
 
         elif weighted_avg_kw > effective_tak:
             # BREACH — actual exceeds tak
@@ -399,6 +428,14 @@ class GridGuard:
                 f"G3: Ellevio BREACH {weighted_avg_kw:.2f}kW > {effective_tak:.2f}kW"
             )
             result.replan_needed = True
+            # Corrective: cut EV to 6A
+            result.commands.append(GuardCommand(
+                guard_id="G3",
+                command_type=CommandType.SET_EV_CURRENT,
+                target_id="ev",
+                value=6,
+                reason="G3 BREACH: cut EV to 6A",
+            ))
 
         elif weighted_avg_kw > warning_threshold:
             # WARNING — getting close

@@ -181,15 +181,15 @@ class CommandExecutor:
                 reason=gcmd.reason,
             )
 
-            # Guards bypass rate limits and mode change protocol
+            # Guards execute IMMEDIATELY — bypass mode change protocol
             if gcmd.command_type == CommandType.SET_EMS_MODE:
-                # Emergency mode change via ModeChangeManager
-                self._mode_manager.emergency_mode_change(
-                    gcmd.target_id,
-                    str(gcmd.value),
-                    reason=gcmd.reason,
-                )
-                success = True
+                # Direct inverter call — no 5-step, no delay
+                inverter = self._inverters.get(gcmd.target_id)
+                if inverter:
+                    success = await inverter.set_ems_mode(str(gcmd.value))
+                else:
+                    logger.error("Guard: no inverter for %s", gcmd.target_id)
+                    success = False
             else:
                 success = await self._dispatch(cmd)
 

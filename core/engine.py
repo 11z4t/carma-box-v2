@@ -120,6 +120,29 @@ class ControlEngine:
             # Phase 3: SCENARIO — evaluate state machine
             new_scenario = self._sm.evaluate(snapshot)
             if new_scenario is not None:
+                # Route through ModeChangeManager for 5-step standby
+                # (prevents B1/B2 firmware hangs from direct transitions)
+                if not self._mode_manager.is_in_progress("scenario"):
+                    # Map scenario to target EMS mode
+                    from core.models import Scenario as S
+                    scenario_modes = {
+                        S.MORNING_DISCHARGE: "discharge_pv",
+                        S.FORENOON_PV_EV: "charge_pv",
+                        S.MIDDAY_CHARGE: "charge_pv",
+                        S.EVENING_DISCHARGE: "discharge_pv",
+                        S.NIGHT_HIGH_PV: "discharge_pv",
+                        S.NIGHT_LOW_PV: "battery_standby",
+                        S.NIGHT_GRID_CHARGE: "charge_pv",
+                        S.PV_SURPLUS: "charge_pv",
+                    }
+                    target_mode = scenario_modes.get(
+                        new_scenario, "battery_standby"
+                    )
+                    self._mode_manager.request_change(
+                        battery_id="scenario",
+                        target_mode=target_mode,
+                        reason=f"Scenario transition → {new_scenario.value}",
+                    )
                 self._sm.transition_to(new_scenario)
                 result.scenario = new_scenario
 
