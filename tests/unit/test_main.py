@@ -415,3 +415,88 @@ class TestDashboardWriteBack:
         assert cfg.dashboard.entity_plan_today in text_entities
         assert cfg.dashboard.entity_plan_tomorrow in text_entities
         assert cfg.dashboard.entity_plan_day3 in text_entities
+
+
+class TestManualOverride:
+    """PLAT-1372: Manual override reads HA helpers and sets state machine."""
+
+    @pytest.mark.asyncio()
+    async def test_override_enabled_sets_scenario(self) -> None:
+        """When override ON + valid scenario, state machine is set."""
+        from unittest.mock import AsyncMock
+
+        from config.schema import load_config
+
+        config_path = str(
+            Path(__file__).resolve().parents[2] / "config" / "site.yaml",
+        )
+        cfg = load_config(config_path)
+        mock_api = AsyncMock()
+
+        async def fake_get(entity: str) -> str:
+            if "override" in entity:
+                return "on"
+            if "scenario" in entity:
+                return "EVENING_DISCHARGE"
+            return "0"
+
+        mock_api.get_state = AsyncMock(side_effect=fake_get)
+        mock_api.health_check = AsyncMock(return_value=True)
+
+        service = CarmaBoxService(cfg, ha_api=mock_api)
+        await service._apply_manual_override()
+
+        # Engine should have manual override set
+        from core.models import Scenario
+        assert service._engine is not None
+        assert service._engine._sm._manual_override == Scenario.EVENING_DISCHARGE
+
+    @pytest.mark.asyncio()
+    async def test_override_disabled_clears(self) -> None:
+        """When override OFF, state machine override is cleared."""
+        from unittest.mock import AsyncMock
+
+        from config.schema import load_config
+
+        config_path = str(
+            Path(__file__).resolve().parents[2] / "config" / "site.yaml",
+        )
+        cfg = load_config(config_path)
+        mock_api = AsyncMock()
+        mock_api.get_state = AsyncMock(return_value="off")
+        mock_api.health_check = AsyncMock(return_value=True)
+
+        service = CarmaBoxService(cfg, ha_api=mock_api)
+        await service._apply_manual_override()
+
+        assert service._engine is not None
+        assert service._engine._sm._manual_override is None
+
+    @pytest.mark.asyncio()
+    async def test_invalid_scenario_does_not_crash(self) -> None:
+        """Invalid scenario string must not crash — clears override."""
+        from unittest.mock import AsyncMock
+
+        from config.schema import load_config
+
+        config_path = str(
+            Path(__file__).resolve().parents[2] / "config" / "site.yaml",
+        )
+        cfg = load_config(config_path)
+        mock_api = AsyncMock()
+
+        async def fake_get(entity: str) -> str:
+            if "override" in entity:
+                return "on"
+            if "scenario" in entity:
+                return "INVALID_SCENARIO"
+            return "0"
+
+        mock_api.get_state = AsyncMock(side_effect=fake_get)
+        mock_api.health_check = AsyncMock(return_value=True)
+
+        service = CarmaBoxService(cfg, ha_api=mock_api)
+        await service._apply_manual_override()
+
+        assert service._engine is not None
+        assert service._engine._sm._manual_override is None

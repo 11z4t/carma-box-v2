@@ -254,3 +254,7 @@ class ControlEngine:
     def current_scenario(self) -> Scenario:
         """Current active scenario (public accessor — avoids traversing private attrs)."""
         return self._sm.state.current
+
+    def set_manual_override(self, scenario: Optional[Scenario]) -> None:
+        """Set or clear manual scenario override on the state machine."""
+        self._sm.set_manual_override(scenario)

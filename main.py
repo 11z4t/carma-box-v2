@@ -265,6 +265,9 @@ class CarmaBoxService:
             logger.warning("Cycle %d: failed to collect snapshot", self._cycle_count)
             return
 
+        # Phase 1.5: MANUAL OVERRIDE — read HA helpers, set on state machine
+        await self._apply_manual_override()
+
         # Phases 2-6: delegated to ControlEngine
         cycle_result = await self._engine.run_cycle(
             snapshot=snapshot,
@@ -422,6 +425,45 @@ class CarmaBoxService:
         except Exception as exc:
             logger.error("Snapshot collection failed: %s", exc, exc_info=True)
             return None
+
+    async def _apply_manual_override(self) -> None:
+        """Read manual override helpers from HA and apply to state machine."""
+        if self._ha_api is None or self._engine is None:
+            return
+
+        override_cfg = self._config.manual_override
+        if not override_cfg.enabled_entity:
+            return
+
+        try:
+            enabled = await self._ha_api.get_state(
+                override_cfg.enabled_entity,
+            )
+            if enabled != "on":
+                self._engine.set_manual_override(None)
+                return
+
+            scenario_str = await self._ha_api.get_state(
+                override_cfg.scenario_entity,
+            )
+            if (
+                scenario_str is None
+                or scenario_str in ("", "Auto", "unknown", "unavailable")
+            ):
+                self._engine.set_manual_override(None)
+                return
+
+            try:
+                scenario = Scenario(scenario_str)
+                self._engine.set_manual_override(scenario)
+                logger.info("Manual override active: %s", scenario.value)
+            except ValueError:
+                logger.warning(
+                    "Invalid manual scenario: '%s'", scenario_str,
+                )
+                self._engine.set_manual_override(None)
+        except Exception as exc:
+            logger.error("Manual override read failed: %s", exc)
 
     async def _collect_consumers(self) -> list[ConsumerState]:
         """Read consumer states from HA based on site.yaml config."""
