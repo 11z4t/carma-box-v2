@@ -108,7 +108,7 @@ class BatteryState:
     pv_power_w: float
     grid_power_w: float                # positive = import, negative = export
     load_power_w: float
-    ems_mode: str
+    ems_mode: EMSMode
     ems_power_limit_w: int
     fast_charging: bool
     soh_pct: float

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from enum import Enum, unique
 from typing import Optional
 
-from core.models import BatteryState, CommandType, Scenario, effective_min_soc
+from core.models import BatteryState, CommandType, EMSMode, Scenario, effective_min_soc
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +209,7 @@ class GridGuard:
         for bat in batteries:
             # Condition A: ems_power_limit > 0 in charge_pv
             if (
-                bat.ems_mode == "charge_pv"
+                bat.ems_mode == EMSMode.CHARGE_PV
                 and bat.ems_power_limit_w > 0
             ):
                 logger.critical(
@@ -256,7 +256,7 @@ class GridGuard:
             # g0_min_pv_power_w) instead of hardcoded -100W and 50W.
             if (
                 bat.power_w < self._config.g0_charging_power_threshold_w
-                and bat.ems_mode not in ("charge_pv", "import_ac")
+                and bat.ems_mode not in (EMSMode.CHARGE_PV, EMSMode.IMPORT_AC)
                 and bat.pv_power_w < self._config.g0_min_pv_power_w
             ):
                 logger.critical(
@@ -283,7 +283,7 @@ class GridGuard:
                     guard_id="G0",
                     command_type=CommandType.SET_EMS_MODE,
                     target_id=bat.battery_id,
-                    value="battery_standby",
+                    value=EMSMode.BATTERY_STANDBY.value,
                     reason=f"G0: grid charging at night, power={bat.power_w}W",
                 ))
                 result.level = GuardLevel.CRITICAL
@@ -321,7 +321,7 @@ class GridGuard:
                     guard_id="G1",
                     command_type=CommandType.SET_EMS_MODE,
                     target_id=bat_id,
-                    value="battery_standby",
+                    value=EMSMode.BATTERY_STANDBY.value,
                     reason=f"G1: soc={bat.soc_pct:.1f}% <= floor={effective_floor:.1f}%",
                 ))
                 if result.level.value == "ok":
@@ -343,7 +343,7 @@ class GridGuard:
                         guard_id="G1",
                         command_type=CommandType.SET_EMS_MODE,
                         target_id=bat_id,
-                        value="battery_standby",
+                        value=EMSMode.BATTERY_STANDBY.value,
                         reason=(
                             f"G1: hysteresis, soc={bat.soc_pct:.1f}% "
                             f"< floor+5%={effective_floor + self._config.hysteresis_pct:.1f}%"
@@ -361,7 +361,7 @@ class GridGuard:
     ) -> None:
         """Detect fast_charging ON + discharge_pv = firmware bug (INV-3)."""
         for bat in batteries:
-            if bat.fast_charging and bat.ems_mode == "discharge_pv":
+            if bat.fast_charging and bat.ems_mode == EMSMode.DISCHARGE_PV:
                 logger.critical(
                     "G2 INV-3: %s fast_charging=ON + discharge_pv",
                     bat.battery_id,
@@ -490,7 +490,7 @@ class GridGuard:
                     guard_id="G4",
                     command_type=CommandType.SET_EMS_MODE,
                     target_id=bat.battery_id,
-                    value="battery_standby",
+                    value=EMSMode.BATTERY_STANDBY.value,
                     reason=f"G4: freeze temp={bat.cell_temp_c:.1f}°C",
                 ))
             # Cold (< 4°C) floor raising is handled by G1 via _effective_min_soc

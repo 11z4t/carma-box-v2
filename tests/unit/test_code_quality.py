@@ -395,6 +395,49 @@ class TestSQLInjectionPrevention:
 # ===========================================================================
 
 
+class TestNoRawEMSModeStrings:
+    """EMS mode strings in core logic must use EMSMode enum, not raw strings.
+    Reject history: PLAT-1356 — enums defined but not applied."""
+
+    EMS_RAW_STRINGS = [
+        '"discharge_pv"', '"charge_pv"', '"battery_standby"',
+        '"import_ac"', '"export_ac"',
+        "'discharge_pv'", "'charge_pv'", "'battery_standby'",
+        "'import_ac'", "'export_ac'",
+    ]
+
+    def test_no_raw_ems_strings_in_core(self) -> None:
+        """Core logic files must use EMSMode.X, not raw strings."""
+        core_files = [
+            PROJECT_ROOT / "core" / "engine.py",
+            PROJECT_ROOT / "core" / "guards.py",
+            PROJECT_ROOT / "core" / "mode_change.py",
+            PROJECT_ROOT / "core" / "executor.py",
+        ]
+        for f in core_files:
+            content = f.read_text()
+            for line_no, line in enumerate(content.split("\n"), 1):
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue
+                # Allow in EMSMode enum definition and imports
+                if "EMSMode" in line or "Enum" in line:
+                    continue
+                # Allow in docstrings and comments
+                if '"""' in stripped or "'''" in stripped:
+                    continue
+                for raw in self.EMS_RAW_STRINGS:
+                    if raw in line:
+                        # Allow .value comparisons
+                        if ".value" in line:
+                            continue
+                        pytest.fail(
+                            f"{f.relative_to(PROJECT_ROOT)}:{line_no}: "
+                            f"Raw EMS mode string {raw} — use EMSMode enum: "
+                            f"{stripped}"
+                        )
+
+
 class TestBoundedCollections:
     """Audit trails and history buffers must use bounded collections (deque).
     Reject history: H6 — unbounded list caused memory leak risk."""

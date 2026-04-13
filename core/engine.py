@@ -29,6 +29,7 @@ from core.mode_change import ModeChangeManager
 from core.models import (
     Command,
     CommandType,
+    EMSMode,
     Scenario,
     SystemSnapshot,
 )
@@ -131,19 +132,19 @@ class ControlEngine:
                 if not self._mode_manager.is_in_progress("scenario"):
                     # Map scenario to target EMS mode
                     S = Scenario
-                    scenario_modes = {
-                        S.MORNING_DISCHARGE: "discharge_pv",
-                        S.FORENOON_PV_EV: "charge_pv",
-                        S.MIDDAY_CHARGE: "charge_pv",
-                        S.EVENING_DISCHARGE: "discharge_pv",
-                        S.NIGHT_HIGH_PV: "discharge_pv",
-                        S.NIGHT_LOW_PV: "battery_standby",
-                        S.NIGHT_GRID_CHARGE: "charge_pv",
-                        S.PV_SURPLUS: "charge_pv",
+                    scenario_modes: dict[Scenario, EMSMode] = {
+                        S.MORNING_DISCHARGE: EMSMode.DISCHARGE_PV,
+                        S.FORENOON_PV_EV: EMSMode.CHARGE_PV,
+                        S.MIDDAY_CHARGE: EMSMode.CHARGE_PV,
+                        S.EVENING_DISCHARGE: EMSMode.DISCHARGE_PV,
+                        S.NIGHT_HIGH_PV: EMSMode.DISCHARGE_PV,
+                        S.NIGHT_LOW_PV: EMSMode.BATTERY_STANDBY,
+                        S.NIGHT_GRID_CHARGE: EMSMode.CHARGE_PV,
+                        S.PV_SURPLUS: EMSMode.CHARGE_PV,
                     }
                     target_mode = scenario_modes.get(
-                        new_scenario, "battery_standby"
-                    )
+                        new_scenario, EMSMode.BATTERY_STANDBY
+                    ).value
                     self._mode_manager.request_change(
                         battery_id="scenario",
                         target_mode=target_mode,

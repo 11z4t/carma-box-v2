@@ -16,6 +16,7 @@ from config.schema import CarmaConfig, load_config
 from core.models import (
     BatteryState,
     CTPlacement,
+    EMSMode,
     EVState,
     GridState,
     Scenario,
@@ -119,7 +120,7 @@ def make_battery_state(**overrides: Any) -> BatteryState:
         "pv_power_w": 0.0,
         "grid_power_w": 0.0,
         "load_power_w": 500.0,
-        "ems_mode": "battery_standby",
+        "ems_mode": EMSMode.BATTERY_STANDBY,
         "ems_power_limit_w": 0,
         "fast_charging": False,
         "soh_pct": 95.0,
@@ -128,6 +129,12 @@ def make_battery_state(**overrides: Any) -> BatteryState:
         "available_kwh": 6.075,
     }
     defaults.update(overrides)
+    # Auto-convert string ems_mode to EMSMode enum
+    if isinstance(defaults["ems_mode"], str):
+        defaults["ems_mode"] = EMSMode(defaults["ems_mode"])
+    # Auto-convert string ct_placement to CTPlacement enum
+    if isinstance(defaults["ct_placement"], str):
+        defaults["ct_placement"] = CTPlacement(defaults["ct_placement"])
     return BatteryState(**defaults)
 
 

@@ -34,6 +34,7 @@ from core.guards import GridGuard, GuardConfig
 from core.mode_change import ModeChangeConfig, ModeChangeManager
 from core.models import (
     BatteryState,
+    EMSMode,
     EVState,
     GridState,
     Scenario,
@@ -305,7 +306,7 @@ class CarmaBoxService:
                     pv_power_w=max(0.0, _float(ents.pv_power)),
                     grid_power_w=_float(ents.grid_power),
                     load_power_w=max(0.0, _float(ents.load_power)),
-                    ems_mode=batch.get(ents.ems_mode, {}).get("state", "battery_standby"),
+                    ems_mode=EMSMode(batch.get(ents.ems_mode, {}).get("state", "battery_standby")),
                     ems_power_limit_w=int(_float(ents.ems_power_limit)),
                     fast_charging=batch.get(ents.fast_charging, {}).get("state") == "on",
                     soh_pct=_float(ents.soh, 100.0),

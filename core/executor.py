@@ -21,7 +21,7 @@ from typing import Any, Protocol
 
 from core.guards import GuardCommand
 from core.mode_change import ModeChangeManager
-from core.models import Command, CommandType
+from core.models import Command, CommandType, EMSMode
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +256,7 @@ class CommandExecutor:
         target_mode = str(cmd.value)
 
         # B7/B14: All discharge paths must verify fast_charging OFF
-        if target_mode == "discharge_pv":
+        if target_mode == EMSMode.DISCHARGE_PV.value:
             inverter = self._inverters.get(cmd.target_id)
             if inverter:
                 fc = await inverter.get_fast_charging()
@@ -408,7 +408,7 @@ class CommandExecutor:
         """ModeChangeExecutor protocol: read current mode."""
         inverter = self._inverters.get(battery_id)
         if not inverter:
-            return "battery_standby"
+            return EMSMode.BATTERY_STANDBY.value
         return await inverter.get_ems_mode()
 
     async def get_fast_charging(self, battery_id: str) -> bool:

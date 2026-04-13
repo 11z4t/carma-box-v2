@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from enum import Enum, unique
 from typing import Optional, Protocol
 
+from core.models import EMSMode
+
 logger = logging.getLogger(__name__)
 
 
@@ -257,7 +259,7 @@ class ModeChangeManager:
                     "Step 3 STANDBY: %s entering battery_standby",
                     req.battery_id,
                 )
-                await executor.set_ems_mode(req.battery_id, "battery_standby")
+                await executor.set_ems_mode(req.battery_id, EMSMode.BATTERY_STANDBY.value)
 
         elif req.state == ModeChangeState.STANDBY_WAIT:
             # Wait for standby_wait_s
@@ -286,7 +288,7 @@ class ModeChangeManager:
                 actual_mode = await executor.get_ems_mode(req.battery_id)
                 if actual_mode == req.target_mode:
                     # B7: If target is discharge, verify fast_charging is OFF
-                    if req.target_mode == "discharge_pv":
+                    if req.target_mode == EMSMode.DISCHARGE_PV.value:
                         fc = await executor.get_fast_charging(req.battery_id)
                         if fc:
                             logger.error(
@@ -328,7 +330,7 @@ class ModeChangeManager:
         B7: If target is discharge_pv, verify fast_charging=OFF first.
         """
         # B7: ALWAYS verify fast_charging OFF before discharge
-        if req.target_mode == "discharge_pv":
+        if req.target_mode == EMSMode.DISCHARGE_PV.value:
             fc = await executor.get_fast_charging(req.battery_id)
             if fc:
                 logger.warning(

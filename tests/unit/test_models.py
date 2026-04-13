@@ -526,6 +526,29 @@ class TestCTPlacementEnum:
         assert bat2.ct_placement == CTPlacement.HOUSE_GRID
 
 
+class TestEMSModeEnum:
+    """PLAT-1356: EMSMode enum must be used for ems_mode field."""
+
+    def test_valid_ems_mode_accepted(self) -> None:
+        bat = make_battery_state(ems_mode=EMSMode.CHARGE_PV)
+        assert bat.ems_mode == EMSMode.CHARGE_PV
+
+    def test_invalid_ems_mode_raises(self) -> None:
+        """Invalid ems_mode string must raise ValueError."""
+        with pytest.raises(ValueError):
+            EMSMode("invalid_mode")
+
+    def test_all_modes_exist(self) -> None:
+        """All expected EMS modes must be defined."""
+        expected = {"charge_pv", "discharge_pv", "battery_standby",
+                    "import_ac", "export_ac", "conserve", "auto"}
+        assert {m.value for m in EMSMode} == expected
+
+    def test_auto_mode_is_forbidden_sentinel(self) -> None:
+        """AUTO exists in enum but must NEVER be used in code."""
+        assert EMSMode.AUTO.value == "auto"
+
+
 class TestMaxSocPct:
     """PLAT-1356: MAX_SOC_PCT constant must be defined and equal 100.0."""
 
