@@ -249,3 +249,112 @@ class TestServiceCancellation:
         except asyncio.CancelledError:  # pragma: no cover
             pass  # Service catches CancelledError internally; this branch unreachable
         assert not service.is_running
+
+
+# ===========================================================================
+# PLAT-1369: Consumer wiring tests
+# ===========================================================================
+
+
+class TestCollectConsumers:
+    """PLAT-1369: _collect_consumers reads HA state and builds ConsumerState."""
+
+    @pytest.mark.asyncio()
+    async def test_consumers_built_from_ha_state(self) -> None:
+        """Consumer state should be built from HA switch + power sensors."""
+        from unittest.mock import AsyncMock
+
+        from config.schema import load_config
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+
+        mock_api = AsyncMock()
+        # Simulate: miner ON at 380W, vp_kontor OFF
+        async def fake_get_state(entity: str) -> str:
+            responses: dict[str, str] = {
+                "switch.shelly1pmg4_a085e3bd1e60": "on",
+                "sensor.appliance_total_effekt": "380.5",
+                "switch.shellypro1pm_30c6f78289b8_switch_0": "off",
+                "sensor.carma_effekt_vp_kontor": "0",
+            }
+            return responses.get(entity, "0")
+
+        mock_api.get_state = AsyncMock(side_effect=fake_get_state)
+        mock_api.health_check = AsyncMock(return_value=True)
+
+        service = CarmaBoxService(cfg, ha_api=mock_api)
+        consumers = await service._collect_consumers()
+
+        assert len(consumers) > 0
+        miner = next((c for c in consumers if c.consumer_id == "miner"), None)
+        assert miner is not None
+        assert miner.active is True
+        assert miner.power_w == pytest.approx(380.5)
+
+        vp = next((c for c in consumers if c.consumer_id == "vp_kontor"), None)
+        assert vp is not None
+        assert vp.active is False
+
+    @pytest.mark.asyncio()
+    async def test_unavailable_power_does_not_crash(self) -> None:
+        """'unavailable' power sensor must not raise ValueError."""
+        from unittest.mock import AsyncMock
+
+        from config.schema import load_config
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+
+        mock_api = AsyncMock()
+        # pool_heater power sensor is offline → returns 'unavailable'
+        async def fake_get_state(entity: str) -> str:
+            if "power" in entity or "effekt" in entity:
+                return "unavailable"
+            return "off"
+
+        mock_api.get_state = AsyncMock(side_effect=fake_get_state)
+        mock_api.health_check = AsyncMock(return_value=True)
+
+        service = CarmaBoxService(cfg, ha_api=mock_api)
+        # Must not raise
+        consumers = await service._collect_consumers()
+        assert len(consumers) > 0
+        # All power values should be 0.0 (fallback) or cc.power_w
+        for c in consumers:
+            assert isinstance(c.power_w, float)
+
+    @pytest.mark.asyncio()
+    async def test_surplus_dispatch_called_with_consumers(self) -> None:
+        """Phase 7: _execute_surplus should be called when consumers exist."""
+        from unittest.mock import AsyncMock, patch
+
+        from config.schema import load_config
+        from core.models import ConsumerState
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+
+        mock_api = AsyncMock()
+        mock_api.health_check = AsyncMock(return_value=True)
+        mock_api.get_state = AsyncMock(return_value="0")
+        mock_api.get_states_batch = AsyncMock(return_value={})
+        mock_api.call_service = AsyncMock(return_value=True)
+
+        service = CarmaBoxService(cfg, ha_api=mock_api)
+
+        # Patch _execute_surplus to track calls
+        with patch.object(service, "_execute_surplus", new_callable=AsyncMock) as mock_surplus:
+            # Patch _collect_snapshot to return a snapshot with consumers
+            from tests.conftest import make_snapshot
+            snap = make_snapshot(consumers=[
+                ConsumerState(
+                    consumer_id="miner", name="Miner", active=True,
+                    power_w=400.0, priority=1, priority_shed=1,
+                    load_type="on_off",
+                ),
+            ])
+            with patch.object(service, "_collect_snapshot", return_value=snap):
+                await service._run_cycle()
+
+            mock_surplus.assert_called_once()

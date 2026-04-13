@@ -431,8 +431,19 @@ class CarmaBoxService:
                 state = await self._ha_api.get_state(cc.entity_switch)
                 active = state == "on"
             if cc.entity_power:
-                power_str = await self._ha_api.get_state(cc.entity_power)
-                power = float(power_str) if power_str else 0.0
+                power_str = await self._ha_api.get_state(
+                    cc.entity_power,
+                )
+                if (
+                    power_str is None
+                    or power_str in ("", "unavailable", "unknown")
+                ):
+                    power = 0.0
+                else:
+                    try:
+                        power = float(power_str)
+                    except (ValueError, TypeError):
+                        power = 0.0
 
             consumers.append(ConsumerState(
                 consumer_id=cc.id,
