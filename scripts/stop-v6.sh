@@ -63,12 +63,15 @@ fi
 echo "  HA reachable (HTTP 200)"
 
 # Pre-flight: save state snapshot for rollback reference
-echo "Pre-flight: saving state snapshot..."
+SNAPSHOT_FILE="/tmp/v6_shutdown_state.txt"
+echo "Pre-flight: saving state snapshot to ${SNAPSHOT_FILE}..."
+echo "v6 shutdown snapshot $(date -Iseconds)" > "${SNAPSHOT_FILE}"
 for bat in kontor forrad; do
     mode=$(ha_get_state "select.goodwe_${bat}_ems_mode")
     limit=$(ha_get_state "number.goodwe_${bat}_ems_power_limit")
     soc=$(ha_get_state "sensor.goodwe_battery_state_of_charge_${bat}")
     echo "  ${bat}: mode=${mode}, limit=${limit}, soc=${soc}%"
+    echo "${bat}: mode=${mode}, limit=${limit}, soc=${soc}%" >> "${SNAPSHOT_FILE}"
 done
 
 # 1. Set batteries to standby
@@ -113,6 +116,15 @@ for bat in kontor forrad; do
         ha_api POST "services/switch/turn_off" \
             "{\"entity_id\": \"switch.goodwe_${bat}_fast_charging\"}" \
             > /dev/null 2>&1 || true
+        sleep 2
+        # Readback verify
+        fc_after=$(ha_get_state "switch.goodwe_${bat}_fast_charging")
+        if [ "${fc_after}" != "off" ]; then
+            echo "  ERROR: ${bat} fast_charging still '${fc_after}' after force-off"
+            ERRORS=$((ERRORS + 1))
+        else
+            echo "  OK: ${bat} fast_charging verified OFF"
+        fi
     fi
 done
 
