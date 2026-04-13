@@ -245,3 +245,95 @@ class TestPlannerCoverage:
         assert plan.bat_surplus_kwh > 0
         assert plan.evening_allocation_kwh > 0
         assert plan.hourly_rate_w > 0
+
+
+# ===========================================================================
+# PLAT-1358: Named config coefficients replace magic numbers
+# ===========================================================================
+
+
+class TestPlat1358PlannerConfigCoefficients:
+    """PLAT-1358: All planner magic numbers must be named in PlannerConfig."""
+
+    def test_pv_bat_contribution_factor_exists(self) -> None:
+        """0.5 PV contribution must be named pv_bat_contribution_factor."""
+        cfg = PlannerConfig()
+        assert hasattr(cfg, "pv_bat_contribution_factor")
+        assert cfg.pv_bat_contribution_factor == 0.5
+
+    def test_ev_bat_contribution_pct_exists(self) -> None:
+        """0.3 EV/battery contribution must be named ev_bat_contribution_pct."""
+        cfg = PlannerConfig()
+        assert hasattr(cfg, "ev_bat_contribution_pct")
+        assert cfg.ev_bat_contribution_pct == 0.3
+
+    def test_evening_discharge_hours_exists(self) -> None:
+        """5.0 evening hours must be named evening_discharge_hours."""
+        cfg = PlannerConfig()
+        assert hasattr(cfg, "evening_discharge_hours")
+        assert cfg.evening_discharge_hours == 5.0
+
+    def test_grid_voltage_v_exists(self) -> None:
+        """230V grid voltage must be named grid_voltage_v."""
+        cfg = PlannerConfig()
+        assert hasattr(cfg, "grid_voltage_v")
+        assert cfg.grid_voltage_v == 230.0
+
+    def test_ev_phases_exists(self) -> None:
+        """3 EV phases must be named ev_phases."""
+        cfg = PlannerConfig()
+        assert hasattr(cfg, "ev_phases")
+        assert cfg.ev_phases == 3
+
+    def test_ev_amps_uses_config_voltage_and_phases(self) -> None:
+        """ev_amps in NightPlan is calculated from config grid_voltage_v and ev_phases."""
+        # Use 1-phase config to verify the formula uses config, not hardcoded 230*3
+        cfg = PlannerConfig(
+            ev_charge_kw=2.3,   # 2300W
+            grid_voltage_v=230.0,
+            ev_phases=1,        # single phase: 2300 / 230 = 10A
+        )
+        planner = Planner(cfg)
+        prices = {h: 50.0 for h in range(24)}
+        plan = planner.generate_night_plan(
+            bat_soc_pct=50.0, bat_cap_kwh=20.0,
+            ev_connected=True, ev_soc_pct=50.0,
+            pv_tomorrow_kwh=0.0, prices_by_hour=prices,
+        )
+        # 2300W / (230V * 1 phase) = 10A
+        assert plan.ev_amps == 10
+
+    def test_bat_charge_need_uses_pv_contribution_factor(self) -> None:
+        """pv_bat_contribution_factor controls PV offset in battery charge need."""
+        cfg_default = PlannerConfig()  # factor=0.5
+        cfg_no_pv = PlannerConfig(pv_bat_contribution_factor=0.0)
+
+        planner_default = Planner(cfg_default)
+        planner_no_pv = Planner(cfg_no_pv)
+
+        # With high PV forecast, default factor reduces charge need
+        need_default = planner_default._calculate_bat_charge_need(
+            bat_soc_pct=50.0, bat_cap_kwh=20.0, pv_tomorrow_kwh=20.0
+        )
+        need_no_pv = planner_no_pv._calculate_bat_charge_need(
+            bat_soc_pct=50.0, bat_cap_kwh=20.0, pv_tomorrow_kwh=20.0
+        )
+        # With 0 PV contribution, need should be higher
+        assert need_no_pv > need_default
+
+    def test_evening_hourly_rate_uses_discharge_hours(self) -> None:
+        """hourly_rate_w divides by evening_discharge_hours from config."""
+        cfg_5h = PlannerConfig(house_baseload_kw=0.1, night_hours=1, evening_discharge_hours=5.0)
+        cfg_2h = PlannerConfig(house_baseload_kw=0.1, night_hours=1, evening_discharge_hours=2.0)
+
+        plan_5h = Planner(cfg_5h).generate_evening_plan(
+            bat_soc_pct=90.0, bat_cap_kwh=20.0,
+            ev_connected=False, ev_soc_pct=80.0,
+        )
+        plan_2h = Planner(cfg_2h).generate_evening_plan(
+            bat_soc_pct=90.0, bat_cap_kwh=20.0,
+            ev_connected=False, ev_soc_pct=80.0,
+        )
+        # Fewer hours → higher hourly rate for same surplus
+        if plan_5h.bat_surplus_kwh > 0:
+            assert plan_2h.hourly_rate_w > plan_5h.hourly_rate_w

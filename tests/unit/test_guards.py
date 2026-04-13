@@ -526,3 +526,99 @@ class TestCoverageBranches:
         assert g._is_night(10) is True   # inside window
         assert g._is_night(7) is False   # before start
         assert g._is_night(20) is False  # at end (exclusive)
+
+
+# ===========================================================================
+# PLAT-1357: G0 config-based thresholds, G3 BREACH emits STOP_EV
+# ===========================================================================
+
+
+class TestPlat1357G0ConfigThresholds:
+    """PLAT-1357: G0 detection thresholds come from config, not hardcoded."""
+
+    def test_g0_uses_custom_charging_power_threshold(self) -> None:
+        """G0 Condition C respects g0_charging_power_threshold_w from config."""
+        # Use a custom threshold: only trigger if power < -500W (not default -100W)
+        cfg = GuardConfig(g0_charging_power_threshold_w=-500.0, g0_min_pv_power_w=50.0)
+        guard = GridGuard(cfg)
+
+        # Battery at -200W (would trigger with default -100W, but not with -500W)
+        bat = make_battery_state(
+            power_w=-200.0,         # Charging at 200W
+            ems_mode="battery_standby",  # Not charge_pv
+            pv_power_w=0.0,         # No PV
+        )
+        result = _eval(guard, batteries=[bat])
+        g0_cmds = [c for c in result.commands if c.guard_id == "G0"]
+        # Should NOT trigger G0 because -200 > -500 (above threshold)
+        condition_c_cmds = [
+            c for c in g0_cmds
+            if c.command_type == CommandType.SET_EMS_MODE
+        ]
+        assert len(condition_c_cmds) == 0
+
+    def test_g0_uses_custom_pv_threshold(self) -> None:
+        """G0 Condition C respects g0_min_pv_power_w from config."""
+        # High PV threshold: 200W of PV required before considering it 'PV charging'
+        cfg = GuardConfig(g0_charging_power_threshold_w=-100.0, g0_min_pv_power_w=200.0)
+        guard = GridGuard(cfg)
+
+        # Battery charging at -200W with 100W PV (below 200W threshold → G0 triggers)
+        bat = make_battery_state(
+            power_w=-200.0,
+            ems_mode="battery_standby",
+            pv_power_w=100.0,  # 100W PV, but threshold is 200W
+        )
+        result = _eval(guard, batteries=[bat])
+        g0_cmds = [c for c in result.commands if c.guard_id == "G0"]
+        condition_c = [c for c in g0_cmds if c.command_type == CommandType.SET_EMS_MODE]
+        assert len(condition_c) >= 1
+
+    def test_g0_config_fields_exist(self) -> None:
+        """GuardConfig must have g0 threshold fields."""
+        cfg = GuardConfig()
+        assert hasattr(cfg, "g0_charging_power_threshold_w")
+        assert hasattr(cfg, "g0_min_pv_power_w")
+        assert cfg.g0_charging_power_threshold_w == -100.0
+        assert cfg.g0_min_pv_power_w == 50.0
+
+
+class TestPlat1357G3BreachEmitsStopEv:
+    """PLAT-1357: G3 BREACH level must emit STOP_EV_CHARGING command."""
+
+    def test_g3_breach_emits_stop_ev(self, guard: GridGuard) -> None:
+        """G3 BREACH (> tak but < emergency) must include STOP_EV_CHARGING."""
+        # Default tak=3.0 kW, day_weight=1.0 → effective_tak=3.0 kW
+        # BREACH when weighted_avg > 3.0 (but < 3.0*1.10=3.3 = CRITICAL)
+        result = _eval(guard, weighted_avg_kw=3.1, hour=12)
+
+        assert result.level == GuardLevel.BREACH
+        stop_ev_cmds = [
+            c for c in result.commands
+            if c.command_type == CommandType.STOP_EV_CHARGING
+        ]
+        assert len(stop_ev_cmds) >= 1, "BREACH must emit STOP_EV_CHARGING"
+
+    def test_g3_breach_also_cuts_ev_current(self, guard: GridGuard) -> None:
+        """G3 BREACH emits both STOP_EV_CHARGING and SET_EV_CURRENT at 6A."""
+        result = _eval(guard, weighted_avg_kw=3.1, hour=12)
+
+        assert result.level == GuardLevel.BREACH
+        set_current_cmds = [
+            c for c in result.commands
+            if c.command_type == CommandType.SET_EV_CURRENT
+        ]
+        assert len(set_current_cmds) >= 1
+        assert set_current_cmds[0].value == 6
+
+    def test_g3_critical_still_emits_stop_ev(self, guard: GridGuard) -> None:
+        """G3 CRITICAL also emits STOP_EV_CHARGING (existing behaviour)."""
+        # CRITICAL when weighted_avg > tak * 1.10 = 3.3 kW
+        result = _eval(guard, weighted_avg_kw=3.5, hour=12)
+
+        assert result.level == GuardLevel.CRITICAL
+        stop_ev_cmds = [
+            c for c in result.commands
+            if c.command_type == CommandType.STOP_EV_CHARGING
+        ]
+        assert len(stop_ev_cmds) >= 1

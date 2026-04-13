@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import pytest
 
 from core.models import (
+    CTPlacement,
     Command,
     CommandType,
     ConsumerState,
@@ -22,6 +23,7 @@ from core.models import (
     EMSMode,
     GuardResult,
     GuardStatus,
+    MAX_SOC_PCT,
     ModelEncoder,
     Scenario,
     ScenarioState,
@@ -495,3 +497,40 @@ class TestJsonSerialization:
 
         with pytest.raises(TypeError):
             json.dumps(_Unserializable(), cls=ModelEncoder)
+
+
+# ===========================================================================
+# PLAT-1356: Type safety — CTPlacement enum and MAX_SOC_PCT constant
+# ===========================================================================
+
+
+class TestCTPlacementEnum:
+    """PLAT-1356: CTPlacement enum must cover all valid CT positions."""
+
+    def test_local_load_value(self) -> None:
+        assert CTPlacement.LOCAL_LOAD.value == "local_load"
+
+    def test_house_grid_value(self) -> None:
+        assert CTPlacement.HOUSE_GRID.value == "house_grid"
+
+    def test_exactly_two_placements(self) -> None:
+        """Only two CT placements exist for the supported hardware."""
+        assert len(CTPlacement) == 2
+
+    def test_ct_placement_matches_battery_state_string(self) -> None:
+        """CTPlacement values must match the strings used in BatteryState.ct_placement."""
+        bat = make_battery_state(ct_placement="local_load")
+        assert bat.ct_placement == CTPlacement.LOCAL_LOAD.value
+
+        bat2 = make_battery_state(ct_placement="house_grid")
+        assert bat2.ct_placement == CTPlacement.HOUSE_GRID.value
+
+
+class TestMaxSocPct:
+    """PLAT-1356: MAX_SOC_PCT constant must be defined and equal 100.0."""
+
+    def test_max_soc_pct_value(self) -> None:
+        assert MAX_SOC_PCT == 100.0
+
+    def test_max_soc_pct_is_float(self) -> None:
+        assert isinstance(MAX_SOC_PCT, float)

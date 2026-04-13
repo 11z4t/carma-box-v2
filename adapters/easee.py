@@ -143,6 +143,13 @@ class EaseeAdapter(EVChargerAdapter):
           2. Press override_schedule button (5s wait)
           3. Turn ON is_enabled + set 6A
 
+        PLAT-1355: This method intentionally blocks for 18 seconds total
+        (10s + 5s + 3s) because the Easee firmware requires these delays
+        between state transitions — firing steps without waiting causes the
+        charger to ignore the subsequent commands. The sleeps are excluded
+        from coverage (pragma: no cover) since they cannot be meaningfully
+        tested without a real Easee device.
+
         Returns True if the fix sequence was attempted.
         """
         logger.warning("Attempting waiting_in_fully fix (B3)")
@@ -177,12 +184,36 @@ class EaseeAdapter(EVChargerAdapter):
     async def enforce_smart_charging_off(self) -> bool:
         """Guard: ensure smart_charging is OFF.
 
-        Easee smart_charging interferes with CARMA Box control.
+        PLAT-1355: Previously a no-op. Now reads the smart_charging entity
+        state (if configured) and calls the service to turn it off when ON.
+        Easee smart_charging interferes with CARMA Box current control.
         Called during health checks.
+
+        Returns True if smart_charging is already OFF or successfully turned OFF.
+        Returns False if the service call to turn it off failed.
         """
-        # Smart charging state is typically in charger config,
-        # not directly readable as a sensor. This is enforced
-        # via the Easee cloud API by the HACS integration.
-        # For now, log a check.
-        logger.debug("smart_charging guard check (enforced via Easee cloud config)")
-        return True
+        smart_charging_entity = self._entities.smart_charging
+        if not smart_charging_entity:
+            logger.debug(
+                "smart_charging guard: no entity configured, skipping check"
+            )
+            return True
+
+        state = await self._api.get_state(smart_charging_entity)
+        if state != "on":
+            # Already OFF (or unavailable/unknown — safe default)
+            logger.debug("smart_charging guard: already OFF (state=%s)", state)
+            return True
+
+        logger.warning(
+            "smart_charging is ON — turning off to restore CARMA Box control"
+        )
+        success = await self._api.call_service(
+            "switch", "turn_off",
+            {"entity_id": smart_charging_entity},
+        )
+        if not success:
+            logger.error(
+                "smart_charging guard: failed to turn off %s", smart_charging_entity
+            )
+        return success

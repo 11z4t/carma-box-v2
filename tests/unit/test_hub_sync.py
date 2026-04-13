@@ -60,7 +60,24 @@ class TestSyncTable:
         count = _run(sync._sync_table("cycle_log"))
         assert count == 0
 
-    def test_sync_marks_rows(self, sync: HubSync, db: LocalDB) -> None:
+    def test_dry_run_does_not_mark_rows_synced(self, db: LocalDB) -> None:
+        """PLAT-1353: dry_run=True (default) must NOT mark rows as synced."""
+        sync = HubSync(HubSyncConfig(), db, dry_run=True)
+        _run(db.write_cycle(CycleLogEntry(
+            cycle_id="c1", timestamp="2026-04-12T22:00:00",
+            scenario="MIDDAY_CHARGE", guard_level="ok",
+            headroom_kw=1.0, elapsed_s=0.05,
+        )))
+        count = _run(sync._sync_table("cycle_log"))
+        # dry_run returns 0 (nothing was actually synced to PG)
+        assert count == 0
+        # Row remains unsynced because PG insert didn't happen
+        unsynced = _run(db.get_unsynced_rows("cycle_log"))
+        assert len(unsynced) == 1
+
+    def test_non_dry_run_marks_rows_synced(self, db: LocalDB) -> None:
+        """PLAT-1353: dry_run=False marks rows synced after 'insert'."""
+        sync = HubSync(HubSyncConfig(), db, dry_run=False)
         _run(db.write_cycle(CycleLogEntry(
             cycle_id="c1", timestamp="2026-04-12T22:00:00",
             scenario="MIDDAY_CHARGE", guard_level="ok",
@@ -76,7 +93,21 @@ class TestSyncTable:
 class TestSyncAll:
     """Full sync across all tables."""
 
-    def test_sync_returns_counts(self, sync: HubSync, db: LocalDB) -> None:
+    def test_sync_returns_zero_in_dry_run(self, sync: HubSync, db: LocalDB) -> None:
+        """PLAT-1353: default dry_run mode returns 0 (nothing sent to PG)."""
+        _run(db.write_cycle(CycleLogEntry(
+            cycle_id="c1", timestamp="2026-04-12T22:00:00",
+            scenario="MIDDAY_CHARGE", guard_level="ok",
+            headroom_kw=1.0, elapsed_s=0.05,
+        )))
+        results = _run(sync.sync())
+        # dry_run=True → 0 rows "synced" (no PG)
+        assert results["cycle_log"] == 0
+        assert results["event_log"] == 0
+
+    def test_sync_returns_counts_when_live(self, db: LocalDB) -> None:
+        """Non-dry-run mode returns actual row counts."""
+        sync = HubSync(HubSyncConfig(), db, dry_run=False)
         _run(db.write_cycle(CycleLogEntry(
             cycle_id="c1", timestamp="2026-04-12T22:00:00",
             scenario="MIDDAY_CHARGE", guard_level="ok",
@@ -88,7 +119,7 @@ class TestSyncAll:
 
     def test_sync_error_caught(self, db: LocalDB) -> None:
         """Sync error on a table should not crash, returns 0 for that table."""
-        sync = HubSync(HubSyncConfig(), db)
+        sync = HubSync(HubSyncConfig(), db, dry_run=False)
         # Monkey-patch to simulate error
         original = sync._sync_table
 

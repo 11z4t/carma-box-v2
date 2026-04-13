@@ -12,7 +12,7 @@ Covers:
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -225,8 +225,6 @@ class TestExceptionCapture:
 
     async def test_balancer_exception_captured(self) -> None:
         """If an exception is raised during the cycle, it is captured."""
-        from unittest.mock import patch
-
         engine = _make_engine()
         snap = make_snapshot(hour=12, batteries=[make_battery_state()])
 
@@ -241,3 +239,57 @@ class TestExceptionCapture:
         assert result.error is not None
         assert "balancer failure" in result.error
         assert result.elapsed_s >= 0
+
+
+# ===========================================================================
+# PLAT-1351: ModeChangeManager.process() is called during run_cycle()
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+class TestModeManagerProcessCalled:
+    """PLAT-1351: ModeChangeManager.process() must be called in Phase 5."""
+
+    async def test_mode_manager_process_called_each_cycle(self) -> None:
+        """process() must be invoked once per run_cycle() call."""
+        engine = _make_engine()
+        snap = make_snapshot(hour=12)
+
+        with patch.object(
+            engine._mode_manager, "process", wraps=engine._mode_manager.process
+        ) as mock_process:
+            await engine.run_cycle(snap)
+
+        mock_process.assert_awaited_once()
+
+    async def test_mode_manager_process_called_even_on_warning(self) -> None:
+        """process() is called even when guard level is WARNING (not FREEZE)."""
+        engine = _make_engine()
+        # SoC at floor triggers G1 WARNING, but not FREEZE
+        low_soc_bat = make_battery_state(soc_pct=14.0)
+        snap = make_snapshot(hour=12, batteries=[low_soc_bat])
+
+        with patch.object(
+            engine._mode_manager, "process", wraps=engine._mode_manager.process
+        ) as mock_process:
+            result = await engine.run_cycle(snap)
+
+        # G1 warning level — mode manager still called
+        assert result.guard is not None
+        mock_process.assert_awaited_once()
+
+    async def test_mode_manager_process_not_called_on_freeze(self) -> None:
+        """process() must NOT be called when guard is FREEZE (decision skipped)."""
+        engine = _make_engine()
+        snap = make_snapshot(hour=12)
+
+        with patch.object(
+            engine._mode_manager, "process", wraps=engine._mode_manager.process
+        ) as mock_process:
+            # Stale data triggers FREEZE
+            result = await engine.run_cycle(snap, data_age_s=600.0)
+
+        assert result.guard is not None
+        # FREEZE/ALARM returns early — mode manager process() is in the try block
+        # after the FREEZE check, so it must NOT be called
+        mock_process.assert_not_awaited()

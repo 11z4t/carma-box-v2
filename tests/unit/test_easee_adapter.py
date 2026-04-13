@@ -279,17 +279,93 @@ class TestReadNullAndError:
 
 
 # ===========================================================================
-# Coverage: enforce_smart_charging_off
+# PLAT-1355: enforce_smart_charging_off — actual implementation
 # ===========================================================================
+
+
+def _make_config_with_smart_charging() -> "EVChargerConfig":
+    """Config that includes a smart_charging entity."""
+    return EVChargerConfig(
+        id="ev_main",
+        name="Easee Home",
+        charger_id="EH128405",
+        max_amps=10,
+        min_amps=6,
+        phases=3,
+        entities=EVChargerEntities(
+            status="sensor.easee_home_12840_status",
+            power="sensor.easee_home_12840_power",
+            current="sensor.easee_home_12840_current",
+            enabled="switch.easee_home_12840_is_enabled",
+            dynamic_charger_limit="sensor.easee_home_12840_dynamic_charger_limit",
+            max_charger_limit="sensor.easee_home_12840_max_charger_limit",
+            reason_for_no_current="sensor.easee_home_12840_reason_for_no_current",
+            override_schedule="button.easee_home_12840_override_schedule",
+            smart_charging="switch.easee_home_12840_smart_charging",
+        ),
+    )
 
 
 @pytest.mark.asyncio
 class TestSmartChargingGuard:
-    """enforce_smart_charging_off should return True without API calls."""
+    """PLAT-1355: enforce_smart_charging_off must read state and call service."""
 
-    async def test_returns_true(
+    async def test_no_entity_returns_true_without_api_call(
         self, adapter: EaseeAdapter, mock_api: AsyncMock
     ) -> None:
+        """When smart_charging entity not configured, return True (no-op)."""
         result = await adapter.enforce_smart_charging_off()
+        assert result is True
+        mock_api.call_service.assert_not_awaited()
+
+    async def test_smart_charging_already_off_no_service_call(
+        self, mock_api: AsyncMock
+    ) -> None:
+        """When smart_charging is OFF, no service call is made."""
+        adapter = EaseeAdapter(mock_api, _make_config_with_smart_charging())
+        mock_api.get_state.return_value = "off"
+
+        result = await adapter.enforce_smart_charging_off()
+
+        assert result is True
+        mock_api.call_service.assert_not_awaited()
+
+    async def test_smart_charging_on_turns_it_off(
+        self, mock_api: AsyncMock
+    ) -> None:
+        """When smart_charging is ON, calls switch.turn_off and returns result."""
+        adapter = EaseeAdapter(mock_api, _make_config_with_smart_charging())
+        mock_api.get_state.return_value = "on"
+        mock_api.call_service.return_value = True
+
+        result = await adapter.enforce_smart_charging_off()
+
+        assert result is True
+        mock_api.call_service.assert_awaited_once_with(
+            "switch", "turn_off",
+            {"entity_id": "switch.easee_home_12840_smart_charging"},
+        )
+
+    async def test_smart_charging_on_service_failure_returns_false(
+        self, mock_api: AsyncMock
+    ) -> None:
+        """When service call to turn off smart_charging fails, returns False."""
+        adapter = EaseeAdapter(mock_api, _make_config_with_smart_charging())
+        mock_api.get_state.return_value = "on"
+        mock_api.call_service.return_value = False
+
+        result = await adapter.enforce_smart_charging_off()
+
+        assert result is False
+
+    async def test_smart_charging_unavailable_treated_as_off(
+        self, mock_api: AsyncMock
+    ) -> None:
+        """When entity state is None/unavailable, treated as OFF (safe default)."""
+        adapter = EaseeAdapter(mock_api, _make_config_with_smart_charging())
+        mock_api.get_state.return_value = None  # unavailable
+
+        result = await adapter.enforce_smart_charging_off()
+
         assert result is True
         mock_api.call_service.assert_not_awaited()

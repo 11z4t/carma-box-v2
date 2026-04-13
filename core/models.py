@@ -36,6 +36,24 @@ class EMSMode(Enum):
 
 
 @unique
+class CTPlacement(Enum):
+    """CT clamp placement on GoodWe inverter.
+
+    LOCAL_LOAD:  CT measures the local load at the inverter output.
+                 Used for Kontor — control strategy targets local consumption.
+    HOUSE_GRID:  CT measures the house grid feed-in/import point.
+                 Used for Förråd — control strategy targets net grid power.
+    """
+
+    LOCAL_LOAD = "local_load"
+    HOUSE_GRID = "house_grid"
+
+
+# Maximum battery state-of-charge (physical ceiling — cannot exceed 100 %)
+MAX_SOC_PCT: float = 100.0
+
+
+@unique
 class Scenario(Enum):
     """State machine scenarios, ordered by priority (lower = higher)."""
 

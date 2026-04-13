@@ -230,3 +230,43 @@ class TestCoverageBranches:
         """vacuum executes successfully on an initialized database (lines 234-236)."""
         # Should not raise
         _run(db.vacuum())
+
+
+# ===========================================================================
+# PLAT-1352: SQL injection prevention in cleanup_retention
+# ===========================================================================
+
+
+class TestSQLInjectionPrevention:
+    """PLAT-1352: cleanup_retention must reject non-integer days parameters."""
+
+    def test_cleanup_retention_rejects_negative_days(self, db: LocalDB) -> None:
+        """Negative days value raises ValueError."""
+        with pytest.raises(ValueError, match="non-negative integer"):
+            _run(db.cleanup_retention(-1))
+
+    def test_cleanup_retention_rejects_string_input(self, db: LocalDB) -> None:
+        """String days value raises ValueError (SQL injection attempt)."""
+        with pytest.raises((ValueError, TypeError)):
+            _run(db.cleanup_retention("1 OR 1=1 --"))  # type: ignore[arg-type]
+
+    def test_cleanup_retention_rejects_float_input(self, db: LocalDB) -> None:
+        """Float days value raises ValueError (only int allowed)."""
+        with pytest.raises(ValueError, match="non-negative integer"):
+            _run(db.cleanup_retention(1.5))  # type: ignore[arg-type]
+
+    def test_cleanup_retention_accepts_valid_int(self, db: LocalDB) -> None:
+        """Valid integer days value works without raising."""
+        # Write a row with old timestamp so it gets deleted
+        _run(db.write_cycle(CycleLogEntry(
+            cycle_id="old1", timestamp="2020-01-01T00:00:00",
+            scenario="MIDDAY_CHARGE", guard_level="ok",
+            headroom_kw=1.0, elapsed_s=0.05,
+        )))
+        deleted = _run(db.cleanup_retention(1))
+        assert deleted >= 1
+
+    def test_cleanup_retention_zero_days(self, db: LocalDB) -> None:
+        """Zero days is valid — deletes rows older than now."""
+        result = _run(db.cleanup_retention(0))
+        assert isinstance(result, int)

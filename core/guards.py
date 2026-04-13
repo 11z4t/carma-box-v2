@@ -109,6 +109,14 @@ class GuardConfig:
     # Communication (G7)
     ha_health_timeout_s: int = 30
 
+    # G0: Grid charging detection thresholds (PLAT-1357)
+    # Charging threshold: battery power below this (W) indicates charging.
+    # Using negative W: -100 W means the battery is actively being charged.
+    g0_charging_power_threshold_w: float = -100.0
+    # Minimum PV power (W) required to classify charging as PV-sourced.
+    # Below this, night grid charging is assumed (no significant solar input).
+    g0_min_pv_power_w: float = 50.0
+
 
 # ---------------------------------------------------------------------------
 # GridGuard
@@ -244,10 +252,12 @@ class GridGuard:
                 )
 
             # Condition C: charging from grid at night (no PV)
+            # PLAT-1357: thresholds sourced from config (g0_charging_power_threshold_w,
+            # g0_min_pv_power_w) instead of hardcoded -100W and 50W.
             if (
-                bat.power_w < -100  # Charging
+                bat.power_w < self._config.g0_charging_power_threshold_w
                 and bat.ems_mode not in ("charge_pv", "import_ac")
-                and bat.pv_power_w < 50  # No significant PV
+                and bat.pv_power_w < self._config.g0_min_pv_power_w
             ):
                 logger.critical(
                     "G0 GRID CHARGING (night): %s power=%dW, mode=%s, pv=%dW",
@@ -428,7 +438,17 @@ class GridGuard:
                 f"G3: Ellevio BREACH {weighted_avg_kw:.2f}kW > {effective_tak:.2f}kW"
             )
             result.replan_needed = True
-            # Corrective: cut EV to 6A
+            # PLAT-1357: BREACH emits STOP_EV to immediately halt EV charging
+            # in addition to capping at 6A, matching CRITICAL behavior.
+            # Stopping EV first is safer than relying only on current reduction
+            # since the charger may take several seconds to ramp down.
+            result.commands.append(GuardCommand(
+                guard_id="G3",
+                command_type=CommandType.STOP_EV_CHARGING,
+                target_id="ev",
+                reason="G3 BREACH: stop EV to reduce grid import",
+            ))
+            # Corrective: cut EV to 6A (for when EV resumes)
             result.commands.append(GuardCommand(
                 guard_id="G3",
                 command_type=CommandType.SET_EV_CURRENT,

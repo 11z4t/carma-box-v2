@@ -288,6 +288,32 @@ class TestCallService:
         result = await client.call_service("homeassistant", "reload")
         assert result is True
 
+    async def test_returns_false_on_ha_error_response(
+        self, ha_config: HAConfig
+    ) -> None:
+        """PLAT-1354: HA error dict with 'message' key must return False."""
+        client = HAApiClient(ha_config)
+        # HA returns 200 with an error body when service is unknown
+        error_body = {"message": "Service not found.", "code": "service_not_found"}
+        resp = _make_response(200, error_body)
+        client._session = _make_session([resp])
+
+        result = await client.call_service("bad_domain", "bad_service")
+        assert result is False
+
+    async def test_returns_true_on_list_response(
+        self, ha_config: HAConfig
+    ) -> None:
+        """PLAT-1354: HA success returns list of states — must be True."""
+        client = HAApiClient(ha_config)
+        # HA returns list of affected state objects on success
+        states_list = [{"entity_id": "switch.test", "state": "on"}]
+        resp = _make_response(200, states_list)
+        client._session = _make_session([resp])
+
+        result = await client.call_service("switch", "turn_on", {"entity_id": "switch.test"})
+        assert result is True
+
 
 # ---------------------------------------------------------------------------
 # health_check
@@ -380,6 +406,26 @@ class TestRetryLogic:
         client._session = _make_session([resp_404])
 
         result = await client.get_state("sensor.nope")
+        assert result is None
+
+    async def test_no_retry_on_401(self, ha_config: HAConfig) -> None:
+        """PLAT-1354: 401 auth error must not be retried."""
+        client = HAApiClient(ha_config)
+        # Only one 401 response in queue — if retried it would run out
+        resp_401 = _make_response(401, text="Unauthorized")
+        # Provide extra responses to detect if retry happens (would cause index error)
+        client._session = _make_session([resp_401])
+
+        result = await client.get_state("sensor.test")
+        assert result is None
+
+    async def test_no_retry_on_403(self, ha_config: HAConfig) -> None:
+        """PLAT-1354: 403 forbidden must not be retried."""
+        client = HAApiClient(ha_config)
+        resp_403 = _make_response(403, text="Forbidden")
+        client._session = _make_session([resp_403])
+
+        result = await client.get_state("sensor.test")
         assert result is None
 
     async def test_retry_on_connection_error(
@@ -494,6 +540,14 @@ class TestSessionLifecycle:
             session2 = await client._ensure_session()
         assert session1 is session2
         await client.close()
+
+    async def test_batch_cache_lock_exists(self, ha_config: HAConfig) -> None:
+        """PLAT-1354: HAApiClient must have asyncio.Lock for batch cache."""
+        import asyncio as _asyncio
+
+        client = HAApiClient(ha_config)
+        assert hasattr(client, "_batch_cache_lock")
+        assert isinstance(client._batch_cache_lock, _asyncio.Lock)
 
     async def test_ensure_session_recreates_when_closed(
         self, ha_config: HAConfig

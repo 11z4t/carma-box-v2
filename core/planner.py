@@ -30,7 +30,13 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class PlannerConfig:
-    """Planner thresholds — all from site.yaml."""
+    """Planner thresholds — all from site.yaml.
+
+    All numeric coefficients are named and documented here so that the
+    planning algorithms contain zero magic numbers. When a value changes
+    (e.g. a different EV or new grid tariff) only this dataclass needs
+    updating.
+    """
 
     # Night window
     night_start_hour: int = 22
@@ -62,6 +68,29 @@ class PlannerConfig:
     # Battery
     min_soc_pct: float = 15.0
     bat_efficiency: float = 0.90
+
+    # --- Coefficients used in planning calculations ---
+
+    # Fraction of PV forecast that is expected to reach the battery.
+    # 0.5 = 50 % of tomorrow's PV will contribute to battery charging.
+    # Used to reduce grid-charge need when PV is forecast (conservative).
+    pv_bat_contribution_factor: float = 0.5
+
+    # Fraction of the EV's grid charge need that is served by the battery
+    # during evening discharge (the rest comes from the grid overnight).
+    # 0.3 = battery covers ~30 % of EV charge need, grid covers the rest.
+    ev_bat_contribution_pct: float = 0.3
+
+    # Number of evening discharge hours used to spread the surplus allocation.
+    # 5 hours covers the typical 17:00–22:00 evening peak window.
+    evening_discharge_hours: float = 5.0
+
+    # Grid voltage per phase (V) used for EV ampere → kW conversion.
+    # 230 V is the nominal single-phase voltage in Sweden (EN 50160).
+    grid_voltage_v: float = 230.0
+
+    # Number of phases used for EV charging (3-phase XPENG G9 default).
+    ev_phases: int = 3
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +224,11 @@ class Planner:
             ev_charge_need_kwh=ev_need,
             ev_start_hour=ev_start,
             ev_stop_hour=ev_stop,
-            ev_amps=int(cfg.ev_charge_kw * 1000 // (230 * 3)) if not ev_skip else 0,
+            # Convert kW to amps: P(kW) * 1000 / (V_phase * n_phases)
+            # Uses grid_voltage_v and ev_phases from config (PLAT-1358).
+            ev_amps=int(
+                cfg.ev_charge_kw * 1000 // (cfg.grid_voltage_v * cfg.ev_phases)
+            ) if not ev_skip else 0,
             ev_skip=ev_skip,
             ev_skip_reason=ev_skip_reason,
             bat_charge_need_kwh=bat_need,
@@ -236,7 +269,8 @@ class Planner:
         # Night need estimate
         ev_need = 0.0
         if ev_connected and ev_soc_pct < cfg.ev_target_soc_pct:
-            ev_need = self._calculate_ev_charge_need(ev_soc_pct) * 0.3  # Battery contributes ~30%
+            # ev_bat_contribution_pct: fraction of EV charge need served by battery
+            ev_need = self._calculate_ev_charge_need(ev_soc_pct) * cfg.ev_bat_contribution_pct
 
         night_need = baseload * cfg.night_hours + ev_need
 
@@ -263,8 +297,9 @@ class Planner:
         # Evening floor SoC: min_soc + night_need / cap * 100, clamped to 100%
         evening_floor = min(100.0, cfg.min_soc_pct + (night_need / bat_cap_kwh * 100.0))
 
-        # Hourly rate over 5 evening hours (17:00-22:00)
-        hourly_rate_w = evening_alloc / 5.0 * 1000.0  # kWh → W (per hour)
+        # Hourly rate over evening_discharge_hours (default 5h: 17:00–22:00).
+        # kWh ÷ hours × 1000 converts to average W per hour (PLAT-1358).
+        hourly_rate_w = evening_alloc / cfg.evening_discharge_hours * 1000.0
 
         return EveningPlan(
             bat_available_kwh=bat_available,
@@ -298,8 +333,9 @@ class Planner:
         if soc_gap <= 0:
             return 0.0
         raw_need = (soc_gap / 100.0) * bat_cap_kwh / cfg.bat_efficiency
-        # Reduce by expected PV contribution
-        pv_contribution = min(pv_tomorrow_kwh * 0.5, raw_need)
+        # Reduce by expected PV contribution (pv_bat_contribution_factor fraction
+        # of tomorrow's forecast reaches the battery — conservative estimate).
+        pv_contribution = min(pv_tomorrow_kwh * cfg.pv_bat_contribution_factor, raw_need)
         return max(0.0, raw_need - pv_contribution)
 
     def _get_night_hours(self) -> list[int]:

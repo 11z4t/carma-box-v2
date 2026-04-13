@@ -37,13 +37,28 @@ class HubSync:
 
     Idempotent: uses synced flag per row.
     Connection errors are caught and logged.
+
+    PLAT-1353: dry_run=True (default) means rows are transformed and counted
+    but NOT marked as synced and NOT inserted into PostgreSQL. Set dry_run=False
+    only when a real PostgreSQL connection is available and inserts succeed.
     """
 
     TABLES = ("cycle_log", "event_log", "audit_log")
 
-    def __init__(self, config: HubSyncConfig, local_db: LocalDB) -> None:
+    def __init__(
+        self,
+        config: HubSyncConfig,
+        local_db: LocalDB,
+        dry_run: bool = True,
+    ) -> None:
         self._config = config
         self._local_db = local_db
+        self._dry_run = dry_run
+        if dry_run:
+            logger.warning(
+                "HubSync running in DRY RUN mode — rows will NOT be marked synced "
+                "until PostgreSQL insert is implemented and dry_run=False"
+            )
 
     async def sync(self) -> dict[str, int]:
         """Sync all tables. Returns count of rows synced per table.
@@ -64,7 +79,11 @@ class HubSync:
         return results
 
     async def _sync_table(self, table: str) -> int:
-        """Sync a single table. Returns count of rows synced."""
+        """Sync a single table. Returns count of rows synced.
+
+        PLAT-1353: rows are only marked synced when dry_run=False AND the
+        PostgreSQL insert succeeds. In dry_run mode a warning is emitted.
+        """
         rows = await self._local_db.get_unsynced_rows(table, limit=self._config.batch_size)
         if not rows:
             return 0
@@ -72,8 +91,18 @@ class HubSync:
         # Transform rows for PostgreSQL
         transformed = [self._transform_row(table, row) for row in rows]
 
-        # In production: insert into PostgreSQL via asyncpg
-        # For now: mark as synced locally (PostgreSQL insert deferred to integration)
+        if self._dry_run:
+            # PLAT-1353: do NOT mark synced — no PG insert has happened
+            logger.warning(
+                "HubSync DRY RUN: %d rows from %s prepared but NOT synced "
+                "(no PostgreSQL connection)",
+                len(transformed), table,
+            )
+            return 0
+
+        # Real path: insert into PostgreSQL, then mark synced only on success.
+        # TODO: implement asyncpg insert here and raise on failure so rows
+        # are not prematurely marked synced.
         ids = [int(str(row.get("id", 0))) for row in rows]
         last_id = max(ids) if ids else 0
         if last_id > 0:

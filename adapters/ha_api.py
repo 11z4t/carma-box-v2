@@ -57,8 +57,10 @@ class HAApiClient:
 
         # H5: Per-cycle batch cache — avoids fetching all ~2000 HA entities
         # multiple times when several adapters call get_states_batch() in one cycle.
+        # PLAT-1354: asyncio.Lock prevents concurrent refreshes from racing.
         self._batch_cache: Optional[list[Any]] = None
         self._batch_cache_ts: float = 0.0
+        self._batch_cache_lock: asyncio.Lock = asyncio.Lock()
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         """Create or return the long-lived session."""
@@ -74,6 +76,9 @@ class HAApiClient:
             )
         return self._session
 
+    # PLAT-1354: status codes that must never be retried
+    _NO_RETRY_STATUSES: frozenset[int] = frozenset({401, 403, 404})
+
     async def _request(
         self,
         method: str,
@@ -83,6 +88,9 @@ class HAApiClient:
         """Execute an HTTP request with retry logic.
 
         Returns parsed JSON on success, None on failure after all retries.
+
+        PLAT-1354: 401/403 auth errors are never retried — retrying won't fix
+        a bad token. 404 is also never retried (entity doesn't exist).
         """
         url = f"{self._base_url}{path}"
         last_error: Optional[Exception] = None
@@ -95,9 +103,15 @@ class HAApiClient:
                 ) as resp:
                     if resp.status == 200:
                         return await resp.json()
-                    if resp.status == 404:
-                        # Entity not found — no point retrying
-                        logger.debug("404 for %s", path)
+                    # PLAT-1354: auth errors and 404 must never be retried
+                    if resp.status in self._NO_RETRY_STATUSES:
+                        if resp.status in (401, 403):
+                            logger.error(
+                                "HA API %s %s auth error %d — check token (not retrying)",
+                                method, path, resp.status,
+                            )
+                        else:
+                            logger.debug("404 for %s", path)
                         return None
                     # Server error — retry
                     body = await resp.text()
@@ -192,18 +206,21 @@ class HAApiClient:
         if not entity_ids:
             return {}
 
-        now = time.monotonic()
-        age = now - self._batch_cache_ts
-        if self._batch_cache is None or age >= _BATCH_CACHE_TTL_S:
-            all_states = await self._request("GET", "/api/states")
-            if all_states is None:
-                return {}
-            self._batch_cache = all_states
-            self._batch_cache_ts = now
-            logger.debug("H5: batch cache refreshed (age=%.1fs)", age)
-        else:
-            logger.debug("H5: batch cache hit (age=%.1fs)", age)
-            all_states = self._batch_cache
+        # PLAT-1354: Lock prevents concurrent coroutines from issuing duplicate
+        # /api/states fetches when the cache has expired simultaneously.
+        async with self._batch_cache_lock:
+            now = time.monotonic()
+            age = now - self._batch_cache_ts
+            if self._batch_cache is None or age >= _BATCH_CACHE_TTL_S:
+                all_states = await self._request("GET", "/api/states")
+                if all_states is None:
+                    return {}
+                self._batch_cache = all_states
+                self._batch_cache_ts = now
+                logger.debug("H5: batch cache refreshed (age=%.1fs)", age)
+            else:
+                logger.debug("H5: batch cache hit (age=%.1fs)", age)
+                all_states = self._batch_cache
 
         wanted = set(entity_ids)
         result: dict[str, Any] = {}
@@ -230,12 +247,25 @@ class HAApiClient:
     ) -> bool:
         """Call a Home Assistant service.
 
-        Returns True on success, False on failure after retries.
+        Returns True on success (HA returned a list of affected states),
+        False on failure after retries or when HA returns an error dict.
         Never raises.
+
+        PLAT-1354: A successful HA service call returns a JSON list of states.
+        An error response is a JSON object (dict) with a "message" field.
+        Returning True for any non-None response was a bug — we now check the
+        response type to detect HA-level errors (e.g. unknown service).
         """
         path = f"/api/services/{domain}/{service}"
         result = await self._request("POST", path, json_data=data or {})
         if result is None:
+            return False
+        # HA success: list of state objects. HA error: {"message": "..."}.
+        if isinstance(result, dict) and "message" in result:
+            logger.warning(
+                "HA service %s/%s returned error: %s",
+                domain, service, result.get("message", ""),
+            )
             return False
         return True
 

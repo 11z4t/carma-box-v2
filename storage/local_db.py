@@ -232,14 +232,25 @@ class LocalDB:
     # ------------------------------------------------------------------
 
     async def cleanup_retention(self, days: int) -> int:
-        """Delete rows older than specified days. Returns count deleted."""
+        """Delete rows older than specified days. Returns count deleted.
+
+        PLAT-1352: days is validated as int to prevent SQL injection.
+        SQLite's datetime() function only accepts integer day offsets, so
+        we pass the value as a bound parameter using string concatenation
+        inside the SQL expression — safe because days is enforced as int.
+        """
+        if not isinstance(days, int) or days < 0:
+            raise ValueError(f"days must be a non-negative integer, got {days!r}")
         db = await self._ensure_db()
-        cutoff = f"datetime('now', '-{days} days')"
         total = 0
         for table in ("cycle_log", "event_log", "audit_log"):
             _validate_table(table)  # Always valid — just enforcing the pattern
+            # Use parameterized query: '-' || cast(? as text) || ' days'
+            # avoids f-string interpolation of user input into SQL.
             cursor = await db.execute(
-                f"DELETE FROM {table} WHERE timestamp < {cutoff}",  # noqa: S608
+                f"DELETE FROM {table} WHERE timestamp < "  # noqa: S608
+                "datetime('now', '-' || cast(? as text) || ' days')",
+                (days,),
             )
             total += cursor.rowcount
         await db.commit()
