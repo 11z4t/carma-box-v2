@@ -175,6 +175,7 @@ class CarmaBoxService:
             config=ExecutorConfig(
                 mode_change_cooldown_s=config.control.mode_change_cooldown_s,
             ),
+            ha_api=ha_api,
         )
 
         # Surplus dispatch from consumer configs

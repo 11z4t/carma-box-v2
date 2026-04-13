@@ -90,6 +90,8 @@ class CommandType(Enum):
     STOP_EV_CHARGING = "stop_ev_charging"
     TURN_ON_CONSUMER = "turn_on_consumer"
     TURN_OFF_CONSUMER = "turn_off_consumer"
+    CLIMATE_SET_TEMP = "climate_set_temp"
+    CLIMATE_SET_MODE = "climate_set_mode"
     NO_OP = "no_op"
 
 

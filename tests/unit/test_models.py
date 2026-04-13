@@ -317,6 +317,8 @@ class TestCommandType:
             "stop_ev_charging",
             "turn_on_consumer",
             "turn_off_consumer",
+            "climate_set_temp",
+            "climate_set_mode",
             "no_op",
         }
         actual = {ct.value for ct in CommandType}

@@ -125,10 +125,12 @@ class CommandExecutor:
         consumers: dict[str, LoadPort] | None = None,
         mode_manager: ModeChangeManager | None = None,
         config: ExecutorConfig | None = None,
+        ha_api: Any | None = None,
     ) -> None:
         self._inverters = inverters
         self._ev = ev_charger
         self._consumers = consumers or {}
+        self._ha_api = ha_api
         self._mode_manager = mode_manager or ModeChangeManager()
         self._config = config or ExecutorConfig()
         # Rate limiting: last mode change time per battery_id
@@ -237,6 +239,10 @@ class CommandExecutor:
                 return await self._exec_consumer_on(cmd)
             elif cmd.command_type == CommandType.TURN_OFF_CONSUMER:
                 return await self._exec_consumer_off(cmd)
+            elif cmd.command_type == CommandType.CLIMATE_SET_TEMP:
+                return await self._exec_climate_set_temp(cmd)
+            elif cmd.command_type == CommandType.CLIMATE_SET_MODE:
+                return await self._exec_climate_set_mode(cmd)
             else:
                 logger.warning("Unknown command type: %s", cmd.command_type)
                 return False
@@ -328,6 +334,26 @@ class CommandExecutor:
             logger.error("No consumer for %s", cmd.target_id)
             return False
         return await consumer.turn_off()
+
+    async def _exec_climate_set_temp(self, cmd: Command) -> bool:
+        """Set climate entity temperature via HA service."""
+        if self._ha_api is None:
+            return False
+        result: bool = await self._ha_api.call_service(
+            "climate", "set_temperature",
+            {"entity_id": cmd.target_id, "temperature": cmd.value},
+        )
+        return result
+
+    async def _exec_climate_set_mode(self, cmd: Command) -> bool:
+        """Set climate entity HVAC mode via HA service."""
+        if self._ha_api is None:
+            return False
+        result: bool = await self._ha_api.call_service(
+            "climate", "set_hvac_mode",
+            {"entity_id": cmd.target_id, "hvac_mode": str(cmd.value)},
+        )
+        return result
 
     # ------------------------------------------------------------------
     # Rate limiting

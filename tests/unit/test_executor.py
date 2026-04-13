@@ -645,3 +645,59 @@ class TestCoverageBranches:
         r2 = await executor.execute([cmd2])
         assert r2.commands_succeeded == 1
         assert r2.commands_rate_limited == 0
+
+
+# ===========================================================================
+# PLAT-1373: Climate commands
+# ===========================================================================
+
+
+@pytest.mark.asyncio()
+class TestClimateCommands:
+    """PLAT-1373: Climate set_temperature and set_hvac_mode via HA API."""
+
+    async def test_climate_set_temp(self) -> None:
+        mock_api = AsyncMock()
+        mock_api.call_service = AsyncMock(return_value=True)
+        executor = CommandExecutor(
+            inverters={}, ha_api=mock_api,
+        )
+        cmd = Command(
+            command_type=CommandType.CLIMATE_SET_TEMP,
+            target_id="climate.vp_kontor",
+            value=22.0,
+        )
+        result = await executor.execute([cmd])
+        assert result.commands_succeeded == 1
+        mock_api.call_service.assert_called_once_with(
+            "climate", "set_temperature",
+            {"entity_id": "climate.vp_kontor", "temperature": 22.0},
+        )
+
+    async def test_climate_set_mode(self) -> None:
+        mock_api = AsyncMock()
+        mock_api.call_service = AsyncMock(return_value=True)
+        executor = CommandExecutor(
+            inverters={}, ha_api=mock_api,
+        )
+        cmd = Command(
+            command_type=CommandType.CLIMATE_SET_MODE,
+            target_id="climate.vp_kontor",
+            value="heat",
+        )
+        result = await executor.execute([cmd])
+        assert result.commands_succeeded == 1
+        mock_api.call_service.assert_called_once_with(
+            "climate", "set_hvac_mode",
+            {"entity_id": "climate.vp_kontor", "hvac_mode": "heat"},
+        )
+
+    async def test_climate_no_ha_api_returns_false(self) -> None:
+        executor = CommandExecutor(inverters={})
+        cmd = Command(
+            command_type=CommandType.CLIMATE_SET_TEMP,
+            target_id="climate.vp_kontor",
+            value=20.0,
+        )
+        result = await executor.execute([cmd])
+        assert result.commands_failed == 1
