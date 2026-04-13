@@ -28,6 +28,7 @@ from config.schema import (
     SiteConfig,
     load_config,
 )
+from core.models import CTPlacement
 
 
 class TestLoadConfig:
@@ -179,7 +180,7 @@ class TestBatteryConfig:
     def test_local_load_ct_placement(self) -> None:
         """'local_load' CT placement should be accepted."""
         bat = self._make_battery(ct_placement="local_load")
-        assert bat.ct_placement == "local_load"
+        assert bat.ct_placement == CTPlacement.LOCAL_LOAD
 
     def test_min_soc_at_boundary(self) -> None:
         """SoC floor at minimum boundary (5%) should be accepted."""
@@ -326,12 +327,12 @@ class TestProductionConfig:
     def test_kontor_ct_local_load(self, config: CarmaConfig) -> None:
         """Kontor battery CT placement should be 'local_load'."""
         kontor = next(b for b in config.batteries if b.id == "kontor")
-        assert kontor.ct_placement == "local_load"
+        assert kontor.ct_placement == CTPlacement.LOCAL_LOAD
 
     def test_forrad_ct_house_grid(self, config: CarmaConfig) -> None:
         """Forrad battery CT placement should be 'house_grid'."""
         forrad = next(b for b in config.batteries if b.id == "forrad")
-        assert forrad.ct_placement == "house_grid"
+        assert forrad.ct_placement == CTPlacement.HOUSE_GRID
 
     def test_kontor_capacity(self, config: CarmaConfig) -> None:
         """Kontor battery should be 15 kWh."""

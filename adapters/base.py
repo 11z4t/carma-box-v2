@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
 
+from core.models import CTPlacement
+
 
 @dataclass(frozen=True)
 class AdapterReading:
@@ -174,7 +176,7 @@ class InverterAdapter(ABC):
         ...  # pragma: no cover
     @property
     @abstractmethod
-    def ct_placement(self) -> str:
+    def ct_placement(self) -> CTPlacement:
         """CT clamp placement: 'local_load' or 'house_grid'."""
         ...  # pragma: no cover
 class EVChargerAdapter(ABC):

@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from adapters.base import AdapterReading, InverterAdapter
 from adapters.ha_api import HAApiClient
 from config.schema import BatteryConfig
+from core.models import CTPlacement
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class GoodWeAdapter(InverterAdapter):
         return self._config.cap_kwh
 
     @property
-    def ct_placement(self) -> str:
+    def ct_placement(self) -> CTPlacement:
         return self._config.ct_placement
 
     @property

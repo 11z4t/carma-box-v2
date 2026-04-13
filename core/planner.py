@@ -20,6 +20,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from core.models import MAX_SOC_PCT
+
 logger = logging.getLogger(__name__)
 
 
@@ -295,7 +297,10 @@ class Planner:
         morning_alloc = bat_surplus * (cfg.morning_allocation_pct / 100.0)
 
         # Evening floor SoC: min_soc + night_need / cap * 100, clamped to 100%
-        evening_floor = min(100.0, cfg.min_soc_pct + (night_need / bat_cap_kwh * 100.0))
+        evening_floor = min(
+            MAX_SOC_PCT,
+            cfg.min_soc_pct + (night_need / bat_cap_kwh * MAX_SOC_PCT),
+        )
 
         # Hourly rate over evening_discharge_hours (default 5h: 17:00–22:00).
         # kWh ÷ hours × 1000 converts to average W per hour (PLAT-1358).

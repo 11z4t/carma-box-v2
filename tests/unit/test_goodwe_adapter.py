@@ -20,6 +20,7 @@ import pytest
 from adapters.goodwe import GoodWeAdapter
 from adapters.ha_api import HAApiClient
 from config.schema import BatteryConfig
+from core.models import CTPlacement
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +112,7 @@ class TestProperties:
         assert adapter.capacity_kwh == 15.0
 
     def test_ct_placement(self, adapter: GoodWeAdapter) -> None:
-        assert adapter.ct_placement == "local_load"
+        assert adapter.ct_placement == CTPlacement.LOCAL_LOAD
 
     def test_device_id(self, adapter: GoodWeAdapter) -> None:
         assert adapter.device_id == "696f2a85fed59b45f2ced7fc2663984a"
@@ -122,7 +123,7 @@ class TestProperties:
         adapter = GoodWeAdapter(mock_api, forrad_config)
         assert adapter.battery_id == "forrad"
         assert adapter.capacity_kwh == 5.0
-        assert adapter.ct_placement == "house_grid"
+        assert adapter.ct_placement == CTPlacement.HOUSE_GRID
 
 
 # ---------------------------------------------------------------------------

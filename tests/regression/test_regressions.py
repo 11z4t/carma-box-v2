@@ -17,7 +17,7 @@ from core.balancer import BatteryBalancer, BatteryInfo
 from core.ev_controller import EVAction, EVController, EVControllerConfig
 from core.guards import GridGuard, GuardConfig, GuardLevel
 from core.mode_change import ModeChangeConfig, ModeChangeManager
-from core.models import CommandType, Scenario
+from core.models import CTPlacement, CommandType, Scenario
 from tests.conftest import make_battery_state
 
 
@@ -71,10 +71,10 @@ class TestB5KFDivergence:
         balancer = BatteryBalancer()
         k = BatteryInfo(battery_id="kontor", soc_pct=80.0, cap_kwh=15.0,
                         cell_temp_c=20.0, soh_pct=100.0, max_discharge_w=5000.0,
-                        max_charge_w=5000.0, ct_placement="local_load")
+                        max_charge_w=5000.0, ct_placement=CTPlacement.LOCAL_LOAD)
         f = BatteryInfo(battery_id="forrad", soc_pct=40.0, cap_kwh=5.0,
                         cell_temp_c=20.0, soh_pct=100.0, max_discharge_w=5000.0,
-                        max_charge_w=5000.0, ct_placement="house_grid")
+                        max_charge_w=5000.0, ct_placement=CTPlacement.HOUSE_GRID)
         result = balancer.allocate([k, f], 4000.0)
         alloc = result.allocation_map
         assert alloc["kontor"].correction_factor > 1.0, "B5: higher SoC should discharge more"
@@ -117,7 +117,7 @@ class TestB7Inv3FastCharging:
         mock_api.get_state = AsyncMock(return_value="off")
         from config.schema import BatteryConfig, BatteryEntities
         config = BatteryConfig(
-            id="test", name="Test", cap_kwh=10.0, ct_placement="house_grid",
+            id="test", name="Test", cap_kwh=10.0, ct_placement=CTPlacement.HOUSE_GRID,
             entities=BatteryEntities(
                 soc="s.soc", power="s.power",
                 ems_mode="select.mode", ems_power_limit="number.limit",
@@ -169,7 +169,7 @@ class TestB10AutoForbidden:
         mock_api.call_service = AsyncMock(return_value=True)
         from config.schema import BatteryConfig, BatteryEntities
         config = BatteryConfig(
-            id="test", name="Test", cap_kwh=10.0, ct_placement="house_grid",
+            id="test", name="Test", cap_kwh=10.0, ct_placement=CTPlacement.HOUSE_GRID,
             entities=BatteryEntities(
                 soc="s.soc", power="s.power",
                 ems_mode="select.mode", ems_power_limit="number.limit",

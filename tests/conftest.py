@@ -15,6 +15,7 @@ import pytest
 from config.schema import CarmaConfig, load_config
 from core.models import (
     BatteryState,
+    CTPlacement,
     EVState,
     GridState,
     Scenario,
@@ -67,7 +68,7 @@ def minimal_config_dict() -> dict[str, Any]:
                 "id": "test_bat",
                 "name": "Test Battery",
                 "cap_kwh": 10.0,
-                "ct_placement": "house_grid",
+                "ct_placement": CTPlacement.HOUSE_GRID.value,
                 "entities": {
                     "soc": "sensor.test_soc",
                     "power": "sensor.test_power",
@@ -123,7 +124,7 @@ def make_battery_state(**overrides: Any) -> BatteryState:
         "fast_charging": False,
         "soh_pct": 95.0,
         "cap_kwh": 15.0,
-        "ct_placement": "local_load",
+        "ct_placement": CTPlacement.LOCAL_LOAD,
         "available_kwh": 6.075,
     }
     defaults.update(overrides)

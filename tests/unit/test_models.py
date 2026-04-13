@@ -89,10 +89,10 @@ class TestBatteryState:
 
     def test_ct_placement_values(self) -> None:
         """CT placement should accept both valid values."""
-        bat_local = make_battery_state(ct_placement="local_load")
-        bat_grid = make_battery_state(ct_placement="house_grid")
-        assert bat_local.ct_placement == "local_load"
-        assert bat_grid.ct_placement == "house_grid"
+        bat_local = make_battery_state(ct_placement=CTPlacement.LOCAL_LOAD)
+        bat_grid = make_battery_state(ct_placement=CTPlacement.HOUSE_GRID)
+        assert bat_local.ct_placement == CTPlacement.LOCAL_LOAD
+        assert bat_grid.ct_placement == CTPlacement.HOUSE_GRID
 
     def test_positive_power_is_discharge(self) -> None:
         """Positive power_w means discharge."""
@@ -517,13 +517,13 @@ class TestCTPlacementEnum:
         """Only two CT placements exist for the supported hardware."""
         assert len(CTPlacement) == 2
 
-    def test_ct_placement_matches_battery_state_string(self) -> None:
-        """CTPlacement values must match the strings used in BatteryState.ct_placement."""
-        bat = make_battery_state(ct_placement="local_load")
-        assert bat.ct_placement == CTPlacement.LOCAL_LOAD.value
+    def test_ct_placement_matches_battery_state(self) -> None:
+        """CTPlacement enum must be used in BatteryState.ct_placement."""
+        bat = make_battery_state(ct_placement=CTPlacement.LOCAL_LOAD)
+        assert bat.ct_placement == CTPlacement.LOCAL_LOAD
 
-        bat2 = make_battery_state(ct_placement="house_grid")
-        assert bat2.ct_placement == CTPlacement.HOUSE_GRID.value
+        bat2 = make_battery_state(ct_placement=CTPlacement.HOUSE_GRID)
+        assert bat2.ct_placement == CTPlacement.HOUSE_GRID
 
 
 class TestMaxSocPct:

@@ -113,7 +113,7 @@ class BatteryState:
     fast_charging: bool
     soh_pct: float
     cap_kwh: float
-    ct_placement: str                  # "local_load" or "house_grid"
+    ct_placement: CTPlacement
     available_kwh: float = 0.0         # computed: (soc - floor) * cap * efficiency
 
 

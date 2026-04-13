@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from core.models import effective_min_soc
+from core.models import CTPlacement, MAX_SOC_PCT, effective_min_soc
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ class BatteryInfo:
     soh_pct: float
     max_discharge_w: float
     max_charge_w: float
-    ct_placement: str        # "local_load" or "house_grid"
+    ct_placement: CTPlacement
     local_load_w: float = 0.0   # Only meaningful for local_load CT
     pv_power_w: float = 0.0     # PV production on this inverter
 
@@ -155,12 +155,12 @@ class BatteryBalancer:
             if is_charging:
                 # Charging: available = empty space (100% - soc)
                 available[bat.battery_id] = max(
-                    0.0, (100.0 - bat.soc_pct) / 100.0 * bat.cap_kwh
+                    0.0, (MAX_SOC_PCT - bat.soc_pct) / MAX_SOC_PCT * bat.cap_kwh
                 )
             else:
                 # Discharging: available = energy above floor
                 available[bat.battery_id] = max(
-                    0.0, (bat.soc_pct - floor) / 100.0 * bat.cap_kwh
+                    0.0, (bat.soc_pct - floor) / MAX_SOC_PCT * bat.cap_kwh
                 )
 
         # Step 2: Calculate total available

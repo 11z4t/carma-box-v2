@@ -11,6 +11,8 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from core.models import CTPlacement
+
 
 # ---------------------------------------------------------------------------
 # Site
@@ -136,7 +138,7 @@ class BatteryConfig(BaseModel):
     max_discharge_kw: float = Field(default=5.0, gt=0.0, le=25.0)
     max_charge_kw: float = Field(default=5.0, gt=0.0, le=25.0)
     efficiency: float = Field(default=0.90, ge=0.5, le=1.0)
-    ct_placement: str = Field(
+    ct_placement: CTPlacement = Field(
         ...,
         description="CT clamp placement: 'local_load' or 'house_grid'",
     )
@@ -144,14 +146,19 @@ class BatteryConfig(BaseModel):
     goodwe: GoodWeConfig = Field(default_factory=GoodWeConfig)
     entities: BatteryEntities
 
-    @field_validator("ct_placement")
+    @field_validator("ct_placement", mode="before")
     @classmethod
-    def validate_ct_placement(cls, v: str) -> str:
-        """Ensure CT placement is one of the known types."""
-        allowed = {"local_load", "house_grid"}
-        if v not in allowed:
-            raise ValueError(f"ct_placement must be one of {allowed}, got '{v}'")
-        return v
+    def validate_ct_placement(cls, v: str | CTPlacement) -> CTPlacement:
+        """Convert string to CTPlacement enum."""
+        if isinstance(v, CTPlacement):
+            return v
+        try:
+            return CTPlacement(v)
+        except ValueError:
+            allowed = {e.value for e in CTPlacement}
+            raise ValueError(
+                f"ct_placement must be one of {allowed}, got '{v}'"
+            )
 
 
 # ---------------------------------------------------------------------------
