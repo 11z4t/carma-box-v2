@@ -571,3 +571,68 @@ class TestSessionLifecycle:
                 session2 = await client._ensure_session()
         assert session2 is not session1
         await client.close()
+
+
+# ===========================================================================
+# PLAT-1370: set_state and set_input_text
+# ===========================================================================
+
+
+@pytest.mark.asyncio()
+class TestSetState:
+    """PLAT-1370: set_state() writes sensor state to HA."""
+
+    async def test_set_state_success(self, ha_config: HAConfig) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        client = HAApiClient(ha_config)
+        with patch.object(
+            client, "_request",
+            new_callable=AsyncMock,
+            return_value={"entity_id": "sensor.test", "state": "active"},
+        ) as mock_req:
+            result = await client.set_state(
+                "sensor.test", "active", {"friendly_name": "Test"},
+            )
+            assert result is True
+            mock_req.assert_called_once()
+            args = mock_req.call_args
+            assert args[0][0] == "POST"
+            assert "sensor.test" in args[0][1]
+
+    async def test_set_state_failure_returns_false(
+        self, ha_config: HAConfig,
+    ) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        client = HAApiClient(ha_config)
+        with patch.object(
+            client, "_request",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            result = await client.set_state("sensor.test", "error")
+            assert result is False
+
+
+@pytest.mark.asyncio()
+class TestSetInputText:
+    """PLAT-1370: set_input_text() truncates at 255 chars."""
+
+    async def test_truncation_at_255(self, ha_config: HAConfig) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        client = HAApiClient(ha_config)
+        long_value = "x" * 300
+        with patch.object(
+            client, "_request",
+            new_callable=AsyncMock,
+            return_value=[],  # HA service success = list
+        ) as mock_req:
+            result = await client.set_input_text(
+                "input_text.test", long_value,
+            )
+            assert result is True
+            # Verify truncation in the call_service data
+            call_data = mock_req.call_args[1]["json_data"]
+            assert len(call_data["value"]) == 255

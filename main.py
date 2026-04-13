@@ -276,7 +276,10 @@ class CarmaBoxService:
             await self._execute_surplus(snapshot)
 
         # Phase 8: DASHBOARD WRITE-BACK — update HA sensors for dashboard
-        await self._write_dashboard_state(snapshot, cycle_result)
+        try:
+            await self._write_dashboard_state(snapshot, cycle_result)
+        except Exception as exc:
+            logger.error("Dashboard write failed: %s", exc)
 
         if cycle_result.error:
             logger.error("Cycle %d error: %s", self._cycle_count, cycle_result.error)
@@ -581,6 +584,9 @@ class CarmaBoxService:
         )
         await self._ha_api.set_input_text(
             dash.entity_plan_tomorrow, plan_tomorrow,
+        )
+        await self._ha_api.set_input_text(
+            dash.entity_plan_day3, "",
         )
 
 

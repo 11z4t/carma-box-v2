@@ -358,3 +358,60 @@ class TestCollectConsumers:
                 await service._run_cycle()
 
             mock_surplus.assert_called_once()
+
+
+class TestDashboardWriteBack:
+    """PLAT-1370: _write_dashboard_state writes all 6 entities to HA."""
+
+    @pytest.mark.asyncio()
+    async def test_all_entities_written(self) -> None:
+        """All 6 dashboard entities should be written each cycle."""
+        from unittest.mock import AsyncMock
+
+        from config.schema import load_config
+        from core.engine import CycleResult
+        from core.guards import GuardEvaluation, GuardLevel
+        from core.models import Scenario
+        from tests.conftest import make_snapshot
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+
+        mock_api = AsyncMock()
+        mock_api.health_check = AsyncMock(return_value=True)
+        mock_api.set_state = AsyncMock(return_value=True)
+        mock_api.set_input_text = AsyncMock(return_value=True)
+
+        service = CarmaBoxService(cfg, ha_api=mock_api)
+        snap = make_snapshot()
+        cycle_result = CycleResult(
+            cycle_id="test-1",
+            timestamp=snap.timestamp,
+            elapsed_s=0.1,
+            scenario=Scenario.MIDDAY_CHARGE,
+            guard=GuardEvaluation(
+                level=GuardLevel.OK, commands=[],
+            ),
+        )
+
+        await service._write_dashboard_state(snap, cycle_result)
+
+        # set_state called 3 times: scenario, decision, rules
+        assert mock_api.set_state.call_count == 3
+        # set_input_text called 3 times: today, tomorrow, day3
+        assert mock_api.set_input_text.call_count == 3
+
+        # Verify entity IDs
+        state_entities = [
+            c.args[0] for c in mock_api.set_state.call_args_list
+        ]
+        assert cfg.dashboard.entity_scenario in state_entities
+        assert cfg.dashboard.entity_decision_reason in state_entities
+        assert cfg.dashboard.entity_rules in state_entities
+
+        text_entities = [
+            c.args[0] for c in mock_api.set_input_text.call_args_list
+        ]
+        assert cfg.dashboard.entity_plan_today in text_entities
+        assert cfg.dashboard.entity_plan_tomorrow in text_entities
+        assert cfg.dashboard.entity_plan_day3 in text_entities
