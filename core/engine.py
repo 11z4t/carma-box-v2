@@ -21,11 +21,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
+from config.schema import BatteryConfig
 from core.balancer import BalanceResult, BatteryBalancer, BatteryInfo
 from core.executor import CommandExecutor, ExecutionResult
 from core.guards import GridGuard, GuardEvaluation, GuardLevel
 from core.mode_change import ModeChangeManager
 from core.models import (
+    Command,
+    CommandType,
     Scenario,
     SystemSnapshot,
 )
@@ -62,12 +65,15 @@ class ControlEngine:
         balancer: BatteryBalancer,
         mode_manager: ModeChangeManager,
         executor: CommandExecutor,
+        battery_configs: Optional[dict[str, BatteryConfig]] = None,
     ) -> None:
         self._guard = guard
         self._sm = state_machine
         self._balancer = balancer
         self._mode_manager = mode_manager
         self._executor = executor
+        # H2: per-battery capacity limits sourced from config (not hardcoded)
+        self._battery_configs: dict[str, BatteryConfig] = battery_configs or {}
         self._cycle_count = 0
         self._last_plan_time = 0.0
 
@@ -155,8 +161,18 @@ class ControlEngine:
                         cap_kwh=b.cap_kwh,
                         cell_temp_c=b.cell_temp_c,
                         soh_pct=b.soh_pct,
-                        max_discharge_w=5000.0,  # From config in real impl
-                        max_charge_w=5000.0,
+                        # H2: read limits from config (kW → W); fall back to
+                        # battery's own cap_kwh * 1000 if config is unavailable
+                        max_discharge_w=(
+                            self._battery_configs[b.battery_id].max_discharge_kw * 1000.0
+                            if b.battery_id in self._battery_configs
+                            else b.cap_kwh * 1000.0
+                        ),
+                        max_charge_w=(
+                            self._battery_configs[b.battery_id].max_charge_kw * 1000.0
+                            if b.battery_id in self._battery_configs
+                            else b.cap_kwh * 1000.0
+                        ),
                         ct_placement=b.ct_placement,
                         local_load_w=b.load_power_w,
                         pv_power_w=b.pv_power_w,
@@ -170,6 +186,34 @@ class ControlEngine:
                 total_w = abs(snapshot.grid.grid_power_w)
                 balance = self._balancer.allocate(bat_infos, total_w, is_charging)
                 result.balance = balance
+
+                # H1: Turn allocations into SET_EMS_POWER_LIMIT commands and execute.
+                # Skip batteries that are at the floor (zero allocation) to avoid
+                # writing 0 and inadvertently waking GoodWe's autonomous grid-charge.
+                if balance.allocations:
+                    limit_cmds: list[Command] = [
+                        Command(
+                            command_type=CommandType.SET_EMS_POWER_LIMIT,
+                            target_id=alloc.battery_id,
+                            value=alloc.watts,
+                            rule_id="BALANCE",
+                            reason=(
+                                f"Balance: {alloc.share_pct:.0f}% share, "
+                                f"{alloc.watts}W of {balance.total_requested_w:.0f}W total"
+                            ),
+                        )
+                        for alloc in balance.allocations
+                        if alloc.watts > 0
+                    ]
+                    if limit_cmds:
+                        exec_result = await self._executor.execute(limit_cmds)
+                        result.execution = exec_result
+                        logger.debug(
+                            "Cycle %s: balance → %d EMS limit commands (%d ok, %d fail)",
+                            cycle_id, len(limit_cmds),
+                            exec_result.commands_succeeded,
+                            exec_result.commands_failed,
+                        )
 
             # Phase 5: MODE CHANGE MANAGER — process pending changes
             await self._mode_manager.process(self._executor)

@@ -348,14 +348,15 @@ class TestScenarioState:
         assert state.current == Scenario.EVENING_DISCHARGE
 
     def test_dwell_s(self) -> None:
-        """dwell_s should return seconds since entry."""
-        from datetime import timedelta
+        """dwell_s should return seconds since entry (H7: monotonic clock)."""
+        import time
 
-        entry = datetime.now(tz=timezone.utc) - timedelta(seconds=120)
         state = ScenarioState(
             current=Scenario.MIDDAY_CHARGE,
-            entry_time=entry,
+            entry_time=datetime.now(tz=timezone.utc),
         )
+        # Back-date the monotonic stamp to simulate 120 seconds of dwell
+        state._entry_monotonic = time.monotonic() - 120.0
         assert state.dwell_s >= 119.0  # Allow small timing variance
 
     def test_transition_tracking(self) -> None:

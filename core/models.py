@@ -8,10 +8,11 @@ Pure data — no side effects, no I/O.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum, unique
-from typing import Any, Optional
+from typing import Any, Optional, Protocol
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +140,75 @@ class ConsumerState:
     load_type: str                     # "on_off", "variable", "climate"
 
 
+# ---------------------------------------------------------------------------
+# Shared pure functions (H3: single source of truth for common logic)
+# ---------------------------------------------------------------------------
+
+
+class MinSocConfig(Protocol):
+    """Protocol for config objects that carry SoC floor thresholds.
+
+    Both GuardConfig and BalancerConfig satisfy this protocol.
+    Frozen dataclasses expose read-only attributes, so all members here
+    are declared read-only via @property syntax (Protocol supports this).
+    """
+
+    @property
+    def normal_floor_pct(self) -> float: ...
+    @property
+    def cold_floor_pct(self) -> float: ...
+    @property
+    def freeze_floor_pct(self) -> float: ...
+    @property
+    def cold_temp_c(self) -> float: ...
+    @property
+    def freeze_temp_c(self) -> float: ...
+    @property
+    def soh_warn_pct(self) -> float: ...
+    @property
+    def soh_crit_pct(self) -> float: ...
+    @property
+    def soh_warn_raise_pct(self) -> float: ...
+    @property
+    def soh_crit_raise_pct(self) -> float: ...
+
+
+def effective_min_soc(
+    cell_temp_c: float,
+    soh_pct: float,
+    cfg: MinSocConfig,
+) -> float:
+    """Calculate the effective minimum SoC for a battery cell.
+
+    Takes temperature and SoH into account:
+    - Below freeze_temp_c: use freeze_floor_pct
+    - Below cold_temp_c:   use cold_floor_pct
+    - Otherwise:           use normal_floor_pct
+
+    SoH degradation adds to the floor:
+    - soh_pct < soh_crit_pct: add soh_crit_raise_pct
+    - soh_pct < soh_warn_pct: add soh_warn_raise_pct
+
+    This is a pure function — no side effects, no I/O.
+    All thresholds come from cfg — zero hardcoding.
+
+    H3: Single canonical implementation shared by GridGuard and BatteryBalancer.
+    """
+    if cell_temp_c < cfg.freeze_temp_c:
+        floor = cfg.freeze_floor_pct
+    elif cell_temp_c < cfg.cold_temp_c:
+        floor = cfg.cold_floor_pct
+    else:
+        floor = cfg.normal_floor_pct
+
+    if soh_pct < cfg.soh_crit_pct:
+        floor += cfg.soh_crit_raise_pct
+    elif soh_pct < cfg.soh_warn_pct:
+        floor += cfg.soh_warn_raise_pct
+
+    return floor
+
+
 @dataclass
 class ScenarioState:
     """Mutable state of the scenario state machine.
@@ -153,12 +223,16 @@ class ScenarioState:
     in_transition: bool = False
     transition_start: Optional[datetime] = None
     transition_target: Optional[Scenario] = None
+    # H7: monotonic entry time for dwell tracking (no timezone / naive-datetime issues)
+    _entry_monotonic: float = field(default_factory=time.monotonic, init=False, repr=False)
 
     @property
     def dwell_s(self) -> float:
-        """Seconds in current scenario since entry."""
-        delta = datetime.now(tz=self.entry_time.tzinfo) - self.entry_time
-        return delta.total_seconds()
+        """Seconds in current scenario since entry.
+
+        H7: Uses time.monotonic() to avoid timezone / naive-datetime fragility.
+        """
+        return time.monotonic() - self._entry_monotonic
 
 
 @dataclass(frozen=True)

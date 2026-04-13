@@ -167,7 +167,13 @@ class CarmaBoxService:
             ),
         )
 
-        self._engine = ControlEngine(guard, sm, balancer, mode_mgr, executor)
+        # H2: map battery_id → config so engine can read per-battery limits
+        battery_cfg_map = {bc.id: bc for bc in config.batteries}
+
+        self._engine = ControlEngine(
+            guard, sm, balancer, mode_mgr, executor,
+            battery_configs=battery_cfg_map,
+        )
 
     @property
     def config(self) -> CarmaConfig:

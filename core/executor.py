@@ -12,8 +12,10 @@ Enforces:
 
 from __future__ import annotations
 
+import itertools
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -99,6 +101,8 @@ class ExecutorConfig:
 
     mode_change_cooldown_s: float = 300.0  # 5 min between mode changes per battery
     audit_log_enabled: bool = True
+    # H6: cap in-memory audit trail to prevent unbounded growth
+    audit_maxlen: int = 10_000
 
 
 # ---------------------------------------------------------------------------
@@ -129,8 +133,8 @@ class CommandExecutor:
         self._config = config or ExecutorConfig()
         # Rate limiting: last mode change time per battery_id
         self._last_mode_change: dict[str, float] = {}
-        # Audit trail (in-memory, flushed to DB by caller)
-        self._audit: list[AuditEntry] = []
+        # H6: deque with maxlen prevents unbounded memory growth
+        self._audit: deque[AuditEntry] = deque(maxlen=self._config.audit_maxlen)
 
     async def execute(self, commands: list[Command]) -> ExecutionResult:
         """Execute a list of commands from a CycleDecision.
@@ -159,7 +163,9 @@ class CommandExecutor:
 
             self._log_audit(cmd, success=success)
 
-        result.audit_entries = list(self._audit[-len(commands):])
+        n = len(commands)
+        start = max(0, len(self._audit) - n)
+        result.audit_entries = list(itertools.islice(self._audit, start, None))
         return result
 
     async def execute_guard_commands(
@@ -200,7 +206,9 @@ class CommandExecutor:
 
             self._log_audit(cmd, success=success)
 
-        result.audit_entries = list(self._audit[-len(commands):])
+        n = len(commands)
+        start = max(0, len(self._audit) - n)
+        result.audit_entries = list(itertools.islice(self._audit, start, None))
         return result
 
     # ------------------------------------------------------------------

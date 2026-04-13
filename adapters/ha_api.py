@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Any, Optional
 
 import aiohttp
@@ -18,6 +19,10 @@ import aiohttp
 from config.schema import HAConfig
 
 logger = logging.getLogger(__name__)
+
+# H5: Cache TTL — one fetch per control cycle (30 s interval).
+# All adapters sharing the client will reuse this within the same cycle.
+_BATCH_CACHE_TTL_S: float = 25.0
 
 
 class HAApiClient:
@@ -49,6 +54,11 @@ class HAApiClient:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
+
+        # H5: Per-cycle batch cache — avoids fetching all ~2000 HA entities
+        # multiple times when several adapters call get_states_batch() in one cycle.
+        self._batch_cache: Optional[list[Any]] = None
+        self._batch_cache_ts: float = 0.0
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         """Create or return the long-lived session."""
@@ -172,15 +182,28 @@ class HAApiClient:
         Fetches all states from /api/states and filters client-side
         to only return the requested entities.
 
+        H5: The full-state response is cached for _BATCH_CACHE_TTL_S seconds
+        so that multiple adapters calling this within the same 30-second cycle
+        share one HTTP round-trip instead of each issuing their own request.
+
         Returns a dict mapping entity_id -> full state dict.
         Missing entities are omitted from the result.
         """
         if not entity_ids:
             return {}
 
-        all_states = await self._request("GET", "/api/states")
-        if all_states is None:
-            return {}
+        now = time.monotonic()
+        age = now - self._batch_cache_ts
+        if self._batch_cache is None or age >= _BATCH_CACHE_TTL_S:
+            all_states = await self._request("GET", "/api/states")
+            if all_states is None:
+                return {}
+            self._batch_cache = all_states
+            self._batch_cache_ts = now
+            logger.debug("H5: batch cache refreshed (age=%.1fs)", age)
+        else:
+            logger.debug("H5: batch cache hit (age=%.1fs)", age)
+            all_states = self._batch_cache
 
         wanted = set(entity_ids)
         result: dict[str, Any] = {}
@@ -189,6 +212,15 @@ class HAApiClient:
             if eid in wanted:
                 result[eid] = state_obj
         return result
+
+    def invalidate_batch_cache(self) -> None:
+        """Force the next get_states_batch() call to fetch fresh data.
+
+        Call this after writing state to HA so the cache does not serve
+        stale values within the same cycle.
+        """
+        self._batch_cache = None
+        self._batch_cache_ts = 0.0
 
     async def call_service(
         self,

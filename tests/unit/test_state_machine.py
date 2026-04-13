@@ -329,10 +329,14 @@ class TestDwellTime:
         assert result is None  # Blocked by dwell
 
     def test_after_dwell_allows_transition(self) -> None:
-        """After dwell time → transition allowed."""
+        """After dwell time → transition allowed (H7: uses monotonic clock)."""
+        import time
+
         sm = StateMachine(StateMachineConfig(min_dwell_s=300.0))
         sm.state.current = Scenario.MIDDAY_CHARGE
         sm.state.entry_time = datetime.now(tz=timezone.utc) - timedelta(seconds=600)
+        # Back-date monotonic stamp to simulate 600 s of dwell (H7)
+        sm.state._entry_monotonic = time.monotonic() - 600.0
 
         snap = _snap(hour=17, bat_soc=60.0)
         result = sm.evaluate(snap)

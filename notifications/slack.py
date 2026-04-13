@@ -11,7 +11,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 import aiohttp
 
@@ -54,6 +54,7 @@ class SlackNotifier:
     """Sends notifications to Slack via webhook.
 
     Direct HTTPS — no HA dependency. All errors caught and logged.
+    H8: Maintains a single persistent aiohttp.ClientSession for all requests.
     """
 
     def __init__(self, config: SlackConfig | None = None) -> None:
@@ -64,6 +65,8 @@ class SlackNotifier:
                 "Slack webhook env %s is empty — notifications disabled",
                 self._config.webhook_env,
             )
+        # H8: Persistent session — created lazily, reused across all sends
+        self._session: Optional[aiohttp.ClientSession] = None
 
     def _should_notify(self, event_type: str) -> bool:
         """Check if this event type is configured for notification."""
@@ -120,22 +123,42 @@ class SlackNotifier:
             "text": f"{emoji} *CARMA Box — {event_type}*\n{message}",
         }
 
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Return the persistent session, creating it if necessary.
+
+        H8: Single session reused for all webhook calls to avoid the overhead
+        of creating a new TCP connection and TLS handshake on every notification.
+        """
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=5),
+                headers={"Content-Type": "application/json"},
+            )
+        return self._session
+
+    async def close(self) -> None:
+        """Close the persistent HTTP session.
+
+        Call this during service shutdown to release connections cleanly.
+        """
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+
     async def _send(self, payload: dict[str, Any]) -> bool:
         """Send payload to Slack webhook. Never raises."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self._webhook_url,
-                    data=json.dumps(payload),
-                    headers={"Content-Type": "application/json"},
-                    timeout=aiohttp.ClientTimeout(total=5),
-                ) as resp:
-                    if resp.status == 200:
-                        return True
-                    logger.warning(
-                        "Slack webhook returned %d", resp.status,
-                    )
-                    return False
+            session = await self._get_session()
+            async with session.post(
+                self._webhook_url,
+                data=json.dumps(payload),
+            ) as resp:
+                if resp.status == 200:
+                    return True
+                logger.warning(
+                    "Slack webhook returned %d", resp.status,
+                )
+                return False
         except Exception as exc:
             logger.error("Slack send failed: %s", exc)
             return False

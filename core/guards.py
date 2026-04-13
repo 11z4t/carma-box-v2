@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from enum import Enum, unique
 from typing import Optional
 
-from core.models import BatteryState, CommandType, Scenario
+from core.models import BatteryState, CommandType, Scenario, effective_min_soc
 
 logger = logging.getLogger(__name__)
 
@@ -575,22 +575,7 @@ class GridGuard:
     def _effective_min_soc(self, bat: BatteryState) -> float:
         """Calculate effective minimum SoC considering temperature and SoH.
 
-        All thresholds from GuardConfig — zero hardcoding.
+        H3: Delegates to the shared pure function in core.models to avoid
+        logic duplication between GridGuard and BatteryBalancer.
         """
-        cfg = self._config
-
-        # Temperature-based floor
-        if bat.cell_temp_c < cfg.freeze_temp_c:
-            floor = cfg.freeze_floor_pct
-        elif bat.cell_temp_c < cfg.cold_temp_c:
-            floor = cfg.cold_floor_pct
-        else:
-            floor = cfg.normal_floor_pct
-
-        # SoH degradation (crit checked first — it's the larger adjustment)
-        if bat.soh_pct < cfg.soh_crit_pct:
-            floor += cfg.soh_crit_raise_pct
-        elif bat.soh_pct < cfg.soh_warn_pct:
-            floor += cfg.soh_warn_raise_pct
-
-        return floor
+        return effective_min_soc(bat.cell_temp_c, bat.soh_pct, self._config)
