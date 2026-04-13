@@ -34,12 +34,14 @@ from core.guards import GridGuard, GuardConfig
 from core.mode_change import ModeChangeConfig, ModeChangeManager
 from core.models import (
     BatteryState,
+    ConsumerState,
     EMSMode,
     EVState,
     GridState,
     Scenario,
     SystemSnapshot,
 )
+from core.surplus_dispatch import SurplusConfig as SurplusDispatchConfig, SurplusDispatch
 from core.state_machine import StateMachine, StateMachineConfig
 
 __version__ = "2.0.0"
@@ -114,6 +116,8 @@ class CarmaBoxService:
             self._setup_components(config, ha_api)
         else:
             self._engine: Optional[ControlEngine] = None
+            self._surplus_dispatch: Optional[SurplusDispatch] = None
+            self._consumer_configs = config.consumers
 
         logger.info(
             "CarmaBoxService initialized for site '%s' (cycle=%ds, live=%s)",
@@ -172,6 +176,17 @@ class CarmaBoxService:
                 mode_change_cooldown_s=config.control.mode_change_cooldown_s,
             ),
         )
+
+        # Surplus dispatch from consumer configs
+        surplus_cfg = config.surplus
+        self._surplus_dispatch = SurplusDispatch(SurplusDispatchConfig(
+            stop_threshold_w=surplus_cfg.stop_threshold_kw * 1000,
+            start_delay_s=surplus_cfg.start_delay_s,
+            max_switches_per_window=surplus_cfg.max_switches_per_window,
+            switch_window_s=surplus_cfg.switch_window_min * 60,
+            bump_delay_s=surplus_cfg.bump_delay_s,
+        ))
+        self._consumer_configs = config.consumers
 
         # H2: map battery_id → config so engine can read per-battery limits
         battery_cfg_map = {bc.id: bc for bc in config.batteries}
@@ -255,6 +270,10 @@ class CarmaBoxService:
             snapshot=snapshot,
             ha_connected=ha_connected,
         )
+
+        # Phase 7: SURPLUS DISPATCH — manage dispatchable consumers
+        if snapshot.consumers:
+            await self._execute_surplus(snapshot)
 
         if cycle_result.error:
             logger.error("Cycle %d error: %s", self._cycle_count, cycle_result.error)
@@ -385,7 +404,7 @@ class CarmaBoxService:
                 batteries=batteries,
                 ev=ev,
                 grid=grid,
-                consumers=[],  # Populated when consumer adapters exist
+                consumers=await self._collect_consumers(),
                 current_scenario=(
                     self._engine.current_scenario
                     if self._engine else Scenario.MIDDAY_CHARGE
@@ -397,6 +416,88 @@ class CarmaBoxService:
         except Exception as exc:
             logger.error("Snapshot collection failed: %s", exc, exc_info=True)
             return None
+
+    async def _collect_consumers(self) -> list[ConsumerState]:
+        """Read consumer states from HA based on site.yaml config."""
+        if not self._ha_api or not self._consumer_configs:
+            return []
+
+        consumers: list[ConsumerState] = []
+        for cc in self._consumer_configs:
+            # Read switch state and power from HA
+            active = False
+            power = 0.0
+            if cc.entity_switch:
+                state = await self._ha_api.get_state(cc.entity_switch)
+                active = state == "on"
+            if cc.entity_power:
+                power_str = await self._ha_api.get_state(cc.entity_power)
+                power = float(power_str) if power_str else 0.0
+
+            consumers.append(ConsumerState(
+                consumer_id=cc.id,
+                name=cc.name,
+                active=active,
+                power_w=power if active else float(cc.power_w),
+                priority=cc.priority,
+                priority_shed=cc.priority_shed,
+                load_type=cc.type,
+                requires_active=cc.requires_active,
+            ))
+
+        # Sort by priority (lower = higher priority)
+        consumers.sort(key=lambda c: c.priority)
+        return consumers
+
+    async def _execute_surplus(self, snapshot: SystemSnapshot) -> None:
+        """Run surplus dispatch and execute start/stop commands."""
+        if self._surplus_dispatch is None or self._ha_api is None:
+            return
+
+        # Calculate available surplus: negative grid = export
+        surplus_w = -snapshot.grid.grid_power_w
+        # Add power from currently active consumers (they're part of the surplus)
+        for c in snapshot.consumers:
+            if c.active:
+                surplus_w += c.power_w
+
+        active_deps = {c.consumer_id for c in snapshot.consumers if c.active}
+
+        result = self._surplus_dispatch.evaluate(
+            available_surplus_w=surplus_w,
+            consumers=snapshot.consumers,
+            active_dependencies=active_deps,
+        )
+
+        # Execute allocations
+        for alloc in result.allocations:
+            if alloc.action == "no_change":
+                continue
+
+            # Find consumer config for switch entity
+            cc = next(
+                (c for c in self._consumer_configs if c.id == alloc.consumer_id),
+                None,
+            )
+            if cc is None or not cc.entity_switch:
+                continue
+
+            if alloc.action == "start":
+                await self._ha_api.call_service(
+                    "homeassistant", "turn_on",
+                    {"entity_id": cc.entity_switch},
+                )
+                logger.info(
+                    "Surplus: START %s (%s)", cc.name, alloc.reason,
+                )
+            elif alloc.action == "stop":
+                await self._ha_api.call_service(
+                    "homeassistant", "turn_off",
+                    {"entity_id": cc.entity_switch},
+                )
+                logger.info(
+                    "Surplus: STOP %s (%s)", cc.name, alloc.reason,
+                )
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
