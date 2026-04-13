@@ -269,6 +269,43 @@ class HAApiClient:
             return False
         return True
 
+    async def set_state(
+        self,
+        entity_id: str,
+        state: str,
+        attributes: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        """Set a sensor/entity state via POST /api/states/{entity_id}.
+
+        Used for dashboard write-back: plan sensors, rules, decision reason.
+        Creates the entity if it doesn't exist.
+        Returns True on success, False on failure.
+        """
+        path = f"/api/states/{entity_id}"
+        payload: dict[str, Any] = {"state": state}
+        if attributes:
+            payload["attributes"] = attributes
+        result = await self._request("POST", path, json_data=payload)
+        if result is None:
+            return False
+        self.invalidate_batch_cache()
+        return True
+
+    async def set_input_text(
+        self,
+        entity_id: str,
+        value: str,
+    ) -> bool:
+        """Set an input_text helper value via service call.
+
+        Used for plan text fields (v6_battery_plan_today etc).
+        Truncates to 255 chars (HA input_text limit).
+        """
+        return await self.call_service(
+            "input_text", "set_value",
+            {"entity_id": entity_id, "value": value[:255]},
+        )
+
     async def health_check(self) -> bool:
         """Check if Home Assistant is reachable.
 

@@ -403,6 +403,15 @@ logging:
   audit_log_to_db: true
   event_log_to_db: true
 
+# Dashboard write-back entities
+dashboard:
+  entity_scenario: "sensor.carma_box_scenario"
+  entity_rules: "sensor.carma_box_rules"
+  entity_decision_reason: "sensor.carma_box_decision_reason"
+  entity_plan_today: "input_text.v6_battery_plan_today"
+  entity_plan_tomorrow: "input_text.v6_battery_plan_tomorrow"
+  entity_plan_day3: "input_text.v6_battery_plan_day3"
+
 # Health check
 health:
   port: 8412

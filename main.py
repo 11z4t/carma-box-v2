@@ -28,7 +28,7 @@ from adapters.goodwe import GoodWeAdapter
 from adapters.ha_api import HAApiClient
 from config.schema import CarmaConfig, load_config
 from core.balancer import BalancerConfig, BatteryBalancer
-from core.engine import ControlEngine
+from core.engine import ControlEngine, CycleResult
 from core.executor import CommandExecutor, ExecutorConfig
 from core.guards import GridGuard, GuardConfig
 from core.mode_change import ModeChangeConfig, ModeChangeManager
@@ -275,6 +275,9 @@ class CarmaBoxService:
         if snapshot.consumers:
             await self._execute_surplus(snapshot)
 
+        # Phase 8: DASHBOARD WRITE-BACK — update HA sensors for dashboard
+        await self._write_dashboard_state(snapshot, cycle_result)
+
         if cycle_result.error:
             logger.error("Cycle %d error: %s", self._cycle_count, cycle_result.error)
 
@@ -509,6 +512,76 @@ class CarmaBoxService:
                 logger.info(
                     "Surplus: STOP %s (%s)", cc.name, alloc.reason,
                 )
+
+
+    async def _write_dashboard_state(
+        self,
+        snapshot: SystemSnapshot,
+        cycle_result: CycleResult,
+    ) -> None:
+        """Write scenario, rules and decision info to HA for dashboard display."""
+        if self._ha_api is None:
+            return
+
+        dash = self._config.dashboard
+
+        # Scenario sensor with battery/grid attributes
+        bat_socs = {
+            b.battery_id: round(b.soc_pct, 1)
+            for b in snapshot.batteries
+        }
+        attrs: dict[str, object] = {
+            "friendly_name": "CARMA Box Scenario",
+            "cycle": self._cycle_count,
+            "battery_soc": bat_socs,
+            "grid_power_w": round(snapshot.grid.grid_power_w),
+            "pv_total_w": round(snapshot.grid.pv_total_w),
+            "weighted_avg_kw": round(snapshot.grid.weighted_avg_kw, 2),
+        }
+        await self._ha_api.set_state(
+            dash.entity_scenario,
+            cycle_result.scenario.value,
+            attrs,
+        )
+
+        # Decision reason — guard level + scenario
+        guard_level = "OK"
+        if cycle_result.guard:
+            guard_level = cycle_result.guard.level.value
+        reason = f"{guard_level} | {cycle_result.scenario.value}"
+        await self._ha_api.set_state(
+            dash.entity_decision_reason,
+            reason,
+            {"friendly_name": "CARMA Box Decision"},
+        )
+
+        # Rules sensor — active guards summary
+        rules = "OK"
+        if cycle_result.guard and cycle_result.guard.commands:
+            rules = ", ".join(
+                c.command_type.value for c in cycle_result.guard.commands
+            )
+        await self._ha_api.set_state(
+            dash.entity_rules,
+            rules,
+            {"friendly_name": "CARMA Box Active Rules"},
+        )
+
+        # Plan text fields — write PV forecast summary
+        plan_today = (
+            f"PV {snapshot.grid.pv_forecast_today_kwh:.0f}kWh "
+            f"Price {snapshot.grid.price_ore:.0f}ore "
+            f"Scenario {cycle_result.scenario.value}"
+        )
+        plan_tomorrow = (
+            f"PV tomorrow {snapshot.grid.pv_forecast_tomorrow_kwh:.0f}kWh"
+        )
+        await self._ha_api.set_input_text(
+            dash.entity_plan_today, plan_today,
+        )
+        await self._ha_api.set_input_text(
+            dash.entity_plan_tomorrow, plan_tomorrow,
+        )
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:

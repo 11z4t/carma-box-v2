@@ -616,6 +616,22 @@ class HealthConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Dashboard write-back
+# ---------------------------------------------------------------------------
+
+
+class DashboardConfig(BaseModel):
+    """Entity IDs for dashboard write-back sensors."""
+
+    entity_scenario: str = Field(default="sensor.carma_box_scenario")
+    entity_rules: str = Field(default="sensor.carma_box_rules")
+    entity_decision_reason: str = Field(default="sensor.carma_box_decision_reason")
+    entity_plan_today: str = Field(default="input_text.v6_battery_plan_today")
+    entity_plan_tomorrow: str = Field(default="input_text.v6_battery_plan_tomorrow")
+    entity_plan_day3: str = Field(default="input_text.v6_battery_plan_day3")
+
+
+# ---------------------------------------------------------------------------
 # Root Config
 # ---------------------------------------------------------------------------
 
@@ -640,6 +656,7 @@ class CarmaConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
     manual_override: ManualOverrideConfig = Field(default_factory=ManualOverrideConfig)
+    dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
 
