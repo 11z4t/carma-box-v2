@@ -286,12 +286,18 @@ class CarmaBoxService:
             logger.error("Dashboard write failed: %s", exc)
 
         if cycle_result.error:
-            logger.error("Cycle %d error: %s", self._cycle_count, cycle_result.error)
+            logger.error(
+                "[%s] Cycle %d error: %s",
+                cycle_result.cycle_id, self._cycle_count, cycle_result.error,
+            )
 
-        logger.debug(
-            "Cycle %d complete in %.3fs (scenario=%s)",
-            self._cycle_count, cycle_result.elapsed_s,
+        logger.info(
+            "[%s] Cycle %d complete in %.0fms (scenario=%s, guard=%s)",
+            cycle_result.cycle_id,
+            self._cycle_count,
+            cycle_result.elapsed_s * 1000,
             cycle_result.scenario.value,
+            cycle_result.guard.level.value if cycle_result.guard else "n/a",
         )
 
     async def _collect_snapshot(self, ha_connected: bool) -> Optional[SystemSnapshot]:
