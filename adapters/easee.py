@@ -33,6 +33,7 @@ class EaseeAdapter(EVChargerAdapter):
         self._api = ha_api
         self._config = config
         self._entities = config.entities
+        self._fix_in_progress = False
 
     # ------------------------------------------------------------------
     # Properties
@@ -150,36 +151,45 @@ class EaseeAdapter(EVChargerAdapter):
         from coverage (pragma: no cover) since they cannot be meaningfully
         tested without a real Easee device.
 
-        Returns True if the fix sequence was attempted.
+        PLAT-1408: Non-blocking. Spawns background task for 18s sequence.
+        Returns True if spawned, False if already in progress.
         """
-        logger.warning("Attempting waiting_in_fully fix (B3)")
-
-        # Step 1: OFF
-        await self._api.call_service(
-            "switch", "turn_off",
-            {"entity_id": self._entities.enabled},
-        )
-        await asyncio.sleep(10)  # pragma: no cover
-
-        # Step 2: Override schedule
-        override_entity = self._entities.override_schedule
-        if override_entity:
-            await self._api.call_service(
-                "button", "press",
-                {"entity_id": override_entity},
-            )
-            await asyncio.sleep(5)  # pragma: no cover
-
-        # Step 3: ON + 6A
-        await self._api.call_service(
-            "switch", "turn_on",
-            {"entity_id": self._entities.enabled},
-        )
-        await asyncio.sleep(3)  # pragma: no cover
-        await self.set_current(self.min_amps)
-
-        logger.info("waiting_in_fully fix sequence complete")
+        if self._fix_in_progress:
+            logger.info("waiting_in_fully fix already in progress")
+            return False
+        self._fix_in_progress = True
+        asyncio.create_task(self._run_fix_sequence())
         return True
+
+    async def _run_fix_sequence(self) -> None:
+        """Background: 3-step fix (OFF, override, ON+6A). 18s total."""
+        try:
+            logger.warning("Attempting waiting_in_fully fix (B3)")
+            await self._api.call_service(
+                "switch", "turn_off",
+                {"entity_id": self._entities.enabled},
+            )
+            await asyncio.sleep(10)  # pragma: no cover
+
+            override_entity = self._entities.override_schedule
+            if override_entity:
+                await self._api.call_service(
+                    "button", "press",
+                    {"entity_id": override_entity},
+                )
+                await asyncio.sleep(5)  # pragma: no cover
+
+            await self._api.call_service(
+                "switch", "turn_on",
+                {"entity_id": self._entities.enabled},
+            )
+            await asyncio.sleep(3)  # pragma: no cover
+            await self.set_current(self.min_amps)
+            logger.info("waiting_in_fully fix sequence complete")
+        except Exception as exc:
+            logger.error("waiting_in_fully fix failed: %s", exc)
+        finally:
+            self._fix_in_progress = False
 
     async def enforce_smart_charging_off(self) -> bool:
         """Guard: ensure smart_charging is OFF.

@@ -214,30 +214,31 @@ class TestB3WaitingInFully:
 
         asyncio.sleep = instant_sleep  # type: ignore[assignment]
         try:
-            result = await adapter.fix_waiting_in_fully()
-            assert result is True
+            # PLAT-1408: test the sequence directly (background task)
+            await adapter._run_fix_sequence()
 
             calls = mock_api.call_service.call_args_list
-            # Should have at least 4 calls: OFF, override, ON, set_current
             assert len(calls) >= 4
 
-            # Call 1: switch OFF
             assert calls[0][0][0] == "switch"
             assert calls[0][0][1] == "turn_off"
-
-            # Call 2: button press (override)
             assert calls[1][0][0] == "button"
             assert calls[1][0][1] == "press"
-
-            # Call 3: switch ON
             assert calls[2][0][0] == "switch"
             assert calls[2][0][1] == "turn_on"
-
-            # Call 4: set_charger_dynamic_limit at 6A
             assert calls[3][0][0] == "easee"
             assert calls[3][0][1] == "set_charger_dynamic_limit"
         finally:
             asyncio.sleep = original_sleep
+
+    async def test_fix_skips_when_in_progress(
+        self, adapter: EaseeAdapter, mock_api: AsyncMock,
+    ) -> None:
+        """PLAT-1408: second call while fix in progress returns False."""
+        adapter._fix_in_progress = True
+        result = await adapter.fix_waiting_in_fully()
+        assert result is False
+        mock_api.call_service.assert_not_called()
 
 
 # ===========================================================================
