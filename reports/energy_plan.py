@@ -12,6 +12,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import xlsxwriter
+    import xlsxwriter.workbook
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +78,7 @@ class ExcelReportGenerator:
         output_path = output_dir / f"energy-plan-{data.date}.xlsx"
 
         try:
-            wb = xlsxwriter.Workbook(str(output_path))
+            wb: xlsxwriter.workbook.Workbook = xlsxwriter.Workbook(str(output_path))
             self._write_plan_sheet(wb, data)
             self._write_utfall_sheet(wb, data)
             self._write_forecast_sheet(wb, data)
@@ -84,9 +89,9 @@ class ExcelReportGenerator:
             logger.error("Report generation failed: %s", exc)
             return None
 
-    def _write_plan_sheet(self, wb: object, data: ReportData) -> None:
+    def _write_plan_sheet(self, wb: xlsxwriter.workbook.Workbook, data: ReportData) -> None:
         """Write Energiplan tab."""
-        ws = wb.add_worksheet("Energiplan")  # type: ignore[attr-defined]
+        ws = wb.add_worksheet("Energiplan")
         headers = ["Timme", "Scenario", "Bat SoC %", "EV SoC %", "Grid kW", "PV kWh", "Pris öre"]
         for col, h in enumerate(headers):
             ws.write(0, col, h)
@@ -99,9 +104,9 @@ class ExcelReportGenerator:
             ws.write(i, 5, row.pv_forecast_kwh)
             ws.write(i, 6, row.price_ore)
 
-    def _write_utfall_sheet(self, wb: object, data: ReportData) -> None:
+    def _write_utfall_sheet(self, wb: xlsxwriter.workbook.Workbook, data: ReportData) -> None:
         """Write Utfall tab."""
-        ws = wb.add_worksheet("Utfall")  # type: ignore[attr-defined]
+        ws = wb.add_worksheet("Utfall")
         headers = ["Timme", "Grid kW", "PV kW", "Bat SoC %", "EV SoC %", "Scenario"]
         for col, h in enumerate(headers):
             ws.write(0, col, h)
@@ -113,9 +118,9 @@ class ExcelReportGenerator:
             ws.write(i, 4, row.ev_soc)
             ws.write(i, 5, row.scenario)
 
-    def _write_forecast_sheet(self, wb: object, data: ReportData) -> None:
+    def _write_forecast_sheet(self, wb: xlsxwriter.workbook.Workbook, data: ReportData) -> None:
         """Write Prognos tab."""
-        ws = wb.add_worksheet("Prognos")  # type: ignore[attr-defined]
+        ws = wb.add_worksheet("Prognos")
         ws.write(0, 0, "Timme")
         ws.write(0, 1, "PV Prognos kWh")
         ws.write(0, 2, "Pris öre")

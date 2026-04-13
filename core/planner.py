@@ -260,8 +260,8 @@ class Planner:
         evening_alloc = bat_surplus * (cfg.evening_allocation_pct / 100.0)
         morning_alloc = bat_surplus * (cfg.morning_allocation_pct / 100.0)
 
-        # Evening floor SoC: min_soc + night_need / cap * 100
-        evening_floor = cfg.min_soc_pct + (night_need / bat_cap_kwh * 100.0)
+        # Evening floor SoC: min_soc + night_need / cap * 100, clamped to 100%
+        evening_floor = min(100.0, cfg.min_soc_pct + (night_need / bat_cap_kwh * 100.0))
 
         # Hourly rate over 5 evening hours (17:00-22:00)
         hourly_rate_w = evening_alloc / 5.0 * 1000.0  # kWh → W (per hour)

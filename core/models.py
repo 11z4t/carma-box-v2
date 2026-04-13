@@ -138,6 +138,7 @@ class ConsumerState:
     priority: int
     priority_shed: int
     load_type: str                     # "on_off", "variable", "climate"
+    requires_active: str = ""          # ID of prerequisite consumer (empty = no dependency)
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +350,8 @@ class ModelEncoder(json.JSONEncoder):
             return o.isoformat()
         if isinstance(o, Enum):
             return o.value
+        if isinstance(o, (set, frozenset)):
+            return sorted(o, key=str)
         if hasattr(o, "__dataclass_fields__"):
             return asdict(o)
         return super().default(o)

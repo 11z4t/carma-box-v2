@@ -148,8 +148,7 @@ class SurplusDispatch:
         Returns:
             SurplusResult with per-consumer allocations.
         """
-        # active_dependencies reserved for future dependency checks (VP Pool needs pump)
-        _ = active_dependencies
+        active_deps: set[str] = active_dependencies if active_dependencies is not None else set()
         deadband = self._rate_limiter.effective_deadband_w
         sorted_consumers = sorted(consumers, key=lambda c: c.priority)
 
@@ -172,6 +171,15 @@ class SurplusDispatch:
                 ))
                 continue
 
+            # Check dependency: consumer's requires_active must be in active set
+            if consumer.requires_active and consumer.requires_active not in active_deps:
+                allocations.append(SurplusAllocation(
+                    consumer_id=consumer.consumer_id,
+                    action="no_change",
+                    reason=f"dependency not active: {consumer.requires_active}",
+                ))
+                continue
+
             # Check if enough surplus to start this consumer
             if remaining_w < consumer.power_w + deadband:
                 allocations.append(SurplusAllocation(
@@ -190,7 +198,8 @@ class SurplusDispatch:
                 ))
                 continue
 
-            # Start this consumer
+            # Start this consumer — add to active deps for downstream consumers
+            active_deps = active_deps | {consumer.consumer_id}
             remaining_w -= consumer.power_w
             self._rate_limiter.record_switch()
             allocations.append(SurplusAllocation(

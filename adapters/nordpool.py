@@ -24,6 +24,7 @@ class NordpoolConfig:
     fallback_ore: float = 100.0
     cheap_ore: float = 30.0
     expensive_ore: float = 80.0
+    price_unit: str = "sek"  # "sek" → multiply by 100; "ore" → use as-is
 
 
 class NordpoolAdapter:
@@ -43,8 +44,9 @@ class NordpoolAdapter:
         if state is None:
             return self._config.fallback_ore
         try:
-            # Nordpool reports in SEK/kWh, convert to öre
-            return float(state) * 100.0
+            raw = float(state)
+            # Only multiply by 100 if unit is SEK (not already öre)
+            return raw * 100.0 if self._config.price_unit.lower() == "sek" else raw
         except (ValueError, TypeError):
             return self._config.fallback_ore
 
@@ -81,7 +83,9 @@ class NordpoolAdapter:
         prices: dict[int, float] = {}
         for i, val in enumerate(raw):
             try:
-                prices[i] = float(val) * 100.0  # SEK → öre
+                fval = float(val)
+                # Only multiply by 100 if unit is SEK (not already öre)
+                prices[i] = fval * 100.0 if self._config.price_unit.lower() == "sek" else fval
             except (ValueError, TypeError):
                 prices[i] = self._config.fallback_ore
 

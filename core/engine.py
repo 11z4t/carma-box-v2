@@ -179,10 +179,19 @@ class ControlEngine:
                     )
                     for b in snapshot.batteries
                 ]
-                is_charging = self._sm.state.current in (
+                # Determine charging direction: use scenario as primary signal,
+                # but also check actual battery power direction as fallback.
+                # Negative battery power = charging (power flowing into battery).
+                scenario_charging = self._sm.state.current in (
                     Scenario.MIDDAY_CHARGE,
                     Scenario.NIGHT_GRID_CHARGE,
+                    Scenario.PV_SURPLUS,
+                    Scenario.FORENOON_PV_EV,
                 )
+                actual_charging = bool(snapshot.batteries) and all(
+                    b.power_w < 0 for b in snapshot.batteries
+                )
+                is_charging = scenario_charging or actual_charging
                 total_w = abs(snapshot.grid.grid_power_w)
                 balance = self._balancer.allocate(bat_infos, total_w, is_charging)
                 result.balance = balance

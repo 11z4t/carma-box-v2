@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +64,21 @@ class EllevioConfig(BaseModel):
     entity_weighted_avg: str = Field(default="")
     entity_current_peak: str = Field(default="")
     entity_dynamic_tak: str = Field(default="")
+
+    @model_validator(mode="after")
+    def validate_night_window(self) -> "EllevioConfig":
+        """Ensure night_start > night_end (night window wraps midnight).
+
+        A night window like 22→6 is valid (crosses midnight).
+        A window like 6→22 would be the daytime — that's invalid here.
+        """
+        if self.night_start_hour <= self.night_end_hour:
+            raise ValueError(
+                f"night_start_hour ({self.night_start_hour}) must be greater than "
+                f"night_end_hour ({self.night_end_hour}) — night window wraps midnight. "
+                f"Example: night_start=22, night_end=6 means 22:00→06:00."
+            )
+        return self
 
 
 class GridConfig(BaseModel):
@@ -149,7 +164,7 @@ class EVChargerRampConfig(BaseModel):
     start_amps: int = Field(default=6, ge=6, le=16)
     step_amps: int = Field(default=1, ge=1, le=5)
     step_interval_s: int = Field(default=300, ge=30, le=900)
-    steps: list[int] = Field(default_factory=lambda: [6, 8, 10])
+    steps: tuple[int, ...] = Field(default=(6, 8, 10))
     cooldown_after_start_s: int = Field(default=120, ge=0, le=600)
     cooldown_after_stop_s: int = Field(default=180, ge=0, le=600)
     emergency_cut_amps: int = Field(default=6, ge=6, le=16)

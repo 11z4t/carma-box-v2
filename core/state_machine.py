@@ -37,6 +37,7 @@ class StateMachineConfig:
     pv_medium_threshold_kwh: float = 10.0  # Medium PV forecast threshold
     morning_min_soc_pct: float = 30.0    # Min SoC for morning discharge
     evening_min_soc_above_floor_pct: float = 10.0  # Min SoC above floor for evening
+    normal_floor_pct: float = 15.0       # Absolute SoC floor (GoodWe limit)
     surplus_entry_soc_pct: float = 95.0  # Bat SoC for surplus mode entry
     surplus_exit_soc_pct: float = 90.0   # Bat SoC for surplus mode exit
     surplus_pv_min_w: float = 500.0      # Min PV for surplus entry
@@ -167,7 +168,22 @@ class StateMachine:
                 )
                 return scenario
 
-        # Exit triggered but no valid target found — stay (unusual)
+        # M1: Catchall recovery — exit triggered but no allowed target is valid.
+        # This handles stuck states where the transition matrix has no valid exit
+        # (e.g., MIDDAY_CHARGE at midnight: matrix only allows EVENING_DISCHARGE
+        # and PV_SURPLUS, neither of which is valid at hour=0).
+        # Force the correct scenario for the current time, bypassing the matrix.
+        for scenario in _SCENARIO_PRIORITY:
+            if scenario == self.state.current:
+                continue
+            if self._check_entry(scenario, snapshot):
+                logger.warning(
+                    "Catchall recovery: %s has no valid matrix exit → %s",
+                    self.state.current.value, scenario.value,
+                )
+                return scenario
+
+        # Truly stuck — no scenario is valid at all
         logger.warning(
             "Exit conditions met for %s but no valid transition found",
             self.state.current.value,
@@ -249,10 +265,8 @@ class StateMachine:
     def _entry_s4(self, snap: SystemSnapshot) -> bool:
         """S4 EVENING_DISCHARGE: 17-22, SoC > floor + 10%."""
         cfg = self._config
-        return (
-            17 <= snap.hour < 22
-            and snap.total_battery_soc_pct > (15.0 + cfg.evening_min_soc_above_floor_pct)
-        )
+        min_soc = cfg.normal_floor_pct + cfg.evening_min_soc_above_floor_pct
+        return 17 <= snap.hour < 22 and snap.total_battery_soc_pct > min_soc
 
     def _entry_s5(self, snap: SystemSnapshot) -> bool:
         """S5 NIGHT_HIGH_PV: 22-06, high PV tomorrow."""
@@ -313,7 +327,8 @@ class StateMachine:
 
     def _exit_s1(self, snap: SystemSnapshot) -> bool:
         """Exit S1: hour >= 9 or SoC at floor."""
-        return snap.hour >= 9 or snap.total_battery_soc_pct <= 15.0
+        cfg = self._config
+        return snap.hour >= 9 or snap.total_battery_soc_pct <= cfg.normal_floor_pct
 
     def _exit_s2(self, snap: SystemSnapshot) -> bool:
         """Exit S2: hour >= 12 or EV at target or disconnected."""
@@ -330,7 +345,9 @@ class StateMachine:
 
     def _exit_s4(self, snap: SystemSnapshot) -> bool:
         """Exit S4: hour >= 22 or SoC at evening floor."""
-        return snap.hour >= 22
+        cfg = self._config
+        floor = cfg.normal_floor_pct + cfg.evening_min_soc_above_floor_pct
+        return snap.hour >= 22 or snap.total_battery_soc_pct <= floor
 
     def _exit_s5(self, snap: SystemSnapshot) -> bool:
         """Exit S5: hour >= 6."""

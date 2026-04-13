@@ -94,13 +94,17 @@ class SolcastAdapter:
             total_kwh=total,
             p10_kwh=p10,
             p90_kwh=p90,
-            confidence_pct=self._calc_confidence(total, p10),
+            confidence_pct=self._calc_confidence(total, p10, p90),
         )
 
     @staticmethod
-    def _calc_confidence(estimate: float, p10: float) -> float:
-        """Calculate confidence percentage from estimate and p10."""
+    def _calc_confidence(estimate: float, p10: float, p90: float = 0.0) -> float:
+        """Calculate confidence percentage based on forecast spread.
+
+        Higher confidence when p90-p10 spread is small relative to estimate.
+        confidence = max(0, 1 - (p90 - p10) / estimate) * 100
+        """
         if estimate <= 0:
             return 0.0
-        ratio = p10 / estimate
-        return min(100.0, max(0.0, ratio * 100.0))
+        spread = p90 - p10
+        return max(0.0, (1.0 - spread / estimate)) * 100.0

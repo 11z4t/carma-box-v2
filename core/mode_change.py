@@ -169,14 +169,22 @@ class ModeChangeManager:
         )
         return True
 
+    # Maximum age in seconds to keep completed/failed requests before pruning
+    _PRUNE_AGE_S: float = 3600.0  # 1 hour
+
     async def process(self, executor: ModeChangeExecutor) -> None:
         """Process all pending mode changes (call every cycle).
 
         Advances each request through the state machine as timers expire.
+        Prunes completed/failed requests older than 1 hour to prevent unbounded growth.
         """
+        now = time.monotonic()
         for battery_id in list(self._requests.keys()):
             req = self._requests[battery_id]
             if req.state in (ModeChangeState.COMPLETE, ModeChangeState.FAILED):
+                # Prune stale terminal-state requests to bound memory usage
+                if now - req.step_started_at > self._PRUNE_AGE_S:
+                    del self._requests[battery_id]
                 continue
             await self._process_request(req, executor)
 

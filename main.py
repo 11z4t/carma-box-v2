@@ -49,13 +49,17 @@ logger = logging.getLogger("carma_box")
 def setup_logging(config: CarmaConfig) -> None:
     """Configure logging from site.yaml settings.
 
+    Configures the root logger so all module loggers (core.guards,
+    adapters.goodwe, etc.) inherit the level and handlers automatically.
+
     Args:
         config: Validated site configuration.
     """
     log_cfg = config.logging
     level = getattr(logging, log_cfg.level.upper(), logging.INFO)
 
-    root_logger = logging.getLogger("carma_box")
+    # Configure root logger so all child loggers (core.*, adapters.*, etc.) inherit
+    root_logger = logging.getLogger()
     root_logger.setLevel(level)
 
     formatter = logging.Formatter(

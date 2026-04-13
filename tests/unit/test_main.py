@@ -122,16 +122,18 @@ class TestSetupLogging:
         config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
         cfg = load_config(config_path)
 
-        # Clear handlers first
-        log = logging.getLogger("carma_box")
-        log.handlers.clear()
+        # L8: setup_logging configures the root logger so all child loggers inherit
+        root_log = logging.getLogger()
+        original_handlers = list(root_log.handlers)
+        root_log.handlers.clear()
 
         setup_logging(cfg)
-        assert len(log.handlers) >= 1  # At least console
-        assert any(isinstance(h, logging.StreamHandler) for h in log.handlers)
+        assert len(root_log.handlers) >= 1  # At least console
+        assert any(isinstance(h, logging.StreamHandler) for h in root_log.handlers)
 
-        # Cleanup
-        log.handlers.clear()
+        # Cleanup: restore original handlers
+        root_log.handlers.clear()
+        root_log.handlers.extend(original_handlers)
 
 
 # ===========================================================================
@@ -154,17 +156,20 @@ class TestSetupLoggingFileHandler:
         log_file = str(tmp_path / "carma.log")
         patched_logging = LoggingConfig(file=log_file)
 
-        log = logging.getLogger("carma_box")
-        log.handlers.clear()
+        # L8: setup_logging configures root logger
+        root_log = logging.getLogger()
+        original_handlers = list(root_log.handlers)
+        root_log.handlers.clear()
 
         with patch.object(cfg, "logging", patched_logging):
             setup_logging(cfg)
 
-        handler_types = [type(h).__name__ for h in log.handlers]
+        handler_types = [type(h).__name__ for h in root_log.handlers]
         assert "RotatingFileHandler" in handler_types
 
-        # Cleanup
-        log.handlers.clear()
+        # Cleanup: restore original handlers
+        root_log.handlers.clear()
+        root_log.handlers.extend(original_handlers)
 
 
 # ===========================================================================

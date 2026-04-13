@@ -439,15 +439,16 @@ class TestExitConditions:
     def test_exit_s7_bat_full(self, sm: StateMachine) -> None:
         """S7 also exits when battery is full (line 348 covered).
 
-        At hour=3 with bat full, exit conditions are met but no valid target
-        is found (S1 requires 6-9am) — state machine logs a warning and stays.
+        M1 fix: when normal matrix exit finds no valid target, a catchall
+        recovery fires and selects the best scenario for current conditions.
+        At hour=3, pv_today=15 → NIGHT_HIGH_PV entry conditions match.
         """
         sm.state.current = Scenario.NIGHT_GRID_CHARGE
         # Battery at or above grid_charge_max_soc (90%) → triggers exit path
         snap = _snap(hour=3, bat_soc=95.0, pv_today=15.0)
         result = sm.evaluate(snap)
-        # Exit conditions met but no allowed target passes entry → None (stays)
-        assert result is None
+        # M1 catchall: NIGHT_HIGH_PV is valid at hour=3 with high PV forecast
+        assert result == Scenario.NIGHT_HIGH_PV
 
     def test_exit_s8_bat_drops(self, sm: StateMachine) -> None:
         """S8 exits when bat SoC drops below surplus_exit threshold (lines 353-354)."""

@@ -23,6 +23,22 @@ import aiosqlite
 
 logger = logging.getLogger(__name__)
 
+# Allowlist of valid table names — guards against SQL injection in dynamic queries
+ALLOWED_TABLES: frozenset[str] = frozenset({"cycle_log", "event_log", "audit_log", "state"})
+
+
+def _validate_table(table: str) -> str:
+    """Validate table name against ALLOWED_TABLES allowlist.
+
+    Raises ValueError if the name is not in the allowlist.
+    """
+    if table not in ALLOWED_TABLES:
+        raise ValueError(
+            f"Invalid table name '{table}'. Must be one of: {sorted(ALLOWED_TABLES)}"
+        )
+    return table
+
+
 # ---------------------------------------------------------------------------
 # DDL
 # ---------------------------------------------------------------------------
@@ -221,6 +237,7 @@ class LocalDB:
         cutoff = f"datetime('now', '-{days} days')"
         total = 0
         for table in ("cycle_log", "event_log", "audit_log"):
+            _validate_table(table)  # Always valid — just enforcing the pattern
             cursor = await db.execute(
                 f"DELETE FROM {table} WHERE timestamp < {cutoff}",  # noqa: S608
             )
@@ -241,6 +258,7 @@ class LocalDB:
 
     async def get_unsynced_rows(self, table: str, limit: int = 1000) -> list[dict[str, object]]:
         """Get unsynced rows for hub sync."""
+        _validate_table(table)
         db = await self._ensure_db()
         cursor = await db.execute(
             f"SELECT * FROM {table} WHERE synced = 0 ORDER BY id LIMIT ?",  # noqa: S608
@@ -252,6 +270,7 @@ class LocalDB:
 
     async def mark_synced(self, table: str, last_id: int) -> None:
         """Mark rows as synced up to last_id."""
+        _validate_table(table)
         db = await self._ensure_db()
         await db.execute(
             f"UPDATE {table} SET synced = 1 WHERE id <= ? AND synced = 0",  # noqa: S608

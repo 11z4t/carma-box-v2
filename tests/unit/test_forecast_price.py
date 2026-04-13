@@ -91,8 +91,16 @@ class TestP10Safety:
         assert SolcastAdapter._calc_confidence(0.0, 0.0) == 0.0
 
     def test_confidence_ratio(self) -> None:
-        c = SolcastAdapter._calc_confidence(20.0, 14.0)
-        assert c == pytest.approx(70.0)
+        # M9 fix: confidence = max(0, 1 - (p90-p10)/estimate) * 100
+        # estimate=20, p10=14, p90=26 → spread=12 → 1 - 12/20 = 0.4 → 40%
+        c = SolcastAdapter._calc_confidence(20.0, 14.0, 26.0)
+        assert c == pytest.approx(40.0)
+
+    def test_confidence_narrow_spread(self) -> None:
+        # Narrow spread → high confidence
+        # estimate=20, p10=18, p90=22 → spread=4 → 1 - 4/20 = 0.8 → 80%
+        c = SolcastAdapter._calc_confidence(20.0, 18.0, 22.0)
+        assert c == pytest.approx(80.0)
 
 
 # ===========================================================================
