@@ -129,9 +129,11 @@ class TestEmergencyBypass:
     """Emergency mode changes skip standby wait."""
 
     @pytest.mark.asyncio
-    async def test_emergency_skips_standby(
+    async def test_emergency_skips_clear_and_standby(
         self, manager: ModeChangeManager
     ) -> None:
+        """PLAT-1360: emergency skips both clear_wait AND standby (goes straight to
+        SETTING_TARGET on the first cycle — no 60s clear_wait delay)."""
         executor = _make_executor()
         executor.get_ems_mode.return_value = "battery_standby"
 
@@ -139,11 +141,7 @@ class TestEmergencyBypass:
             "kontor", "battery_standby", reason="G0 grid charging"
         )
 
-        # Cycle 1: IDLE → CLEARING
-        await manager.process(executor)
-        assert manager.get_state("kontor") == ModeChangeState.CLEARING
-
-        # Cycle 2: CLEARING → SETTING_TARGET (skipped STANDBY!)
+        # Cycle 1: IDLE → SETTING_TARGET (skips CLEARING and STANDBY)
         await manager.process(executor)
         assert manager.get_state("kontor") == ModeChangeState.SETTING_TARGET
 

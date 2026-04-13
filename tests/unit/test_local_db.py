@@ -270,3 +270,117 @@ class TestSQLInjectionPrevention:
         """Zero days is valid — deletes rows older than now."""
         result = _run(db.cleanup_retention(0))
         assert isinstance(result, int)
+
+
+# ===========================================================================
+# PLAT-1365: New test gaps
+# ===========================================================================
+
+
+class TestBatchCommit:
+    """Batch write (commit=False) defers the commit until explicit commit()."""
+
+    def test_batch_write_cycle_deferred_commit(self, db: LocalDB) -> None:
+        """write_cycle with commit=False doesn't persist until commit() called."""
+        entry = CycleLogEntry(
+            cycle_id="batch1",
+            timestamp="2026-04-12T23:00:00",
+            scenario="EVENING_DISCHARGE",
+            guard_level="ok",
+            headroom_kw=0.5,
+            elapsed_s=0.03,
+        )
+        # Write without commit
+        _run(db.write_cycle(entry, commit=False))
+        _run(db.commit())
+        # After explicit commit, the row must be visible
+        rows = _run(db.get_unsynced_rows("cycle_log"))
+        assert any(r["cycle_id"] == "batch1" for r in rows)
+
+    def test_batch_write_multiple_entries_single_commit(self, db: LocalDB) -> None:
+        """Multiple deferred writes committed in one transaction."""
+        for i in range(3):
+            _run(db.write_cycle(CycleLogEntry(
+                cycle_id=f"batch_{i}",
+                timestamp=f"2026-04-12T23:0{i}:00",
+                scenario="MIDDAY_CHARGE",
+                guard_level="ok",
+                headroom_kw=1.0,
+                elapsed_s=0.04,
+            ), commit=False))
+        _run(db.commit())
+        rows = _run(db.get_unsynced_rows("cycle_log"))
+        assert len(rows) == 3
+
+
+class TestSQLInjectionCleanupRetention:
+    """SQL injection attempts in cleanup_retention are rejected."""
+
+    def test_sql_injection_string_days(self, db: LocalDB) -> None:
+        """Malicious string as days raises TypeError/ValueError (not executed as SQL)."""
+        with pytest.raises((ValueError, TypeError)):
+            _run(db.cleanup_retention("1 OR 1=1; DROP TABLE cycle_log; --"))  # type: ignore[arg-type]
+
+    def test_sql_injection_none_days(self, db: LocalDB) -> None:
+        """None as days raises TypeError/ValueError."""
+        with pytest.raises((ValueError, TypeError)):
+            _run(db.cleanup_retention(None))  # type: ignore[arg-type]
+
+    def test_sql_injection_float_days(self, db: LocalDB) -> None:
+        """Float as days raises ValueError (int enforced)."""
+        with pytest.raises(ValueError, match="non-negative integer"):
+            _run(db.cleanup_retention(7.5))  # type: ignore[arg-type]
+
+    def test_table_still_intact_after_injection_attempt(self, db: LocalDB) -> None:
+        """cycle_log table is unaffected by a rejected injection attempt."""
+        _run(db.write_cycle(CycleLogEntry(
+            cycle_id="safe1", timestamp="2026-04-12T22:00:00",
+            scenario="MIDDAY_CHARGE", guard_level="ok",
+            headroom_kw=1.0, elapsed_s=0.05,
+        )))
+        with pytest.raises((ValueError, TypeError)):
+            _run(db.cleanup_retention("9999' OR '1'='1"))  # type: ignore[arg-type]
+        # Table should still have the row
+        rows = _run(db.get_unsynced_rows("cycle_log"))
+        assert len(rows) == 1
+
+
+class TestConcurrentWriteSafety:
+    """WAL mode + concurrent async writes don't corrupt the database."""
+
+    def test_sequential_writes_from_two_loops(self, tmp_path: Path) -> None:
+        """Simulate two event loops writing to the same WAL DB sequentially."""
+        db_path = str(tmp_path / "concurrent.db")
+
+        # Loop 1: initialize + write
+        loop1 = asyncio.new_event_loop()
+        db1 = LocalDB(db_path)
+        try:
+            loop1.run_until_complete(db1.initialize())
+            loop1.run_until_complete(db1.write_cycle(CycleLogEntry(
+                cycle_id="loop1_c1", timestamp="2026-04-12T22:00:00",
+                scenario="MIDDAY_CHARGE", guard_level="ok",
+                headroom_kw=1.0, elapsed_s=0.05,
+            )))
+            loop1.run_until_complete(db1.close())
+        finally:
+            loop1.close()
+
+        # Loop 2: open same DB, write more rows
+        loop2 = asyncio.new_event_loop()
+        db2 = LocalDB(db_path)
+        try:
+            loop2.run_until_complete(db2.initialize())
+            loop2.run_until_complete(db2.write_cycle(CycleLogEntry(
+                cycle_id="loop2_c1", timestamp="2026-04-12T22:01:00",
+                scenario="EVENING_DISCHARGE", guard_level="ok",
+                headroom_kw=0.8, elapsed_s=0.04,
+            )))
+            rows = loop2.run_until_complete(db2.get_unsynced_rows("cycle_log"))
+            assert len(rows) == 2
+            cycle_ids = {r["cycle_id"] for r in rows}
+            assert "loop1_c1" in cycle_ids
+            assert "loop2_c1" in cycle_ids
+            loop2.run_until_complete(db2.close())
+        finally:
+            loop2.close()

@@ -83,7 +83,10 @@ class ModeChangeConfig:
     """Timing configuration for mode changes."""
 
     clear_wait_s: float = 60.0       # Wait after clearing limits (2 cycles)
-    standby_wait_s: float = 300.0    # Wait in standby (5 min)
+    standby_wait_s: float = 300.0    # Wait in standby: GoodWe ET firmware requires
+                                     # ≥5 min in battery_standby for internal BMS
+                                     # capacitor bleed before accepting the next EMS
+                                     # mode — shorter dwell causes B1/B2 hangs.
     set_wait_s: float = 60.0         # Wait after setting target mode
     verify_wait_s: float = 30.0      # Wait before verification
     max_retries: int = 3
@@ -225,7 +228,6 @@ class ModeChangeManager:
 
         if req.state == ModeChangeState.IDLE:
             # STEP 1: PREPARE — enter CLEARING
-            req.state = ModeChangeState.CLEARING
             req.step_started_at = now
             logger.info(
                 "Step 1 PREPARE: %s → %s (reason: %s)",
@@ -234,29 +236,28 @@ class ModeChangeManager:
             # STEP 2: CLEAR LIMITS — execute immediately
             await executor.set_ems_power_limit(req.battery_id, 0)
             await executor.set_fast_charging(req.battery_id, False)
+            if req.emergency:
+                # Emergency: skip clear_wait + standby, go directly to SET TARGET
+                req.state = ModeChangeState.SETTING_TARGET
+                logger.info(
+                    "Step 4 SET TARGET (emergency skip clear+standby): %s → %s",
+                    req.battery_id, req.target_mode,
+                )
+                await self._execute_set_target(req, executor)
+            else:
+                req.state = ModeChangeState.CLEARING
 
         elif req.state == ModeChangeState.CLEARING:
-            # Wait for clear_wait_s
+            # Wait for clear_wait_s (emergency requests never reach this state)
             elapsed = now - req.step_started_at
             if elapsed >= self._config.clear_wait_s:
-                # Move to STANDBY
-                if req.emergency:
-                    # Emergency: skip standby, go directly to SET TARGET
-                    req.state = ModeChangeState.SETTING_TARGET
-                    req.step_started_at = now
-                    logger.info(
-                        "Step 4 SET TARGET (emergency skip standby): %s → %s",
-                        req.battery_id, req.target_mode,
-                    )
-                    await self._execute_set_target(req, executor)
-                else:
-                    req.state = ModeChangeState.STANDBY_WAIT
-                    req.step_started_at = now
-                    logger.info(
-                        "Step 3 STANDBY: %s entering battery_standby",
-                        req.battery_id,
-                    )
-                    await executor.set_ems_mode(req.battery_id, "battery_standby")
+                req.state = ModeChangeState.STANDBY_WAIT
+                req.step_started_at = now
+                logger.info(
+                    "Step 3 STANDBY: %s entering battery_standby",
+                    req.battery_id,
+                )
+                await executor.set_ems_mode(req.battery_id, "battery_standby")
 
         elif req.state == ModeChangeState.STANDBY_WAIT:
             # Wait for standby_wait_s
@@ -337,5 +338,6 @@ class ModeChangeManager:
                 await executor.set_fast_charging(req.battery_id, False)
 
         await executor.set_ems_mode(req.battery_id, req.target_mode)
-        if req.target_limit_w > 0:
-            await executor.set_ems_power_limit(req.battery_id, req.target_limit_w)
+        # Always write ems_power_limit — even 0 must be written explicitly to avoid
+        # truthy-trap (B9): non-zero limit in charge_pv causes autonomous grid charging.
+        await executor.set_ems_power_limit(req.battery_id, req.target_limit_w)

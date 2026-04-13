@@ -40,6 +40,48 @@ def _validate_table(table: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Schema versioning
+# ---------------------------------------------------------------------------
+
+# Increment when DDL changes require a migration.
+_SCHEMA_VERSION = 1
+
+
+async def _check_schema_version(db: aiosqlite.Connection) -> None:
+    """Ensure schema_version table exists and version matches.
+
+    Raises RuntimeError if the on-disk version is newer than this code.
+    Future migrations can be added here as elif blocks.
+    """
+    await db.execute(
+        "CREATE TABLE IF NOT EXISTS schema_version "
+        "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    cursor = await db.execute(
+        "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
+    )
+    row = await cursor.fetchone()
+    on_disk = int(row[0]) if row else 0
+
+    if on_disk == _SCHEMA_VERSION:
+        return  # Up to date
+    if on_disk > _SCHEMA_VERSION:
+        raise RuntimeError(
+            f"Database schema version {on_disk} is newer than code version "
+            f"{_SCHEMA_VERSION} — upgrade the application."
+        )
+    # on_disk < _SCHEMA_VERSION: apply missing migrations
+    from datetime import datetime, timezone
+    now = datetime.now(tz=timezone.utc).isoformat()
+    # Migration from version 0 → 1: initial schema (tables created by _DDL above)
+    await db.execute(
+        "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)",
+        (_SCHEMA_VERSION, now),
+    )
+    logger.info("Schema migrated to version %d", _SCHEMA_VERSION)
+
+
+# ---------------------------------------------------------------------------
 # DDL
 # ---------------------------------------------------------------------------
 
@@ -153,7 +195,11 @@ class LocalDB:
     async def initialize(self) -> None:
         """Create/open database and ensure tables exist."""
         self._db = await aiosqlite.connect(self._path)
+        # WAL mode: allows concurrent readers + one writer without blocking,
+        # reduces contention in the 30-second cycle loop.
+        await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.executescript(_DDL)
+        await _check_schema_version(self._db)
         await self._db.commit()
         logger.info("LocalDB initialized at %s", self._path)
 
@@ -172,8 +218,14 @@ class LocalDB:
     # Write methods
     # ------------------------------------------------------------------
 
-    async def write_cycle(self, entry: CycleLogEntry) -> None:
-        """Write a cycle log entry."""
+    async def write_cycle(self, entry: CycleLogEntry, *, commit: bool = True) -> None:
+        """Write a cycle log entry.
+
+        Args:
+            entry: The cycle log row to insert.
+            commit: If False, skip the immediate commit (use for batch writes).
+                    Caller must call commit() manually when batching.
+        """
         db = await self._ensure_db()
         await db.execute(
             "INSERT INTO cycle_log (cycle_id, timestamp, scenario, guard_level, "
@@ -181,20 +233,32 @@ class LocalDB:
             (entry.cycle_id, entry.timestamp, entry.scenario,
              entry.guard_level, entry.headroom_kw, entry.elapsed_s, entry.violations),
         )
-        await db.commit()
+        if commit:
+            await db.commit()
 
-    async def write_event(self, entry: EventLogEntry) -> None:
-        """Write an event log entry."""
+    async def write_event(self, entry: EventLogEntry, *, commit: bool = True) -> None:
+        """Write an event log entry.
+
+        Args:
+            entry: The event log row to insert.
+            commit: If False, skip the immediate commit (use for batch writes).
+        """
         db = await self._ensure_db()
         await db.execute(
             "INSERT INTO event_log (timestamp, event_type, source, message, data) "
             "VALUES (?, ?, ?, ?, ?)",
             (entry.timestamp, entry.event_type, entry.source, entry.message, entry.data),
         )
-        await db.commit()
+        if commit:
+            await db.commit()
 
-    async def write_audit(self, entry: AuditLogEntry) -> None:
-        """Write an audit log entry."""
+    async def write_audit(self, entry: AuditLogEntry, *, commit: bool = True) -> None:
+        """Write an audit log entry.
+
+        Args:
+            entry: The audit log row to insert.
+            commit: If False, skip the immediate commit (use for batch writes).
+        """
         db = await self._ensure_db()
         await db.execute(
             "INSERT INTO audit_log (timestamp, command_type, target_id, value, "
@@ -202,6 +266,16 @@ class LocalDB:
             (entry.timestamp, entry.command_type, entry.target_id, entry.value,
              entry.rule_id, entry.reason, int(entry.success), entry.error),
         )
+        if commit:
+            await db.commit()
+
+    async def commit(self) -> None:
+        """Explicitly commit pending writes (for batch operations).
+
+        Use when calling write_* methods with commit=False to accumulate
+        multiple inserts in a single transaction for efficiency.
+        """
+        db = await self._ensure_db()
         await db.commit()
 
     # ------------------------------------------------------------------

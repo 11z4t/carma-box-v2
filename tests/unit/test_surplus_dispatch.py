@@ -42,7 +42,6 @@ def _consumer(
 @pytest.fixture()
 def dispatch() -> SurplusDispatch:
     return SurplusDispatch(SurplusConfig(
-        start_threshold_w=200.0,
         stop_threshold_w=-100.0,
         max_switches_per_window=10,  # High limit for tests
         switch_window_s=1800.0,

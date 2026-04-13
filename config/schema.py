@@ -408,6 +408,10 @@ class ControlConfig(BaseModel):
     standby_intermediate_s: int = Field(default=300, ge=30, le=900)
     scenario_transition_s: int = Field(default=300, ge=30, le=900)
     measurement_stale_s: int = Field(default=300, ge=30, le=900)
+    start_scenario: str = Field(
+        default="MIDDAY_CHARGE",
+        description="Scenario to enter at startup before first evaluation cycle.",
+    )
     deadband: DeadbandConfig = Field(default_factory=DeadbandConfig)
     export_target: ExportTargetConfig = Field(default_factory=ExportTargetConfig)
 

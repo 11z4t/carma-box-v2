@@ -130,7 +130,7 @@ class ControlEngine:
                 # (prevents B1/B2 firmware hangs from direct transitions)
                 if not self._mode_manager.is_in_progress("scenario"):
                     # Map scenario to target EMS mode
-                    from core.models import Scenario as S
+                    S = Scenario
                     scenario_modes = {
                         S.MORNING_DISCHARGE: "discharge_pv",
                         S.FORENOON_PV_EV: "charge_pv",
@@ -161,17 +161,18 @@ class ControlEngine:
                         cap_kwh=b.cap_kwh,
                         cell_temp_c=b.cell_temp_c,
                         soh_pct=b.soh_pct,
-                        # H2: read limits from config (kW → W); fall back to
-                        # battery's own cap_kwh * 1000 if config is unavailable
+                        # H2: read limits from config (kW → W); fall back to a
+                        # safe conservative 5000 W if config is unavailable.
+                        # (cap_kwh is energy, not power — kWh ≠ W)
                         max_discharge_w=(
                             self._battery_configs[b.battery_id].max_discharge_kw * 1000.0
                             if b.battery_id in self._battery_configs
-                            else b.cap_kwh * 1000.0
+                            else 5000.0
                         ),
                         max_charge_w=(
                             self._battery_configs[b.battery_id].max_charge_kw * 1000.0
                             if b.battery_id in self._battery_configs
-                            else b.cap_kwh * 1000.0
+                            else 5000.0
                         ),
                         ct_placement=b.ct_placement,
                         local_load_w=b.load_power_w,
@@ -247,3 +248,8 @@ class ControlEngine:
     @property
     def cycle_count(self) -> int:
         return self._cycle_count
+
+    @property
+    def current_scenario(self) -> Scenario:
+        """Current active scenario (public accessor — avoids traversing private attrs)."""
+        return self._sm.state.current

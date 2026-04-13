@@ -150,6 +150,7 @@ class CarmaBoxService:
 
         guard = GridGuard(guard_cfg)
         sm = StateMachine(StateMachineConfig(
+            start_scenario=Scenario[config.control.start_scenario],
             min_dwell_s=config.control.scenario_transition_s,
         ))
         balancer = BatteryBalancer(BalancerConfig(
@@ -215,6 +216,20 @@ class CarmaBoxService:
         logger.info("Stop requested")
         self._running = False
 
+    async def shutdown(self) -> None:
+        """Graceful shutdown: close all external connections.
+
+        Called after the main loop exits (SIGTERM, SIGINT, CancelledError).
+        Closes HA API session so aiohttp connectors are released cleanly.
+        """
+        logger.info("Shutting down CARMA Box (closing connections)...")
+        if self._ha_api is not None:
+            try:
+                await self._ha_api.close()
+            except Exception as exc:  # pragma: no cover
+                logger.warning("Error closing HA API session: %s", exc)
+        logger.info("Shutdown complete")
+
     async def _run_cycle(self) -> None:
         """Execute one 30-second control cycle.
 
@@ -279,7 +294,7 @@ class CarmaBoxService:
                         return default
 
                 soc = _float(ents.soc)
-                floor = 15.0  # Effective floor handled by guards
+                floor = cfg.guards.g1_soc_floor.floor_pct  # From site.yaml
                 avail = max(0.0, (soc - floor) / 100.0 * bat_cfg.cap_kwh * bat_cfg.efficiency)
 
                 batteries.append(BatteryState(
@@ -371,7 +386,7 @@ class CarmaBoxService:
                 grid=grid,
                 consumers=[],  # Populated when consumer adapters exist
                 current_scenario=(
-                    self._engine._sm.state.current
+                    self._engine.current_scenario
                     if self._engine else Scenario.MIDDAY_CHARGE
                 ),
                 hour=now.hour,
@@ -464,6 +479,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     except KeyboardInterrupt:  # pragma: no cover
         logger.info("KeyboardInterrupt received")
     finally:  # pragma: no cover
+        loop.run_until_complete(service.shutdown())
         loop.run_until_complete(loop.shutdown_asyncgens())
         loop.close()
         logger.info("CARMA Box stopped")

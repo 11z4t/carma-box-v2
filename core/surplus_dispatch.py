@@ -39,10 +39,8 @@ logger = logging.getLogger(__name__)
 class SurplusConfig:
     """Surplus dispatch thresholds — all from site.yaml."""
 
-    start_threshold_w: float = 200.0       # Min surplus to start a consumer
     stop_threshold_w: float = -100.0       # Surplus below this → de-escalate
-    start_delay_s: float = 60.0            # Wait before starting
-    stop_delay_s: float = 180.0            # Wait before stopping
+    start_delay_s: float = 60.0            # Wait before starting a consumer
     max_switches_per_window: int = 2       # Rate limit
     switch_window_s: float = 1800.0        # 30 min window
     bump_delay_s: float = 60.0            # Wait before bump
@@ -148,7 +146,9 @@ class SurplusDispatch:
         Returns:
             SurplusResult with per-consumer allocations.
         """
-        active_deps: set[str] = active_dependencies if active_dependencies is not None else set()
+        active_deps: set[str] = (
+            set(active_dependencies) if active_dependencies is not None else set()
+        )
         deadband = self._rate_limiter.effective_deadband_w
         sorted_consumers = sorted(consumers, key=lambda c: c.priority)
 
@@ -199,7 +199,7 @@ class SurplusDispatch:
                 continue
 
             # Start this consumer — add to active deps for downstream consumers
-            active_deps = active_deps | {consumer.consumer_id}
+            active_deps.add(consumer.consumer_id)
             remaining_w -= consumer.power_w
             self._rate_limiter.record_switch()
             allocations.append(SurplusAllocation(
@@ -208,7 +208,7 @@ class SurplusDispatch:
                 reason=f"surplus available ({available_surplus_w:.0f}W)",
             ))
 
-        consumed = available_surplus_w - remaining_w
+        consumed = max(0.0, available_surplus_w - remaining_w)
         return SurplusResult(
             allocations=allocations,
             available_surplus_w=available_surplus_w,

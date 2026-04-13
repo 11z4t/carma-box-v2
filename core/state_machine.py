@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 class StateMachineConfig:
     """State machine thresholds — all from site.yaml."""
 
+    start_scenario: Scenario = Scenario.MIDDAY_CHARGE  # Initial scenario at startup
     min_dwell_s: float = 300.0          # 5 min minimum in any scenario
     pv_high_threshold_kwh: float = 15.0  # High PV forecast threshold
     pv_medium_threshold_kwh: float = 10.0  # Medium PV forecast threshold
@@ -113,7 +114,7 @@ class StateMachine:
     def __init__(self, config: StateMachineConfig | None = None) -> None:
         self._config = config or StateMachineConfig()
         self.state = ScenarioState(
-            current=Scenario.MIDDAY_CHARGE,
+            current=self._config.start_scenario,
             entry_time=datetime.now(tz=timezone.utc),
         )
         self._manual_override: Optional[Scenario] = None
@@ -228,22 +229,26 @@ class StateMachine:
     # Entry conditions per scenario
     # ------------------------------------------------------------------
 
+    # Class-level name map — avoids rebuilding the dict on every call.
+    # Values are method names (str) resolved via getattr at call time.
+    _ENTRY_METHODS: dict[Scenario, str] = {
+        Scenario.MORNING_DISCHARGE: "_entry_s1",
+        Scenario.FORENOON_PV_EV: "_entry_s2",
+        Scenario.MIDDAY_CHARGE: "_entry_s3",
+        Scenario.EVENING_DISCHARGE: "_entry_s4",
+        Scenario.NIGHT_HIGH_PV: "_entry_s5",
+        Scenario.NIGHT_LOW_PV: "_entry_s6",
+        Scenario.NIGHT_GRID_CHARGE: "_entry_s7",
+        Scenario.PV_SURPLUS: "_entry_s8",
+    }
+
     def _check_entry(self, scenario: Scenario, snap: SystemSnapshot) -> bool:
         """Check entry conditions for a scenario."""
-        checkers = {
-            Scenario.MORNING_DISCHARGE: self._entry_s1,
-            Scenario.FORENOON_PV_EV: self._entry_s2,
-            Scenario.MIDDAY_CHARGE: self._entry_s3,
-            Scenario.EVENING_DISCHARGE: self._entry_s4,
-            Scenario.NIGHT_HIGH_PV: self._entry_s5,
-            Scenario.NIGHT_LOW_PV: self._entry_s6,
-            Scenario.NIGHT_GRID_CHARGE: self._entry_s7,
-            Scenario.PV_SURPLUS: self._entry_s8,
-        }
-        checker = checkers.get(scenario)
-        if checker is None:  # pragma: no cover
+        method_name = self._ENTRY_METHODS.get(scenario)
+        if method_name is None:  # pragma: no cover
             return False
-        return checker(snap)
+        result: bool = getattr(self, method_name)(snap)
+        return result
 
     def _entry_s1(self, snap: SystemSnapshot) -> bool:
         """S1 MORNING_DISCHARGE: 06-09, high PV forecast, SoC > 30%."""
@@ -318,22 +323,25 @@ class StateMachine:
     # Exit conditions per scenario
     # ------------------------------------------------------------------
 
+    # Class-level name map — avoids rebuilding the dict on every call.
+    _EXIT_METHODS: dict[Scenario, str] = {
+        Scenario.MORNING_DISCHARGE: "_exit_s1",
+        Scenario.FORENOON_PV_EV: "_exit_s2",
+        Scenario.MIDDAY_CHARGE: "_exit_s3",
+        Scenario.EVENING_DISCHARGE: "_exit_s4",
+        Scenario.NIGHT_HIGH_PV: "_exit_s5",
+        Scenario.NIGHT_LOW_PV: "_exit_s6",
+        Scenario.NIGHT_GRID_CHARGE: "_exit_s7",
+        Scenario.PV_SURPLUS: "_exit_s8",
+    }
+
     def _should_exit(self, scenario: Scenario, snap: SystemSnapshot) -> bool:
         """Check if current scenario should be exited."""
-        exits = {
-            Scenario.MORNING_DISCHARGE: self._exit_s1,
-            Scenario.FORENOON_PV_EV: self._exit_s2,
-            Scenario.MIDDAY_CHARGE: self._exit_s3,
-            Scenario.EVENING_DISCHARGE: self._exit_s4,
-            Scenario.NIGHT_HIGH_PV: self._exit_s5,
-            Scenario.NIGHT_LOW_PV: self._exit_s6,
-            Scenario.NIGHT_GRID_CHARGE: self._exit_s7,
-            Scenario.PV_SURPLUS: self._exit_s8,
-        }
-        checker = exits.get(scenario)
-        if checker is None:  # pragma: no cover
+        method_name = self._EXIT_METHODS.get(scenario)
+        if method_name is None:  # pragma: no cover
             return False
-        return checker(snap)
+        result: bool = getattr(self, method_name)(snap)
+        return result
 
     def _exit_s1(self, snap: SystemSnapshot) -> bool:
         """Exit S1: hour >= 9 or SoC at floor."""
@@ -359,15 +367,18 @@ class StateMachine:
         floor = cfg.normal_floor_pct + cfg.evening_min_soc_above_floor_pct
         return snap.hour >= cfg.evening_end_h or snap.total_battery_soc_pct <= floor
 
-    def _exit_s5(self, snap: SystemSnapshot) -> bool:
-        """Exit S5: hour >= 6."""
+    def _exit_night(self, snap: SystemSnapshot) -> bool:
+        """Exit any night scenario: hour >= 6 (daytime window)."""
         cfg = self._config
         return cfg.morning_start_h <= snap.hour < cfg.evening_end_h
 
+    def _exit_s5(self, snap: SystemSnapshot) -> bool:
+        """Exit S5 NIGHT_HIGH_PV: hour >= 6."""
+        return self._exit_night(snap)
+
     def _exit_s6(self, snap: SystemSnapshot) -> bool:
-        """Exit S6: hour >= 6."""
-        cfg = self._config
-        return cfg.morning_start_h <= snap.hour < cfg.evening_end_h
+        """Exit S6 NIGHT_LOW_PV: hour >= 6."""
+        return self._exit_night(snap)
 
     def _exit_s7(self, snap: SystemSnapshot) -> bool:
         """Exit S7: hour >= 6 or bat full."""
