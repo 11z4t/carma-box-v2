@@ -426,6 +426,13 @@ class GridGuard:
                 value=6,
                 reason="G3 CRITICAL: emergency cut to 6A",
             ))
+            # N3: Shed ALL consumers at CRITICAL
+            result.commands.append(GuardCommand(
+                guard_id="G3",
+                command_type=CommandType.TURN_OFF_CONSUMER,
+                target_id="all",
+                reason="G3 CRITICAL: load shedding — turn off all consumers",
+            ))
 
         elif weighted_avg_kw > effective_tak:
             # BREACH — actual exceeds tak
@@ -455,6 +462,13 @@ class GridGuard:
                 target_id="ev",
                 value=6,
                 reason="G3 BREACH: cut EV to 6A",
+            ))
+            # N3: Shed ALL consumers at BREACH
+            result.commands.append(GuardCommand(
+                guard_id="G3",
+                command_type=CommandType.TURN_OFF_CONSUMER,
+                target_id="all",
+                reason="G3 BREACH: load shedding — turn off all consumers",
             ))
 
         elif weighted_avg_kw > warning_threshold:
