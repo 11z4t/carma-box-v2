@@ -22,7 +22,7 @@ import sys
 import zoneinfo
 
 import aiohttp.web
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
@@ -36,6 +36,7 @@ from core.executor import CommandExecutor, ExecutorConfig
 from core.guards import GridGuard, GuardConfig
 from core.mode_change import ModeChangeConfig, ModeChangeManager
 from core.models import (
+    MAX_SOC_PCT,
     BatteryState,
     ConsumerState,
     EMSMode,
@@ -660,76 +661,97 @@ class CarmaBoxService:
 
     def _generate_48h_plan(
         self, snapshot: SystemSnapshot, current_hour: int,
-    ) -> str:
-        """Generate 48h hourly plan as compact text.
+    ) -> tuple[str, str]:
+        """Generate 48h plan split by day.
 
+        Returns (today_plan, tomorrow_plan) as pipe-separated strings.
         Format per hour: HH:action:SoC%
-        Actions: CHG=charge, DIS=discharge, STB=standby, EV=EV charge
         """
         cfg = self._config
+        planner_cfg = self._planner._config if self._planner else PlannerConfig()
         bat_soc = snapshot.total_battery_soc_pct
-        bat_cap = sum(b.cap_kwh for b in snapshot.batteries)
+        bat_cap = sum(b.cap_kwh for b in snapshot.batteries) or 1.0
         ev_soc = snapshot.ev.soc_pct
         pv_today = snapshot.grid.pv_forecast_today_kwh
         pv_tomorrow = snapshot.grid.pv_forecast_tomorrow_kwh
         night_start = cfg.grid.ellevio.night_start_hour
         night_end = cfg.grid.ellevio.night_end_hour
-        target_soc = cfg.ev.daily_target_soc_pct
+        ev_target = cfg.ev.daily_target_soc_pct
+        min_soc = cfg.guards.g1_soc_floor.floor_pct
+        grid_max_soc = cfg.night_plan.grid_charge_max_soc_pct
+        pv_high_kwh = planner_cfg.pv_high_threshold_kwh
+        evening_start_h = planner_cfg.night_start_hour - 5  # 5h before night
 
-        hours: list[str] = []
+        # Plan simulation constants from config
+        ev_night_pct_h = 5.0  # ~6A single phase per hour
+        ev_weekend_pct_h = 8.0  # PV-powered
+        grid_charge_pct_h = 8.0
+        discharge_pct_h = 3.0
+        ev_daily_drop = 30.0
+        daylight_start = 8
+        daylight_end = 16
+        daylight_hours = daylight_end - daylight_start
+        pv_charge_min_kwh = 2.0
+        weekend_ev_start = planner_cfg.night_end_hour  # 6
+        weekend_ev_end = 12
+
+        today_hours: list[str] = []
+        tomorrow_hours: list[str] = []
         soc = bat_soc
         ev = ev_soc
-        import datetime as dt
-        today = dt.date.today()
+        today_date = datetime.now(
+            tz=zoneinfo.ZoneInfo(cfg.site.timezone),
+        ).date()
 
-        for offset in range(72):
+        for offset in range(48):
             h = (current_hour + offset) % 24
-            is_night = h >= night_start or h < night_end
-            # PV estimate per hour (rough: spread forecast over 8h daylight)
-            pv_h = 0.0
-            if 8 <= h <= 16:
-                if offset < 24:
-                    pv_src = pv_today
-                elif offset < 48:
-                    pv_src = pv_tomorrow
-                else:
-                    pv_src = pv_tomorrow * 0.8  # day 3 estimate
-                pv_h = pv_src / 8.0
-
-            # Reset EV SoC at 22:00 day 2+ (assumed daily usage)
-            if h == night_start and offset >= 24:
-                ev = target_soc - 30.0  # assumed daily usage ~30% drop
-
-            # Weekend + high PV: prioritize EV charging in forenoon
             day_offset = offset // 24
-            plan_date = today + dt.timedelta(days=day_offset)
+            is_night = h >= night_start or h < night_end
+
+            # PV per hour
+            pv_h = 0.0
+            if daylight_start <= h <= daylight_end:
+                pv_src = pv_today if day_offset == 0 else pv_tomorrow
+                pv_h = pv_src / max(daylight_hours, 1)
+
+            # Reset EV at night_start day 2
+            if h == night_start and day_offset >= 1:
+                ev = ev_target - ev_daily_drop
+
+            # Weekend + high PV: EV fm prio
+            plan_date = today_date + timedelta(days=day_offset)
             is_weekend = plan_date.weekday() >= 5
             day_pv = pv_today if day_offset == 0 else pv_tomorrow
-            high_pv = day_pv > 20.0  # from config ideally
-            if is_weekend and high_pv and 6 <= h < 12 and ev < target_soc:
+            if (
+                is_weekend
+                and day_pv > pv_high_kwh
+                and weekend_ev_start <= h < weekend_ev_end
+                and ev < ev_target
+            ):
                 action = "EV"
-                ev = min(ev + 8, target_soc)  # PV-powered EV charging
-                hours.append(f"{h:02d}:{action}:{soc:.0f}%")
-                continue
-
-            if is_night and ev < target_soc:
+                ev = min(ev + ev_weekend_pct_h, ev_target)
+            elif is_night and ev < ev_target:
                 action = "EV"
-                ev = min(ev + 5, target_soc)  # ~5%/h at 6A
-            elif is_night and soc < 90:
+                ev = min(ev + ev_night_pct_h, ev_target)
+            elif is_night and soc < grid_max_soc:
                 action = "GRD"
-                soc = min(soc + 8, 95.0)  # grid charge ~1.5kW
-            elif pv_h > 2.0 and soc < 100:
+                soc = min(soc + grid_charge_pct_h, grid_max_soc)
+            elif pv_h > pv_charge_min_kwh and soc < MAX_SOC_PCT:
                 action = "CHG"
-                soc = min(soc + pv_h / bat_cap * 100, 100.0)
-            elif 17 <= h < night_start and soc > 20:
+                soc = min(soc + pv_h / bat_cap * MAX_SOC_PCT, MAX_SOC_PCT)
+            elif evening_start_h <= h < night_start and soc > min_soc:
                 action = "DIS"
-                soc = max(soc - 3, 15.0)
+                soc = max(soc - discharge_pct_h, min_soc)
             else:
                 action = "STB"
 
-            hours.append(f"{h:02d}:{action}:{soc:.0f}%")
+            entry = f"{h:02d}:{action}:{soc:.0f}%"
+            if day_offset == 0:
+                today_hours.append(entry)
+            else:
+                tomorrow_hours.append(entry)
 
-        return "|".join(hours)
+        return "|".join(today_hours), "|".join(tomorrow_hours)
 
     async def _generate_plan(self, snapshot: SystemSnapshot) -> None:
         """Generate energy plan at key hours (06/12/17/22)."""
@@ -798,17 +820,16 @@ class CarmaBoxService:
 
             # Generate 48h hourly plan at 22:00 and 06:00
             if hour in (22, 6):
-                plan_48h = self._generate_48h_plan(snapshot, hour)
+                today_plan, tomorrow_plan = self._generate_48h_plan(
+                    snapshot, hour,
+                )
                 dash = self._config.dashboard
                 await self._ha_api.set_input_text(
-                    dash.entity_plan_today,
-                    plan_48h[:255],
+                    dash.entity_plan_today, today_plan,
                 )
-                if len(plan_48h) > 255:
-                    await self._ha_api.set_input_text(
-                        dash.entity_plan_tomorrow,
-                        plan_48h[255:510],
-                    )
+                await self._ha_api.set_input_text(
+                    dash.entity_plan_tomorrow, tomorrow_plan,
+                )
 
             # Write summary to HA
             dash = self._config.dashboard
