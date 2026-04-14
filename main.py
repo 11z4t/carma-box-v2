@@ -202,6 +202,7 @@ class CarmaBoxService:
         self._last_scenario: Optional[str] = None
         self._active_night_plan: Optional[Any] = None
         self._active_evening_plan: Optional[Any] = None
+        self._last_pv_tomorrow: float = -1.0
 
         # Local DB
         db_path = config.storage.sqlite.path
@@ -347,11 +348,24 @@ class CarmaBoxService:
         plan_hours = set(
             self._planner._config.plan_hours
         ) if self._planner else set()
-        if (
-            self._planner
-            and snapshot.hour in plan_hours
+        # Check for PV forecast change (>20% delta → re-plan)
+        pv_changed = False
+        pv_tomorrow = snapshot.grid.pv_forecast_tomorrow_kwh
+        if self._last_pv_tomorrow > 0:
+            delta_pct = abs(pv_tomorrow - self._last_pv_tomorrow) / self._last_pv_tomorrow
+            if delta_pct > 0.2:
+                pv_changed = True
+                logger.info(
+                    "PV forecast changed %.0f → %.0f kWh (%.0f%%) — re-planning",
+                    self._last_pv_tomorrow, pv_tomorrow, delta_pct * 100,
+                )
+        self._last_pv_tomorrow = pv_tomorrow
+
+        scheduled = (
+            snapshot.hour in plan_hours
             and snapshot.hour != self._last_plan_hour
-        ):
+        )
+        if self._planner and (scheduled or pv_changed):
             self._last_plan_hour = snapshot.hour
             await self._generate_plan(snapshot)
 
