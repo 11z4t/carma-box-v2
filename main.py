@@ -398,6 +398,11 @@ class CarmaBoxService:
         if task.exception():
             logger.error("Health server failed: %s", task.exception())
 
+    @staticmethod
+    def _entity_domain(entity_id: str) -> str:
+        """Extract domain from entity_id (e.g. 'switch.x' → 'switch')."""
+        return entity_id.split(".")[0] if "." in entity_id else "homeassistant"
+
     async def _start_health_server(self, port: int) -> None:
         """Start aiohttp health endpoint server."""
         app = aiohttp.web.Application()
@@ -613,8 +618,9 @@ class CarmaBoxService:
                     )
                     state = batch.get(cc.entity_switch, {})
                     if state.get("state") == "on":
+                        domain = self._entity_domain(cc.entity_switch)
                         await self._ha_api.call_service(
-                            "homeassistant", "turn_off",
+                            domain, "turn_off",
                             {"entity_id": cc.entity_switch},
                         )
                         freed_w += cc.power_w
@@ -850,16 +856,18 @@ class CarmaBoxService:
                 continue
 
             if alloc.action == "start":
+                domain = self._entity_domain(cc.entity_switch)
                 await self._ha_api.call_service(
-                    "homeassistant", "turn_on",
+                    domain, "turn_on",
                     {"entity_id": cc.entity_switch},
                 )
                 logger.info(
                     "Surplus: START %s (%s)", cc.name, alloc.reason,
                 )
             elif alloc.action == "stop":
+                domain = self._entity_domain(cc.entity_switch)
                 await self._ha_api.call_service(
-                    "homeassistant", "turn_off",
+                    domain, "turn_off",
                     {"entity_id": cc.entity_switch},
                 )
                 logger.info(
