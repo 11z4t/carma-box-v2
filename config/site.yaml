@@ -79,6 +79,7 @@ batteries:
   - id: "forrad"
     name: "Forrad"
     type: "goodwe_et"
+    is_outdoor: true
     cap_kwh: 5.0
     min_soc_pct: 15.0
     min_soc_cold_pct: 20.0
@@ -162,6 +163,7 @@ consumers:
   - id: "miner"
     name: "Goldshell SC Box II"
     type: "on_off"
+    role: "cold_heater"
     priority: 1
     priority_shed: 1
     power_w: 400

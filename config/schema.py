@@ -132,6 +132,7 @@ class BatteryConfig(BaseModel):
     id: str = Field(..., min_length=1)
     name: str = Field(..., min_length=1)
     type: str = Field(default="goodwe_et")
+    is_outdoor: bool = Field(default=False)
     cap_kwh: float = Field(..., gt=0.0, le=100.0)
     min_soc_pct: float = Field(default=15.0, ge=5.0, le=50.0)
     min_soc_cold_pct: float = Field(default=20.0, ge=5.0, le=60.0)
@@ -307,6 +308,7 @@ class ConsumerConfig(BaseModel):
     stop_import_w: int = Field(default=500, ge=0, le=10000)
     requires_active: str = Field(default="", description="ID of prerequisite consumer")
     phase_count: int = Field(default=1, ge=1, le=3)
+    role: str = Field(default="", description="Special role: cold_heater, buffer, etc")
 
     @field_validator("type")
     @classmethod

@@ -1037,36 +1037,42 @@ class CarmaBoxService:
         if self._surplus_dispatch is None or self._ha_api is None:
             return
 
-        # PLAT-1541: Cold förråd → start miner (heat source)
-        forrad_bat = next(
-            (b for b in snapshot.batteries if b.battery_id == "forrad"),
+        # PLAT-1541: Cold outdoor battery → start cold_heater consumer
+        outdoor_bat = next(
+            (b for b in snapshot.batteries
+             if any(bc.id == b.battery_id and bc.is_outdoor
+                     for bc in self._config.batteries)),
             None,
         )
-        miner_cfg = next(
-            (c for c in self._consumer_configs if c.id == "miner"),
+        heater_cfg = next(
+            (c for c in self._consumer_configs if c.role == "cold_heater"),
             None,
         )
-        if forrad_bat and miner_cfg and miner_cfg.entity_switch:
-            forrad_cfg = next(
-                (b for b in self._config.batteries if b.id == "forrad"),
+        if outdoor_bat and heater_cfg and heater_cfg.entity_switch:
+            bat_cfg_outdoor = next(
+                (bc for bc in self._config.batteries
+                 if bc.id == outdoor_bat.battery_id),
                 None,
             )
-            cold_threshold = forrad_cfg.cold_temp_c if forrad_cfg else 4.0
-            if forrad_bat.cell_temp_c < cold_threshold:
-                # Cold förråd — start miner as heater
+            cold_threshold = (
+                bat_cfg_outdoor.cold_temp_c if bat_cfg_outdoor
+                else self._config.guards.g1_soc_floor.cold_floor_pct
+            )
+            if outdoor_bat.cell_temp_c < cold_threshold:
+                # Cold outdoor battery — start heater consumer
                 batch = await self._ha_api.get_states_batch(
-                    [miner_cfg.entity_switch],
+                    [heater_cfg.entity_switch],
                 )
-                miner_state = batch.get(miner_cfg.entity_switch, {})
-                if miner_state.get("state") != "on":
-                    domain = self._entity_domain(miner_cfg.entity_switch)
+                heater_state = batch.get(heater_cfg.entity_switch, {})
+                if heater_state.get("state") != "on":
+                    domain = self._entity_domain(heater_cfg.entity_switch)
                     await self._ha_api.call_service(
                         domain, "turn_on",
-                        {"entity_id": miner_cfg.entity_switch},
+                        {"entity_id": heater_cfg.entity_switch},
                     )
                     logger.info(
-                        "MINER: cold förråd (%.1f°C < %.1f°C) → started",
-                        forrad_bat.cell_temp_c, cold_threshold,
+                        "COLD HEATER: outdoor battery (%.1f°C < %.1f°C) → started",
+                        outdoor_bat.cell_temp_c, cold_threshold,
                     )
 
         # Calculate available surplus: negative grid = export
