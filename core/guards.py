@@ -620,3 +620,86 @@ class GridGuard:
         logic duplication between GridGuard and BatteryBalancer.
         """
         return effective_min_soc(bat.cell_temp_c, bat.soh_pct, self._config)
+
+
+# ---------------------------------------------------------------------------
+# ExportGuard (PLAT-1540)
+# ---------------------------------------------------------------------------
+
+# Minimum PV production required to allow grid export (kW).
+# Below this threshold the inverter export limit is engaged.
+EXPORT_MIN_PV_KW: float = 0.5
+
+# Spot price threshold below which export is limited (öre/kWh).
+# At or below 0 öre the grid is paying nothing — never export.
+EXPORT_NEGATIVE_PRICE_ORE: float = 0.0
+
+
+@dataclass(frozen=True)
+class ExportGuardResult:
+    """Result of ExportGuard.evaluate()."""
+
+    limited: bool
+    reason: str
+    commands: list[GuardCommand]
+
+
+class ExportGuard:
+    """Limits grid export when PV output is low or spot price is negative.
+
+    Emits a SET_EXPORT_LIMIT command targeting the inverter when either:
+    - PV production < EXPORT_MIN_PV_KW (not enough solar to justify export), or
+    - Spot price ≤ EXPORT_NEGATIVE_PRICE_ORE (no financial value in exporting).
+    """
+
+    _GUARD_ID: str = "EXPORT"
+
+    def evaluate(self, pv_kw: float, spot_price_ore: float) -> ExportGuardResult:
+        """Evaluate whether export should be limited.
+
+        Args:
+            pv_kw: Current PV production (kW).
+            spot_price_ore: Current spot price (öre/kWh).
+
+        Returns:
+            ExportGuardResult with limited=True and SET_EXPORT_LIMIT command
+            when export should be restricted, otherwise limited=False.
+        """
+        if pv_kw < EXPORT_MIN_PV_KW:
+            reason = (
+                f"PV {pv_kw:.2f} kW below minimum {EXPORT_MIN_PV_KW} kW — export limited"
+            )
+            return ExportGuardResult(
+                limited=True,
+                reason=reason,
+                commands=[
+                    GuardCommand(
+                        guard_id=self._GUARD_ID,
+                        command_type=CommandType.SET_EXPORT_LIMIT,
+                        target_id="all",
+                        value=0,
+                        reason=reason,
+                    )
+                ],
+            )
+
+        if spot_price_ore <= EXPORT_NEGATIVE_PRICE_ORE:
+            reason = (
+                f"Spot price {spot_price_ore:.1f} öre"
+                f" ≤ {EXPORT_NEGATIVE_PRICE_ORE:.1f} — export limited"
+            )
+            return ExportGuardResult(
+                limited=True,
+                reason=reason,
+                commands=[
+                    GuardCommand(
+                        guard_id=self._GUARD_ID,
+                        command_type=CommandType.SET_EXPORT_LIMIT,
+                        target_id="all",
+                        value=0,
+                        reason=reason,
+                    )
+                ],
+            )
+
+        return ExportGuardResult(limited=False, reason="", commands=[])

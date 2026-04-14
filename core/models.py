@@ -96,6 +96,7 @@ class CommandType(Enum):
     TURN_OFF_CONSUMER = "turn_off_consumer"
     CLIMATE_SET_TEMP = "climate_set_temp"
     CLIMATE_SET_MODE = "climate_set_mode"
+    SET_EXPORT_LIMIT = "set_export_limit"
     NO_OP = "no_op"
 
 

@@ -319,6 +319,7 @@ class TestCommandType:
             "turn_off_consumer",
             "climate_set_temp",
             "climate_set_mode",
+            "set_export_limit",
             "no_op",
         }
         actual = {ct.value for ct in CommandType}
