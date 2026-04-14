@@ -599,27 +599,27 @@ class TestPlat1357G3BreachEmitsStopEv:
         ]
         assert len(stop_ev_cmds) >= 1, "BREACH must emit STOP_EV_CHARGING"
 
-    def test_g3_breach_also_cuts_ev_current(self, guard: GridGuard) -> None:
-        """G3 BREACH emits both STOP_EV_CHARGING and SET_EV_CURRENT at 6A."""
+    def test_g3_breach_emits_battery_discharge(self, guard: GridGuard) -> None:
+        """PLAT-1571: G3 BREACH emits SET_EMS_MODE=discharge_pv per battery."""
         result = _eval(guard, weighted_avg_kw=3.1, hour=12)
 
         assert result.level == GuardLevel.BREACH
-        set_current_cmds = [
+        discharge_cmds = [
             c for c in result.commands
-            if c.command_type == CommandType.SET_EV_CURRENT
+            if c.command_type == CommandType.SET_EMS_MODE
         ]
-        assert len(set_current_cmds) >= 1
-        assert set_current_cmds[0].value == 6
+        assert len(discharge_cmds) >= 1
+        assert all(c.value == "discharge_pv" for c in discharge_cmds)
 
-    def test_g3_breach_emits_turn_off_consumer(self, guard: GridGuard) -> None:
-        """N3: G3 BREACH must shed all consumers."""
+    def test_g3_breach_does_not_shed_consumers(self, guard: GridGuard) -> None:
+        """PLAT-1571: Consumer shedding is CRITICAL-only, not BREACH."""
         result = _eval(guard, weighted_avg_kw=3.1, hour=12)
+        assert result.level == GuardLevel.BREACH
         off_cmds = [
             c for c in result.commands
             if c.command_type == CommandType.TURN_OFF_CONSUMER
         ]
-        assert len(off_cmds) >= 1
-        assert off_cmds[0].target_id == "all"
+        assert len(off_cmds) == 0, "BREACH must not shed consumers (CRITICAL-only)"
 
     def test_g3_critical_still_emits_stop_ev(self, guard: GridGuard) -> None:
         """G3 CRITICAL also emits STOP_EV_CHARGING (existing behaviour)."""
@@ -641,3 +641,100 @@ class TestPlat1357G3BreachEmitsStopEv:
             if c.command_type == CommandType.TURN_OFF_CONSUMER
         ]
         assert len(off_cmds) >= 1
+
+
+# ===========================================================================
+# PLAT-1571: G3 severity order + battery discharge commands
+# ===========================================================================
+
+
+class TestPlat1571G3SeverityAndCommands:
+    """PLAT-1571: G3 BREACH before CRITICAL in code; discharge commands added."""
+
+    # tak=3.0, emergency_factor=1.10 → critical_threshold=3.3 kW
+    _TAK: float = 3.0
+    _MODERATE_BREACH_KW: float = 3.1    # > tak, < critical_threshold
+    _SEVERE_BREACH_KW: float = 3.4      # > critical_threshold (3.3)
+    _DAY_HOUR: int = 12
+
+    def test_g3_moderate_breach_is_breach_not_critical(self, guard: GridGuard) -> None:
+        """weighted_avg=3.1, tak=3.0 → BREACH (not CRITICAL)."""
+        result = _eval(guard, weighted_avg_kw=self._MODERATE_BREACH_KW, hour=self._DAY_HOUR)
+        assert result.level == GuardLevel.BREACH
+
+    def test_g3_severe_breach_is_critical(self, guard: GridGuard) -> None:
+        """weighted_avg=3.4, tak=3.0, emergency_factor=1.10 → CRITICAL."""
+        result = _eval(guard, weighted_avg_kw=self._SEVERE_BREACH_KW, hour=self._DAY_HOUR)
+        assert result.level == GuardLevel.CRITICAL
+
+    def test_g3_breach_commands_include_discharge(self, guard: GridGuard) -> None:
+        """G3 BREACH → SET_EMS_MODE=discharge_pv is present in commands."""
+        result = _eval(guard, weighted_avg_kw=self._MODERATE_BREACH_KW, hour=self._DAY_HOUR)
+        assert result.level == GuardLevel.BREACH
+        discharge_cmds = [
+            c for c in result.commands if c.command_type == CommandType.SET_EMS_MODE
+        ]
+        assert len(discharge_cmds) >= 1
+        assert discharge_cmds[0].value == "discharge_pv"
+
+    def test_g3_breach_without_ev_still_discharges(self, guard: GridGuard) -> None:
+        """BREACH without EV → battery discharge commands emitted regardless."""
+        bat = make_battery_state()
+        result = _eval(
+            guard,
+            batteries=[bat],
+            weighted_avg_kw=self._MODERATE_BREACH_KW,
+            hour=self._DAY_HOUR,
+        )
+        assert result.level == GuardLevel.BREACH
+        discharge_cmds = [
+            c for c in result.commands if c.command_type == CommandType.SET_EMS_MODE
+        ]
+        assert len(discharge_cmds) >= 1
+
+    def test_g3_critical_commands_include_consumer_shed(self, guard: GridGuard) -> None:
+        """G3 CRITICAL → TURN_OFF_CONSUMER present in commands."""
+        result = _eval(guard, weighted_avg_kw=self._SEVERE_BREACH_KW, hour=self._DAY_HOUR)
+        assert result.level == GuardLevel.CRITICAL
+        consumer_cmds = [
+            c for c in result.commands if c.command_type == CommandType.TURN_OFF_CONSUMER
+        ]
+        assert len(consumer_cmds) >= 1
+        assert consumer_cmds[0].target_id == "all"
+
+    def test_g3_critical_commands_include_power_limit(self, guard: GridGuard) -> None:
+        """G3 CRITICAL → SET_EMS_POWER_LIMIT per battery in commands."""
+        result = _eval(guard, weighted_avg_kw=self._SEVERE_BREACH_KW, hour=self._DAY_HOUR)
+        assert result.level == GuardLevel.CRITICAL
+        limit_cmds = [
+            c for c in result.commands if c.command_type == CommandType.SET_EMS_POWER_LIMIT
+        ]
+        assert len(limit_cmds) >= 1
+
+    def test_g3_order_breach_before_critical(self) -> None:
+        """REGRESSION: BREACH-check (effective_tak) must appear before CRITICAL-check
+        (critical_threshold) in guards.py source code line order."""
+        import re
+        from pathlib import Path
+
+        source = Path("core/guards.py").read_text()
+        # Find line numbers of the BREACH and CRITICAL threshold comparisons
+        lines = source.splitlines()
+        breach_line: int | None = None
+        critical_line: int | None = None
+        in_g3 = False
+        for i, line in enumerate(lines):
+            if "_check_g3_ellevio" in line:
+                in_g3 = True
+            if in_g3:
+                if breach_line is None and re.search(r"weighted_avg_kw > effective_tak\b", line):
+                    breach_line = i
+                if breach_line is not None and critical_line is None and re.search(
+                    r"weighted_avg_kw > critical_threshold\b", line
+                ):
+                    critical_line = i
+        assert breach_line is not None, "BREACH check (> effective_tak) not found in G3"
+        assert critical_line is not None, "CRITICAL check (> critical_threshold) not found in G3"
+        assert breach_line < critical_line, (
+            f"BREACH check (line {breach_line}) must precede CRITICAL check (line {critical_line})"
+        )

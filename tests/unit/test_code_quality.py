@@ -107,21 +107,26 @@ class TestNoHardcodedFloors:
 
 
 class TestG3CheckOrder:
-    """G3 Ellevio: CRITICAL threshold (>tak*1.10) must be checked BEFORE
-    BREACH (>tak). Otherwise CRITICAL is dead code.
-    Reject history: Story 04 BUG-G3-01."""
+    """G3 Ellevio: BREACH threshold (>tak) is the outer check; CRITICAL
+    (>tak*1.10) is nested inside it.
+    PLAT-1571: corrected severity order — moderate overload → BREACH, not CRITICAL.
+    Old rule (CRITICAL before BREACH as flat elif) superseded by nested structure."""
 
-    def test_critical_before_breach_in_guards(self) -> None:
+    def test_breach_outer_critical_nested_in_guards(self) -> None:
+        """PLAT-1571: BREACH check (effective_tak) is the outer if;
+        CRITICAL check (critical_threshold) is nested inside it."""
         guards_file = PROJECT_ROOT / "core" / "guards.py"
         content = guards_file.read_text()
 
-        # In the elif chain, critical check should come FIRST
-        critical_if = content.find("weighted_avg_kw > critical_threshold")
+        # Outer BREACH check must appear before the nested CRITICAL check
         breach_if = content.find("weighted_avg_kw > effective_tak")
+        critical_if = content.find("weighted_avg_kw > critical_threshold")
 
-        assert critical_if < breach_if, (
-            "G3 check order wrong: critical_threshold must be checked "
-            "BEFORE effective_tak (otherwise CRITICAL is dead code)"
+        assert breach_if != -1, "BREACH check (> effective_tak) not found in guards.py"
+        assert critical_if != -1, "CRITICAL check (> critical_threshold) not found in guards.py"
+        assert breach_if < critical_if, (
+            "G3 check order wrong: effective_tak (BREACH) must be the outer check "
+            "and appear before critical_threshold (CRITICAL) in source"
         )
 
 
