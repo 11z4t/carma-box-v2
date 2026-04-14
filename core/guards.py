@@ -703,3 +703,81 @@ class ExportGuard:
             )
 
         return ExportGuardResult(limited=False, reason="", commands=[])
+
+
+# ---------------------------------------------------------------------------
+# GuardPolicy (PLAT-1560)
+# ---------------------------------------------------------------------------
+
+
+class GuardPolicy:
+    """Runs all guards in priority order and returns a composed GuardEvaluation.
+
+    Priority:
+      1. GridGuard (G0–G7) — safety-critical VETO layer
+      2. ExportGuard — export limit based on PV / spot price
+
+    ExportGuard commands are merged into the GridGuard evaluation so callers
+    receive a single GuardEvaluation with all commands and the highest level.
+    """
+
+    def __init__(self, grid_guard: GridGuard, export_guard: ExportGuard) -> None:
+        self._grid_guard = grid_guard
+        self._export_guard = export_guard
+
+    def evaluate(
+        self,
+        batteries: list[BatteryState],
+        current_scenario: Scenario,
+        weighted_avg_kw: float,
+        hour: int,
+        ha_connected: bool,
+        pv_kw: float,
+        spot_price_ore: float,
+        data_age_s: float = 0.0,
+        stale_entities: Optional[list[str]] = None,
+        appliance_kw: float = 0.0,
+    ) -> GuardEvaluation:
+        """Evaluate all guards and return a composed GuardEvaluation.
+
+        Args:
+            batteries: Current battery states.
+            current_scenario: Active scenario from the state machine.
+            weighted_avg_kw: Ellevio weighted average grid import (kW).
+            hour: Current hour (0–23) used for night-weight calculation.
+            ha_connected: Whether Home Assistant connection is healthy.
+            pv_kw: Current PV production (kW) for ExportGuard.
+            spot_price_ore: Current spot price (öre/kWh) for ExportGuard.
+            data_age_s: Age of sensor data in seconds (G6 stale-data guard).
+            stale_entities: List of stale entity IDs (G6).
+            appliance_kw: Active appliance load subtracted from headroom.
+
+        Returns:
+            GuardEvaluation with merged commands from all guards and the
+            highest level encountered across all evaluations.
+        """
+        # Phase 1: safety guards G0–G7 (highest priority)
+        result = self._grid_guard.evaluate(
+            batteries=batteries,
+            current_scenario=current_scenario,
+            weighted_avg_kw=weighted_avg_kw,
+            hour=hour,
+            ha_connected=ha_connected,
+            data_age_s=data_age_s,
+            stale_entities=stale_entities,
+            appliance_kw=appliance_kw,
+        )
+
+        # Phase 2: export guard (lower priority — appended, not replacing)
+        export_result = self._export_guard.evaluate(
+            pv_kw=pv_kw,
+            spot_price_ore=spot_price_ore,
+        )
+        if export_result.limited:
+            result.commands.extend(export_result.commands)
+            result.violations.append(export_result.reason)
+            # Escalate to WARNING minimum if export guard triggers
+            if result.level == GuardLevel.OK:
+                result.level = GuardLevel.WARNING
+
+        return result
