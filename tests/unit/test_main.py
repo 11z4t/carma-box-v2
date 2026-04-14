@@ -393,8 +393,8 @@ class TestDashboardWriteBack:
 
         await service._write_dashboard_state(snap, cycle_result)
 
-        # set_state called 3 times: scenario, decision, rules
-        assert mock_api.set_state.call_count == 3
+        # set_state called 4 times: scenario, decision, rules, ellevio
+        assert mock_api.set_state.call_count == 4
         # set_input_text called 3 times: today, tomorrow, day3
         assert mock_api.set_input_text.call_count == 3
 

@@ -15,7 +15,6 @@ Night hours (22-06) weighted at 0.5x.
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -196,17 +195,17 @@ class EllevioTracker:
 
     def from_dict(self, data: dict[str, object]) -> None:
         """Restore state from persistence."""
+        month_val = data.get("month", 0)
+        year_val = data.get("year", 0)
+        peaks_val = data.get("top_peaks", [])
+        hours_val = data.get("hours_total", 0)
+        under_val = data.get("hours_under_target", 0)
+        last_val = data.get("last_hourly_kw", 0.0)
         self.state = EllevioState(
-            month=int(data.get("month", 0)),  # type: ignore[arg-type]
-            year=int(data.get("year", 0)),  # type: ignore[arg-type]
-            top_peaks=[
-                float(x) for x in data.get("top_peaks", [])  # type: ignore[union-attr]
-            ],
-            hours_total=int(data.get("hours_total", 0)),  # type: ignore[arg-type]
-            hours_under_target=int(
-                data.get("hours_under_target", 0),  # type: ignore[arg-type]
-            ),
-            last_hourly_kw=float(
-                data.get("last_hourly_kw", 0.0),  # type: ignore[arg-type]
-            ),
+            month=int(str(month_val)),
+            year=int(str(year_val)),
+            top_peaks=[float(str(x)) for x in (peaks_val if isinstance(peaks_val, list) else [])],
+            hours_total=int(str(hours_val)),
+            hours_under_target=int(str(under_val)),
+            last_hourly_kw=float(str(last_val)),
         )

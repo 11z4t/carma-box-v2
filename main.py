@@ -43,6 +43,7 @@ from core.models import (
     Scenario,
     SystemSnapshot,
 )
+from core.ellevio import EllevioConfig, EllevioTracker
 from core.ev_controller import EVAction, EVController, EVControllerConfig
 from core.surplus_dispatch import SurplusConfig as SurplusDispatchConfig, SurplusDispatch
 from health import HealthStatus, Metrics
@@ -124,6 +125,7 @@ class CarmaBoxService:
         else:
             self._engine: Optional[ControlEngine] = None
             self._surplus_dispatch: Optional[SurplusDispatch] = None
+            self._ellevio: Optional[EllevioTracker] = None
             self._ev_controller: Optional[EVController] = None
             self._consumer_configs = config.consumers
 
@@ -186,6 +188,15 @@ class CarmaBoxService:
             ),
             ha_api=ha_api,
         )
+
+        # Ellevio peak tracker
+        self._ellevio = EllevioTracker(EllevioConfig(
+            tak_kw=config.grid.ellevio.tak_kw,
+            night_weight=config.grid.ellevio.night_weight,
+            day_weight=config.grid.ellevio.day_weight,
+            night_start_h=config.grid.ellevio.night_start_hour,
+            night_end_h=config.grid.ellevio.night_end_hour,
+        ))
 
         # EV controller
         self._ev_controller = EVController(EVControllerConfig(
@@ -295,7 +306,12 @@ class CarmaBoxService:
             logger.warning("Cycle %d: failed to collect snapshot", self._cycle_count)
             return
 
-        # Phase 1.5: MANUAL OVERRIDE — read HA helpers, set on state machine
+        # Phase 1.5: ELLEVIO TRACKING — update weighted hourly average
+        if self._ellevio:
+            grid_kw = snapshot.grid.grid_power_w / 1000.0
+            self._ellevio.update(grid_kw, snapshot.timestamp)
+
+        # Phase 1.6: MANUAL OVERRIDE — read HA helpers, set on state machine
         await self._apply_manual_override()
 
         # Phases 2-6: delegated to ControlEngine
@@ -817,6 +833,23 @@ class CarmaBoxService:
         await self._ha_api.set_input_text(
             dash.entity_plan_day3, "",
         )
+
+        # Ellevio sensor — write peak tracking data
+        if self._ellevio:
+            ellevio_attrs: dict[str, object] = {
+                "friendly_name": "Ellevio Peak Tracker",
+                "top_peaks": self._ellevio.state.top_peaks,
+                "top_n_avg_kw": round(self._ellevio.state.top_n_avg, 2),
+                "hit_rate_pct": round(self._ellevio.state.hit_rate_pct, 1),
+                "hours_total": self._ellevio.state.hours_total,
+                "last_hourly_kw": round(self._ellevio.state.last_hourly_kw, 2),
+                "monthly_cost_kr": round(self._ellevio.state.monthly_cost_kr, 0),
+            }
+            await self._ha_api.set_state(
+                "sensor.carma_box_ellevio",
+                f"{self._ellevio.current_weighted_avg_kw:.2f}",
+                ellevio_attrs,
+            )
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
