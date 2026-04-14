@@ -22,10 +22,10 @@ import sys
 import zoneinfo
 
 import aiohttp.web
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from adapters.goodwe import GoodWeAdapter
 from adapters.ha_api import HAApiClient
@@ -34,7 +34,8 @@ from core.balancer import BalancerConfig, BatteryBalancer
 from storage.local_db import CycleLogEntry, LocalDB
 from core.engine import ControlEngine, CycleResult
 from core.executor import CommandExecutor, ExecutorConfig
-from core.guards import GridGuard, GuardConfig
+from core.guards import ExportGuard, GridGuard, GuardConfig, GuardPolicy
+from core.plan_executor import PlanExecutor
 from core.mode_change import ModeChangeConfig, ModeChangeManager
 from core.models import (
     MAX_SOC_PCT,
@@ -123,6 +124,8 @@ class CarmaBoxService:
 
         # HA API client (None in dry-run/test mode)
         self._ha_api = ha_api
+        self._last_plan_hour: int = -1
+        self._last_pv_tomorrow: float = -1.0
 
         # Create components only when HA API is available
         if ha_api is not None:
@@ -136,6 +139,15 @@ class CarmaBoxService:
             self._ellevio: Optional[EllevioTracker] = None
             self._ev_controller: Optional[EVController] = None
             self._consumer_configs = config.consumers
+            # Dry-run: create PlanExecutor with minimal deps for generate_48h
+            _dry_planner = Planner(PlannerConfig())
+            _dry_guard = GuardPolicy(GridGuard(GuardConfig()), ExportGuard())
+            self._plan_executor = PlanExecutor(
+                planner=_dry_planner,
+                ha_api=None,
+                config=config,
+                guard_policy=_dry_guard,
+            )
 
         logger.info(
             "CarmaBoxService initialized for site '%s' (cycle=%ds, live=%s)",
@@ -172,7 +184,8 @@ class CarmaBoxService:
             ha_health_timeout_s=g.g7_communication_lost.ha_health_timeout_s,
         )
 
-        guard = GridGuard(guard_cfg)
+        grid_guard = GridGuard(guard_cfg)
+        guard_policy = GuardPolicy(grid_guard, ExportGuard())
         sm = StateMachine(StateMachineConfig(
             start_scenario=Scenario[config.control.start_scenario],
             min_dwell_s=config.control.scenario_transition_s,
@@ -200,9 +213,6 @@ class CarmaBoxService:
         # Slack notifier
         self._slack = SlackNotifier()
         self._last_scenario: Optional[str] = None
-        self._active_night_plan: Optional[Any] = None
-        self._active_evening_plan: Optional[Any] = None
-        self._last_pv_tomorrow: float = -1.0
 
         # Local DB
         db_path = config.storage.sqlite.path
@@ -218,7 +228,12 @@ class CarmaBoxService:
             grid_charge_max_soc_pct=config.night_plan.grid_charge_max_soc_pct,
             grid_charge_price_threshold_ore=config.night_plan.grid_charge_price_threshold_ore,
         ))
-        self._last_plan_hour: int = -1
+        self._plan_executor = PlanExecutor(
+            planner=self._planner,
+            ha_api=ha_api,
+            config=config,
+            guard_policy=guard_policy,
+        )
 
         # Ellevio peak tracker
         self._ellevio = EllevioTracker(EllevioConfig(
@@ -252,7 +267,7 @@ class CarmaBoxService:
         battery_cfg_map = {bc.id: bc for bc in config.batteries}
 
         self._engine = ControlEngine(
-            guard, sm, balancer, mode_mgr, executor,
+            grid_guard, sm, balancer, mode_mgr, executor,
             battery_configs=battery_cfg_map,
         )
 
@@ -371,7 +386,7 @@ class CarmaBoxService:
         )
         if self._planner and (scheduled or pv_changed):
             self._last_plan_hour = snapshot.hour
-            await self._generate_plan(snapshot)
+            await self._plan_executor.generate(snapshot)
 
         # Phase 1.5: ELLEVIO TRACKING — update weighted hourly average
         if self._ellevio:
@@ -706,7 +721,7 @@ class CarmaBoxService:
             return
 
         hour = snapshot.hour
-        plan = self._active_night_plan
+        plan = self._plan_executor.active_night_plan
 
         if plan and snapshot.is_night:
             # EV charging per plan
@@ -752,7 +767,7 @@ class CarmaBoxService:
 
         # Clear night plan at morning
         if plan and not snapshot.is_night and hour >= 6:
-            self._active_night_plan = None
+            self._plan_executor.active_night_plan = None
             logger.info("PLAN: night plan cleared (morning)")
 
     async def _evaluate_ev(self, snapshot: SystemSnapshot) -> None:
@@ -846,196 +861,6 @@ class CarmaBoxService:
                 {"entity_id": ev_cfg.entities.enabled},
             )
             logger.warning("EV EMERGENCY CUT: %s", result.reason)
-
-    def _generate_48h_plan(
-        self, snapshot: SystemSnapshot, current_hour: int,
-    ) -> tuple[str, str]:
-        """Generate 48h plan split by day.
-
-        Returns (today_plan, tomorrow_plan) as pipe-separated strings.
-        Format per hour: HH:action:SoC%
-        """
-        cfg = self._config
-        planner_cfg = self._planner._config if self._planner else PlannerConfig()
-        bat_soc = snapshot.total_battery_soc_pct
-        bat_cap = sum(b.cap_kwh for b in snapshot.batteries) or 1.0
-        ev_soc = snapshot.ev.soc_pct
-        pv_today = snapshot.grid.pv_forecast_today_kwh
-        pv_tomorrow = snapshot.grid.pv_forecast_tomorrow_kwh
-        night_start = cfg.grid.ellevio.night_start_hour
-        night_end = cfg.grid.ellevio.night_end_hour
-        ev_target = cfg.ev.daily_target_soc_pct
-        min_soc = cfg.guards.g1_soc_floor.floor_pct
-        grid_max_soc = cfg.night_plan.grid_charge_max_soc_pct
-        pc = planner_cfg
-        pv_high_kwh = pc.pv_high_threshold_kwh
-        evening_start_h = night_start - pc.evening_offset_h
-
-        # Plan simulation constants — all from PlannerConfig
-        ev_night_pct_h = pc.ev_night_charge_pct_per_h
-        ev_weekend_pct_h = pc.ev_weekend_charge_pct_per_h
-        grid_charge_pct_h = pc.grid_charge_pct_per_h
-        discharge_pct_h = pc.discharge_pct_per_h
-        ev_daily_drop = pc.ev_daily_usage_drop_pct
-        daylight_start = pc.daylight_start_hour
-        daylight_end = pc.daylight_end_hour
-        daylight_hours = max(daylight_end - daylight_start, 1)
-        pv_charge_min_kwh = pc.pv_min_kwh_per_h
-        weekend_ev_start = pc.night_end_hour
-        weekend_ev_end = pc.weekend_ev_end_hour
-
-        today_hours: list[str] = []
-        tomorrow_hours: list[str] = []
-        soc = bat_soc
-        ev = ev_soc
-        today_date = datetime.now(
-            tz=zoneinfo.ZoneInfo(cfg.site.timezone),
-        ).date()
-
-        for offset in range(48):
-            h = (current_hour + offset) % 24
-            day_offset = offset // 24
-            is_night = h >= night_start or h < night_end
-
-            # PV per hour
-            pv_h = 0.0
-            if daylight_start <= h <= daylight_end:
-                pv_src = pv_today if day_offset == 0 else pv_tomorrow
-                pv_h = pv_src / max(daylight_hours, 1)
-
-            # Reset EV at night_start day 2
-            if h == night_start and day_offset >= 1:
-                ev = ev_target - ev_daily_drop
-
-            # Weekend + high PV: EV fm prio
-            plan_date = today_date + timedelta(days=day_offset)
-            is_weekend = plan_date.weekday() >= 5
-            day_pv = pv_today if day_offset == 0 else pv_tomorrow
-            if (
-                is_weekend
-                and day_pv > pv_high_kwh
-                and weekend_ev_start <= h < weekend_ev_end
-                and ev < ev_target
-            ):
-                action = "EV"
-                ev = min(ev + ev_weekend_pct_h, ev_target)
-            elif is_night and ev < MAX_SOC_PCT:
-                action = "EV"
-                ev = min(ev + ev_night_pct_h, MAX_SOC_PCT)
-            elif is_night and soc < grid_max_soc:
-                action = "GRD"
-                soc = min(soc + grid_charge_pct_h, grid_max_soc)
-            elif pv_h > pv_charge_min_kwh and soc < MAX_SOC_PCT:
-                action = "CHG"
-                soc = min(soc + pv_h / bat_cap * MAX_SOC_PCT, MAX_SOC_PCT)
-            elif evening_start_h <= h < night_start and soc > min_soc:
-                action = "DIS"
-                soc = max(soc - discharge_pct_h, min_soc)
-            else:
-                action = "STB"
-
-            entry = f"{h:02d}:{action}:{soc:.0f}%"
-            if day_offset == 0:
-                today_hours.append(entry)
-            else:
-                tomorrow_hours.append(entry)
-
-        return "|".join(today_hours), "|".join(tomorrow_hours)
-
-    async def _generate_plan(self, snapshot: SystemSnapshot) -> None:
-        """Generate energy plan at key hours (06/12/17/22)."""
-        if self._planner is None or self._ha_api is None:
-            return
-
-        hour = snapshot.hour
-        pc = self._planner._config
-        night_h = pc.night_start_hour
-        morning_h = pc.night_end_hour
-        evening_h = night_h - pc.evening_offset_h
-        midday_h = pc.daylight_end_hour  # 12 from daylight config
-
-        bat_soc = snapshot.total_battery_soc_pct
-        bat_cap = sum(b.cap_kwh for b in snapshot.batteries)
-        ev = snapshot.ev
-        pv_tomorrow = snapshot.grid.pv_forecast_tomorrow_kwh
-
-        try:
-            if hour == night_h:
-                # Night plan: EV + bat charging strategy
-                plan = self._planner.generate_night_plan(
-                    bat_soc_pct=bat_soc,
-                    bat_cap_kwh=bat_cap,
-                    ev_connected=ev.connected,
-                    ev_soc_pct=ev.soc_pct,
-                    pv_tomorrow_kwh=pv_tomorrow,
-                    prices_by_hour={},
-                )
-                plan_text = (
-                    f"Night: EV {plan.ev_charge_need_kwh:.0f}kWh "
-                    f"({plan.ev_start_hour}-{plan.ev_stop_hour}h {plan.ev_amps}A) "
-                    f"Bat {plan.bat_charge_need_kwh:.0f}kWh "
-                    f"({plan.bat_charge_start_hour}-{plan.bat_charge_stop_hour}h) "
-                    f"{'skip EV: '+plan.ev_skip_reason if plan.ev_skip else ''}"
-                )
-                logger.info("PLAN 22:00 — %s", plan_text)
-                self._active_night_plan = plan
-
-            elif hour == evening_h:
-                # Evening plan: how much bat to use
-                eve_plan = self._planner.generate_evening_plan(
-                    bat_soc_pct=bat_soc,
-                    bat_cap_kwh=bat_cap,
-                    ev_connected=ev.connected,
-                    ev_soc_pct=ev.soc_pct,
-                )
-                plan_text = (
-                    f"Evening: alloc {eve_plan.evening_allocation_kwh:.1f}kWh "
-                    f"floor {eve_plan.evening_floor_soc_pct:.0f}%"
-                )
-                logger.info("PLAN 17:00 — %s", plan_text)
-                self._active_evening_plan = eve_plan
-
-            elif hour == morning_h:
-                # Morning review: what happened overnight
-                plan_text = (
-                    f"Morning: bat {bat_soc:.0f}% "
-                    f"EV {ev.soc_pct:.0f}% "
-                    f"PV today {snapshot.grid.pv_forecast_today_kwh:.0f}kWh"
-                )
-                logger.info("PLAN 06:00 — %s", plan_text)
-
-            elif hour == midday_h:
-                # Midday review: forenoon results
-                plan_text = (
-                    f"Midday: bat {bat_soc:.0f}% "
-                    f"PV remaining {snapshot.grid.pv_forecast_today_kwh:.0f}kWh "
-                    f"tomorrow {pv_tomorrow:.0f}kWh"
-                )
-                logger.info("PLAN 12:00 — %s", plan_text)
-            else:
-                return
-
-            # Generate 48h hourly plan at 22:00 and 06:00
-            if hour in (night_h, morning_h):
-                today_plan, tomorrow_plan = self._generate_48h_plan(
-                    snapshot, hour,
-                )
-                dash = self._config.dashboard
-                await self._ha_api.set_input_text(
-                    dash.entity_plan_today, today_plan,
-                )
-                await self._ha_api.set_input_text(
-                    dash.entity_plan_tomorrow, tomorrow_plan,
-                )
-
-            # Write summary to HA
-            dash = self._config.dashboard
-            if hour in (night_h, evening_h):
-                await self._ha_api.set_input_text(
-                    dash.entity_plan_today, plan_text,
-                )
-        except Exception as exc:
-            logger.error("Plan generation failed at %d:00: %s", hour, exc)
 
     async def _apply_manual_override(self) -> None:
         """Read manual override helpers from HA and apply to state machine."""
