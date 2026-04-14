@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # H5: Cache TTL — one fetch per control cycle (30 s interval).
 # All adapters sharing the client will reuse this within the same cycle.
 _DEFAULT_BATCH_CACHE_TTL_S: float = 25.0
+_DEFAULT_INPUT_TEXT_MAX_LEN: int = 255
 
 
 class HAApiClient:
@@ -45,7 +46,9 @@ class HAApiClient:
         self._batch_cache_ttl_s = getattr(
             config, "batch_cache_ttl_s", _DEFAULT_BATCH_CACHE_TTL_S,
         )
-        self._input_text_max_len = getattr(config, "input_text_max_len", 255)
+        self._input_text_max_len = getattr(
+            config, "input_text_max_len", _DEFAULT_INPUT_TEXT_MAX_LEN,
+        )
         self._session: Optional[aiohttp.ClientSession] = None
 
         # Resolve token from environment

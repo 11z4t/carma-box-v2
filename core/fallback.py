@@ -22,6 +22,8 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_SOC_FALLBACK_PCT: float = 50.0
+
 
 @unique
 class FallbackTrigger(Enum):
@@ -120,4 +122,4 @@ def resolve_soc_fallback(
         FallbackTrigger.INVALID_SOC,
         f"raw={raw_soc}, last_known stale ({age_s:.0f}s), defaulting to 50%",
     )
-    return 50.0, event
+    return DEFAULT_SOC_FALLBACK_PCT, event

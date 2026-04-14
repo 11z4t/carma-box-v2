@@ -18,6 +18,8 @@ from typing import Any
 # Defaults — overridden by SavingsConfig in production
 DEFAULT_COST_PER_KW: float = 81.25
 DEFAULT_TOP_N: int = 3
+MAX_SAVINGS_HISTORY_DAYS: int = 30
+MAX_PRICE_HISTORY_ENTRIES: int = 2000
 
 
 @dataclass
@@ -223,8 +225,8 @@ def record_daily_snapshot(
             return
     state.daily_savings.append(entry)
     # Keep max 30 days
-    if len(state.daily_savings) > 30:
-        state.daily_savings = state.daily_savings[-30:]
+    if len(state.daily_savings) > MAX_SAVINGS_HISTORY_DAYS:
+        state.daily_savings = state.daily_savings[-MAX_SAVINGS_HISTORY_DAYS:]
 
 
 def record_cost_estimate(
@@ -359,7 +361,7 @@ def state_to_dict(state: SavingsState) -> dict[str, object]:
         "charge_from_grid_cost_ore": state.charge_from_grid_cost_ore,
         "discharge_offset_kwh": state.discharge_offset_kwh,
         "discharge_offset_value_ore": state.discharge_offset_value_ore,
-        "grid_charge_prices": list(state.grid_charge_prices[-2000:]),
+        "grid_charge_prices": list(state.grid_charge_prices[-MAX_PRICE_HISTORY_ENTRIES:]),
     }
 
 
