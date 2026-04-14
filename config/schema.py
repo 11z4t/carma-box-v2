@@ -415,6 +415,9 @@ class ControlConfig(BaseModel):
     standby_intermediate_s: int = Field(default=300, ge=30, le=900)
     scenario_transition_s: int = Field(default=300, ge=30, le=900)
     measurement_stale_s: int = Field(default=300, ge=30, le=900)
+    mode_change_clear_wait_s: int = Field(default=60, ge=5, le=300)
+    mode_change_set_wait_s: int = Field(default=60, ge=5, le=300)
+    mode_change_verify_wait_s: int = Field(default=30, ge=5, le=300)
     start_scenario: str = Field(
         default="MIDDAY_CHARGE",
         description="Scenario to enter at startup before first evaluation cycle.",

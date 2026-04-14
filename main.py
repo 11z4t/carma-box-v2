@@ -165,10 +165,10 @@ class CarmaBoxService:
             freeze_floor_pct=guard_cfg.freeze_floor_pct,
         ))
         mode_mgr = ModeChangeManager(ModeChangeConfig(
-            clear_wait_s=60.0,
+            clear_wait_s=float(config.control.mode_change_clear_wait_s),
             standby_wait_s=config.control.standby_intermediate_s,
-            set_wait_s=60.0,
-            verify_wait_s=30.0,
+            set_wait_s=float(config.control.mode_change_set_wait_s),
+            verify_wait_s=float(config.control.mode_change_verify_wait_s),
         ))
         executor = CommandExecutor(
             inverters=dict(inverters),
