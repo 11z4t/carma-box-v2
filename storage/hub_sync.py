@@ -11,25 +11,36 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 from storage.local_db import LocalDB
 
 logger = logging.getLogger(__name__)
 
+# Sentinel indicating "not configured" — distinguishes intentional empty
+# string from a missing required field.
+_NOT_SET: None = None
+
 
 @dataclass(frozen=True)
 class HubSyncConfig:
-    """Hub sync configuration — from site.yaml."""
+    """Hub sync configuration — from site.yaml.
+
+    Required fields have no default (site_id, database) to prevent
+    accidental use of production values in test or staging environments.
+    Pass explicit values for every deployment.
+    """
 
     host: str = ""
     port: int = 5432
-    database: str = "energy"
+    # No default — must be set explicitly per deployment (no "energy" default)
+    database: Optional[str] = _NOT_SET
     user_env: str = "CARMA_PG_USER"
     password_env: str = "CARMA_PG_PASS"
     sync_interval_s: int = 300
     batch_size: int = 1000
-    site_id: str = ""
+    # No default — must be set explicitly per site (no empty-string default)
+    site_id: Optional[str] = _NOT_SET
 
 
 class HubSync:
@@ -51,6 +62,18 @@ class HubSync:
         local_db: LocalDB,
         dry_run: bool = True,
     ) -> None:
+        # Validate required fields when a real connection is configured
+        if config.host:
+            if not config.site_id:
+                raise ValueError(
+                    "HubSyncConfig.site_id must be set to a non-empty string "
+                    "when host is configured. Got: None or empty."
+                )
+            if not config.database:
+                raise ValueError(
+                    "HubSyncConfig.database must be set to a non-empty string "
+                    "when host is configured. Got: None or empty."
+                )
         self._config = config
         self._local_db = local_db
         self._dry_run = dry_run
@@ -117,7 +140,7 @@ class HubSync:
         Adds site_id and removes synced flag.
         """
         result = dict(row)
-        result["site_id"] = self._config.site_id
+        result["site_id"] = self._config.site_id or ""
         result.pop("synced", None)
         result.pop("id", None)
         return result

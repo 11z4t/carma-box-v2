@@ -3,6 +3,7 @@
 Covers:
 - Transform row adds site_id, removes synced/id
 - Sync marks rows as synced
+- PLAT-1565: ValueError when host set but site_id or database missing
 - Empty table returns 0
 - Sync error caught gracefully
 """
@@ -62,7 +63,7 @@ class TestSyncTable:
 
     def test_dry_run_does_not_mark_rows_synced(self, db: LocalDB) -> None:
         """PLAT-1353: dry_run=True (default) must NOT mark rows as synced."""
-        sync = HubSync(HubSyncConfig(), db, dry_run=True)
+        sync = HubSync(HubSyncConfig(site_id="test-site"), db, dry_run=True)
         _run(db.write_cycle(CycleLogEntry(
             cycle_id="c1", timestamp="2026-04-12T22:00:00",
             scenario="MIDDAY_CHARGE", guard_level="ok",
@@ -77,7 +78,7 @@ class TestSyncTable:
 
     def test_non_dry_run_marks_rows_synced(self, db: LocalDB) -> None:
         """PLAT-1353: dry_run=False marks rows synced after 'insert'."""
-        sync = HubSync(HubSyncConfig(), db, dry_run=False)
+        sync = HubSync(HubSyncConfig(site_id="test-site"), db, dry_run=False)
         _run(db.write_cycle(CycleLogEntry(
             cycle_id="c1", timestamp="2026-04-12T22:00:00",
             scenario="MIDDAY_CHARGE", guard_level="ok",
@@ -107,7 +108,7 @@ class TestSyncAll:
 
     def test_sync_returns_counts_when_live(self, db: LocalDB) -> None:
         """Non-dry-run mode returns actual row counts."""
-        sync = HubSync(HubSyncConfig(), db, dry_run=False)
+        sync = HubSync(HubSyncConfig(site_id="test-site"), db, dry_run=False)
         _run(db.write_cycle(CycleLogEntry(
             cycle_id="c1", timestamp="2026-04-12T22:00:00",
             scenario="MIDDAY_CHARGE", guard_level="ok",
@@ -119,7 +120,7 @@ class TestSyncAll:
 
     def test_sync_error_caught(self, db: LocalDB) -> None:
         """Sync error on a table should not crash, returns 0 for that table."""
-        sync = HubSync(HubSyncConfig(), db, dry_run=False)
+        sync = HubSync(HubSyncConfig(site_id="test-site"), db, dry_run=False)
         # Monkey-patch to simulate error
         original = sync._sync_table
 
@@ -131,3 +132,45 @@ class TestSyncAll:
         sync._sync_table = failing_sync  # type: ignore[method-assign]
         results = _run(sync.sync())
         assert results["event_log"] == 0  # Error caught
+
+
+# ===========================================================================
+# PLAT-1565: Validation — no production defaults
+# ===========================================================================
+
+
+class TestHubSyncConfigValidation:
+    """HubSyncConfig raises ValueError when host is set but required fields missing."""
+
+    # A non-empty host triggers the validation check
+    _HOST: str = "db.example.com"
+    _SITE_ID: str = "site-test"
+    _DATABASE: str = "energy_test"
+
+    def test_missing_site_id_raises_value_error(self, db: LocalDB) -> None:
+        """PLAT-1565: ValueError when host is set but site_id is None."""
+        cfg = HubSyncConfig(host=self._HOST, database=self._DATABASE)
+        with pytest.raises(ValueError, match="site_id"):
+            HubSync(cfg, db)
+
+    def test_missing_database_raises_value_error(self, db: LocalDB) -> None:
+        """PLAT-1565: ValueError when host is set but database is None."""
+        cfg = HubSyncConfig(host=self._HOST, site_id=self._SITE_ID)
+        with pytest.raises(ValueError, match="database"):
+            HubSync(cfg, db)
+
+    def test_valid_config_does_not_raise(self, db: LocalDB) -> None:
+        """All required fields set → no ValueError."""
+        cfg = HubSyncConfig(
+            host=self._HOST,
+            site_id=self._SITE_ID,
+            database=self._DATABASE,
+        )
+        sync = HubSync(cfg, db)
+        assert sync is not None
+
+    def test_no_host_skips_validation(self, db: LocalDB) -> None:
+        """No host (dry-run config) → validation skipped even without site_id."""
+        cfg = HubSyncConfig()  # No host, no site_id, no database
+        sync = HubSync(cfg, db)  # Must not raise
+        assert sync is not None
