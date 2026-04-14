@@ -19,6 +19,8 @@ import asyncio
 import logging
 import signal
 import sys
+
+import aiohttp.web
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -42,6 +44,7 @@ from core.models import (
     SystemSnapshot,
 )
 from core.surplus_dispatch import SurplusConfig as SurplusDispatchConfig, SurplusDispatch
+from health import HealthStatus, Metrics
 from core.state_machine import StateMachine, StateMachineConfig
 
 __version__ = "2.0.0"
@@ -107,6 +110,8 @@ class CarmaBoxService:
         self._running = False
         self._cycle_count = 0
         self._last_cycle: Optional[datetime] = None
+        self._health = HealthStatus(version=__version__)
+        self._metrics = Metrics()
 
         # HA API client (None in dry-run/test mode)
         self._ha_api = ha_api
@@ -218,7 +223,16 @@ class CarmaBoxService:
         """
         self._running = True
         cycle_s = self._config.control.cycle_interval_s
-        logger.info("Starting main loop (cycle=%ds)", cycle_s)
+        health_port = self._config.health.port
+        logger.info(
+            "Starting main loop (cycle=%ds, health=:%d)",
+            cycle_s, health_port,
+        )
+
+        # Start health HTTP server
+        health_task = asyncio.create_task(
+            self._start_health_server(health_port),
+        )
 
         try:
             while self._running:
@@ -228,6 +242,7 @@ class CarmaBoxService:
             logger.info("Main loop cancelled")
         finally:
             self._running = False
+            health_task.cancel()
             logger.info(
                 "Main loop stopped after %d cycles", self._cycle_count
             )
@@ -299,6 +314,18 @@ class CarmaBoxService:
                 cycle_result.cycle_id, self._cycle_count, cycle_result.error,
             )
 
+        # Update health + metrics
+        self._health.scenario = cycle_result.scenario.value
+        self._health.cycle_count = self._cycle_count
+        self._health.last_cycle_s = cycle_result.elapsed_s
+        self._health.ha_connected = ha_connected
+        self._health.guard_level = (
+            cycle_result.guard.level.value if cycle_result.guard else "ok"
+        )
+        self._metrics.increment_cycle()
+        if cycle_result.guard and cycle_result.guard.commands:
+            self._metrics.increment_guard_trigger()
+
         logger.info(
             "[%s] Cycle %d complete in %.0fms (scenario=%s, guard=%s)",
             cycle_result.cycle_id,
@@ -306,6 +333,37 @@ class CarmaBoxService:
             cycle_result.elapsed_s * 1000,
             cycle_result.scenario.value,
             cycle_result.guard.level.value if cycle_result.guard else "n/a",
+        )
+
+    async def _start_health_server(self, port: int) -> None:
+        """Start aiohttp health endpoint server."""
+        app = aiohttp.web.Application()
+        app.router.add_get("/health", self._handle_health)
+        app.router.add_get("/metrics", self._handle_metrics)
+        runner = aiohttp.web.AppRunner(app)
+        await runner.setup()
+        site = aiohttp.web.TCPSite(runner, "0.0.0.0", port)
+        try:
+            await site.start()
+            logger.info("Health server started on :%d", port)
+            await asyncio.Event().wait()  # Run until cancelled
+        except asyncio.CancelledError:
+            await runner.cleanup()
+
+    async def _handle_health(
+        self, request: aiohttp.web.Request,
+    ) -> aiohttp.web.Response:
+        return aiohttp.web.Response(
+            text=self._health.to_json(),
+            content_type="application/json",
+        )
+
+    async def _handle_metrics(
+        self, request: aiohttp.web.Request,
+    ) -> aiohttp.web.Response:
+        return aiohttp.web.Response(
+            text=self._metrics.to_prometheus(),
+            content_type="text/plain",
         )
 
     async def _collect_snapshot(self, ha_connected: bool) -> Optional[SystemSnapshot]:
