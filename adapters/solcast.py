@@ -36,6 +36,8 @@ class P10SafetyConfig:
     conservative_kw: float = 0.5
     moderate_kw: float = 1.0
     normal_kw: float = 2.0
+    p10_factor: float = 0.7   # Fallback: p10 = estimate * factor
+    p90_factor: float = 1.3   # Fallback: p90 = estimate * factor
 
 
 class SolcastAdapter:
@@ -88,8 +90,8 @@ class SolcastAdapter:
         except (ValueError, TypeError):
             total = 0.0
 
-        p10 = float(attrs.get("pv_estimate10", total * 0.7))
-        p90 = float(attrs.get("pv_estimate90", total * 1.3))
+        p10 = float(attrs.get("pv_estimate10", total * self._p10.p10_factor))
+        p90 = float(attrs.get("pv_estimate90", total * self._p10.p90_factor))
         return PVForecast(
             total_kwh=total,
             p10_kwh=p10,
