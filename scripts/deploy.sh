@@ -53,6 +53,7 @@ sudo rsync -a --delete \
     --exclude='.mypy_cache' \
     --exclude='.pytest_cache' \
     --exclude='.ruff_cache' \
+    --exclude='venv/' \
     "${REPO_DIR}/" "${INSTALL_DIR}/"
 sudo chown -R carma-box:carma-box "${INSTALL_DIR}"
 
