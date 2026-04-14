@@ -679,21 +679,22 @@ class CarmaBoxService:
         ev_target = cfg.ev.daily_target_soc_pct
         min_soc = cfg.guards.g1_soc_floor.floor_pct
         grid_max_soc = cfg.night_plan.grid_charge_max_soc_pct
-        pv_high_kwh = planner_cfg.pv_high_threshold_kwh
-        evening_start_h = planner_cfg.night_start_hour - 5  # 5h before night
+        pc = planner_cfg
+        pv_high_kwh = pc.pv_high_threshold_kwh
+        evening_start_h = night_start - pc.evening_offset_h
 
-        # Plan simulation constants from config
-        ev_night_pct_h = 5.0  # ~6A single phase per hour
-        ev_weekend_pct_h = 8.0  # PV-powered
-        grid_charge_pct_h = 8.0
-        discharge_pct_h = 3.0
-        ev_daily_drop = 30.0
-        daylight_start = 8
-        daylight_end = 16
-        daylight_hours = daylight_end - daylight_start
-        pv_charge_min_kwh = 2.0
-        weekend_ev_start = planner_cfg.night_end_hour  # 6
-        weekend_ev_end = 12
+        # Plan simulation constants — all from PlannerConfig
+        ev_night_pct_h = pc.ev_night_charge_pct_per_h
+        ev_weekend_pct_h = pc.ev_weekend_charge_pct_per_h
+        grid_charge_pct_h = pc.grid_charge_pct_per_h
+        discharge_pct_h = pc.discharge_pct_per_h
+        ev_daily_drop = pc.ev_daily_usage_drop_pct
+        daylight_start = pc.daylight_start_hour
+        daylight_end = pc.daylight_end_hour
+        daylight_hours = max(daylight_end - daylight_start, 1)
+        pv_charge_min_kwh = pc.pv_min_kwh_per_h
+        weekend_ev_start = pc.night_end_hour
+        weekend_ev_end = pc.weekend_ev_end_hour
 
         today_hours: list[str] = []
         tomorrow_hours: list[str] = []

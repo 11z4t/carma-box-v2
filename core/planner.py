@@ -47,6 +47,18 @@ class PlannerConfig:
     # Plan generation hours
     plan_hours: tuple[int, ...] = (6, 12, 17, 22)
 
+    # 48h plan simulation constants
+    ev_night_charge_pct_per_h: float = 5.0    # ~6A single phase
+    ev_weekend_charge_pct_per_h: float = 8.0  # PV-powered
+    grid_charge_pct_per_h: float = 8.0
+    discharge_pct_per_h: float = 3.0
+    ev_daily_usage_drop_pct: float = 30.0
+    daylight_start_hour: int = 8
+    daylight_end_hour: int = 16
+    pv_min_kwh_per_h: float = 2.0
+    weekend_ev_end_hour: int = 12
+    evening_offset_h: int = 5  # night_start - this = discharge start
+
     # House baseload
     house_baseload_kw: float = 2.5
     night_hours: int = 8

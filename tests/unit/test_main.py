@@ -510,3 +510,62 @@ class TestEntityDomain:
 
     def test_no_dot_fallback(self) -> None:
         assert CarmaBoxService._entity_domain("no_dot") == "homeassistant"
+
+
+class TestGenerate48hPlan:
+    """PLAT-1553: 48h plan generation tests."""
+
+    def _make_service(self) -> CarmaBoxService:
+        from config.schema import load_config
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+        return CarmaBoxService(cfg)
+
+    def test_plan_format(self) -> None:
+        service = self._make_service()
+        from tests.conftest import make_snapshot
+        snap = make_snapshot(hour=22, minute=0)
+        today, tomorrow = service._generate_48h_plan(snap, 22)
+        for entry in today.split("|"):
+            parts = entry.split(":")
+            assert len(parts) == 3, f"Bad format: {entry}"
+            assert parts[2].endswith("%")
+
+    def test_plan_split_by_day(self) -> None:
+        service = self._make_service()
+        from tests.conftest import make_snapshot
+        snap = make_snapshot(hour=0, minute=0)
+        today, tomorrow = service._generate_48h_plan(snap, 0)
+        today_hours = [e.split(":")[0] for e in today.split("|")]
+        assert len(today_hours) == 24
+
+    def test_plan_night_ev_charge(self) -> None:
+        service = self._make_service()
+        from tests.conftest import make_snapshot, make_ev_state
+        snap = make_snapshot(
+            hour=22, minute=0,
+            ev=make_ev_state(soc_pct=50.0, connected=True),
+        )
+        today, _ = service._generate_48h_plan(snap, 22)
+        first = today.split("|")[0]
+        assert ":EV:" in first
+
+    def test_plan_pv_charge(self) -> None:
+        service = self._make_service()
+        from tests.conftest import make_snapshot, make_grid_state
+        snap = make_snapshot(
+            hour=8, minute=0,
+            grid=make_grid_state(pv_forecast_today_kwh=30.0),
+        )
+        today, _ = service._generate_48h_plan(snap, 8)
+        # First hours (8-9) should be CHG with 30kWh PV forecast
+        entries = {e.split(":")[0]: e for e in today.split("|")}
+        assert ":CHG:" in entries.get("08", "") or ":CHG:" in entries.get("09", "")
+
+    def test_plan_discharge_evening(self) -> None:
+        service = self._make_service()
+        from tests.conftest import make_snapshot
+        snap = make_snapshot(hour=17, minute=0)
+        today, _ = service._generate_48h_plan(snap, 17)
+        first = today.split("|")[0]
+        assert ":DIS:" in first or ":STB:" in first
