@@ -112,6 +112,7 @@ class CarmaBoxService:
         self._last_cycle: Optional[datetime] = None
         self._health = HealthStatus(version=__version__)
         self._metrics = Metrics()
+        self._health_task: Optional[asyncio.Task[None]] = None
 
         # HA API client (None in dry-run/test mode)
         self._ha_api = ha_api
@@ -230,9 +231,10 @@ class CarmaBoxService:
         )
 
         # Start health HTTP server
-        health_task = asyncio.create_task(
+        self._health_task = asyncio.create_task(
             self._start_health_server(health_port),
         )
+        self._health_task.add_done_callback(self._on_health_done)
 
         try:
             while self._running:
@@ -242,7 +244,8 @@ class CarmaBoxService:
             logger.info("Main loop cancelled")
         finally:
             self._running = False
-            health_task.cancel()
+            if self._health_task:
+                self._health_task.cancel()
             logger.info(
                 "Main loop stopped after %d cycles", self._cycle_count
             )
@@ -334,6 +337,14 @@ class CarmaBoxService:
             cycle_result.scenario.value,
             cycle_result.guard.level.value if cycle_result.guard else "n/a",
         )
+
+    def _on_health_done(self, task: asyncio.Task[None]) -> None:
+        """Log health server task completion/failure."""
+        self._health_task = None
+        if task.cancelled():
+            return
+        if task.exception():
+            logger.error("Health server failed: %s", task.exception())
 
     async def _start_health_server(self, port: int) -> None:
         """Start aiohttp health endpoint server."""
