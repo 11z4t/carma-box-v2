@@ -1,0 +1,79 @@
+# Test fixture: site_with_appliances.yaml
+# Used by: tests/integration/test_appliance_integration.py (PLAT-1536)
+# Purpose: Minimal valid site config with appliance_monitor configured.
+
+site:
+  id: "test-appliances"
+  name: "Test Site With Appliances"
+  timezone: "Europe/Stockholm"
+  latitude: 59.427
+  longitude: 18.005
+
+homeassistant:
+  url: "http://localhost:8123"
+  token_env: "CARMA_HA_TOKEN"
+
+grid:
+  main_fuse_a: 25
+  main_fuse_phases: 3
+  voltage_v: 230
+  max_import_kw: 17.25
+  ellevio:
+    tak_kw: 3.0
+    night_weight: 0.5
+    day_weight: 1.0
+    night_start_hour: 22
+    night_end_hour: 6
+    margin: 0.85
+    emergency_factor: 1.10
+
+batteries:
+  - id: "test_bat"
+    name: "Test Battery"
+    cap_kwh: 10.0
+    ct_placement: "house_grid"
+    entities:
+      soc: "sensor.test_soc"
+      power: "sensor.test_power"
+      ems_mode: "select.test_ems_mode"
+      ems_power_limit: "number.test_ems_limit"
+      fast_charging: "switch.test_fast_charging"
+
+ev_charger:
+  id: "test_ev_charger"
+  name: "Test Charger"
+  charger_id: "TEST001"
+  max_amps: 10
+  min_amps: 6
+  entities:
+    status: "sensor.test_charger_status"
+    power: "sensor.test_charger_power"
+    current: "sensor.test_charger_current"
+    enabled: "switch.test_charger_enabled"
+
+ev:
+  id: "test_ev"
+  name: "Test EV"
+  battery_kwh: 60.0
+  entities:
+    soc: "sensor.test_ev_soc"
+
+appliance_monitor:
+  enabled: true
+  ramp_pause_on_new_load: true
+  appliances:
+    - id: "tvatt"
+      name: "Tvätt"
+      entity_id: "sensor.102_shelly_plug_g3_power"
+      start_threshold_w: 50.0
+      stop_threshold_w: 10.0
+    - id: "tumlare"
+      name: "Tumlare"
+      entity_id: "sensor.103_shelly_plug_g3_power"
+      start_threshold_w: 100.0
+      stop_threshold_w: 20.0
+    - id: "disk"
+      name: "Diskmaskin"
+      entity_id: "sensor.98_shelly_plug_s_power"
+      start_threshold_w: 50.0
+      stop_threshold_w: 10.0
