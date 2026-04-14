@@ -378,6 +378,29 @@ class TestNoHardcodedScenarioString:
         assert "battery_id='scenario'" not in source
 
 
+class TestNoNaked1000InEngineModels:
+    """PLAT-1608: No naked 1000.0 literals in engine.py or models.py."""
+
+    def test_no_naked_1000_in_engine(self) -> None:
+        from pathlib import Path
+        import re
+
+        source = (Path(__file__).resolve().parents[2] / "core" / "engine.py").read_text()
+        # Find lines with * 1000 or / 1000 that are NOT the constant definition
+        for i, line in enumerate(source.splitlines(), 1):
+            if re.search(r'[*/]\s*1000\.0', line) and '_W_TO_KW' not in line:
+                assert False, f"Naked 1000.0 at engine.py:{i}: {line.strip()}"
+
+    def test_no_naked_1000_in_models(self) -> None:
+        from pathlib import Path
+        import re
+
+        source = (Path(__file__).resolve().parents[2] / "core" / "models.py").read_text()
+        for i, line in enumerate(source.splitlines(), 1):
+            if re.search(r'[*/]\s*1000\.0', line) and '_W_TO_KW' not in line:
+                assert False, f"Naked 1000.0 at models.py:{i}: {line.strip()}"
+
+
 # ===========================================================================
 # PLAT-1572: 0W balance + FREEZE guard separation
 # ===========================================================================

@@ -43,6 +43,9 @@ logger = logging.getLogger(__name__)
 # Used to detect near-zero import/export and trigger BATTERY_STANDBY.
 NEAR_ZERO_KW: float = 0.05
 
+# Watts-to-kilowatts conversion factor.
+_W_TO_KW: float = 1000.0
+
 
 @dataclass
 class CycleResult:
@@ -196,12 +199,12 @@ class ControlEngine:
                         # safe conservative 5000 W if config is unavailable.
                         # (cap_kwh is energy, not power — kWh ≠ W)
                         max_discharge_w=(
-                            self._battery_configs[b.battery_id].max_discharge_kw * 1000.0
+                            self._battery_configs[b.battery_id].max_discharge_kw * _W_TO_KW
                             if b.battery_id in self._battery_configs
                             else 5000.0
                         ),
                         max_charge_w=(
-                            self._battery_configs[b.battery_id].max_charge_kw * 1000.0
+                            self._battery_configs[b.battery_id].max_charge_kw * _W_TO_KW
                             if b.battery_id in self._battery_configs
                             else 5000.0
                         ),
@@ -224,7 +227,7 @@ class ControlEngine:
                     b.power_w < 0 for b in snapshot.batteries
                 )
                 is_charging = scenario_charging or actual_charging
-                grid_kw = abs(snapshot.grid.grid_power_w) / 1000.0
+                grid_kw = abs(snapshot.grid.grid_power_w) / _W_TO_KW
 
                 # Near-zero grid power → balanced state, set standby to avoid
                 # unnecessary battery cycling at idle.

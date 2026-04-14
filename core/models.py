@@ -14,6 +14,9 @@ from datetime import datetime
 from enum import Enum, unique
 from typing import Any, Optional, Protocol
 
+# Watts-to-kilowatts conversion factor.
+_W_TO_KW: float = 1000.0
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -312,7 +315,7 @@ class SystemSnapshot:
     @property
     def total_appliance_kw(self) -> float:
         """Total active appliance load in kW."""
-        return sum(a.power_w for a in self.appliances if a.active) / 1000.0
+        return sum(a.power_w for a in self.appliances if a.active) / _W_TO_KW
 
     @property
     def available_surplus_w(self) -> float:
