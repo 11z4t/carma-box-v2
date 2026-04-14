@@ -181,7 +181,7 @@ class EaseeAdapter(EVChargerAdapter):
                 "switch", "turn_off",
                 {"entity_id": self._entities.enabled},
             )
-            await asyncio.sleep(10)  # pragma: no cover
+            await asyncio.sleep(self._config.easee.fix_off_delay_s)  # pragma: no cover
 
             override_entity = self._entities.override_schedule
             if override_entity:
@@ -189,13 +189,13 @@ class EaseeAdapter(EVChargerAdapter):
                     "button", "press",
                     {"entity_id": override_entity},
                 )
-                await asyncio.sleep(5)  # pragma: no cover
+                await asyncio.sleep(self._config.easee.fix_override_delay_s)  # pragma: no cover
 
             await self._api.call_service(
                 "switch", "turn_on",
                 {"entity_id": self._entities.enabled},
             )
-            await asyncio.sleep(3)  # pragma: no cover
+            await asyncio.sleep(self._config.easee.fix_on_delay_s)  # pragma: no cover
             await self.set_current(self.min_amps)
             logger.info("waiting_in_fully fix sequence complete")
         except Exception as exc:

@@ -187,6 +187,9 @@ class EaseeSpecificConfig(BaseModel):
     smart_charging: bool = Field(default=False)
     waiting_in_fully_fix_delay_s: int = Field(default=180, ge=0, le=600)
     max_charger_current_floor: int = Field(default=10, ge=6, le=32)
+    fix_off_delay_s: int = Field(default=10, ge=1, le=60)
+    fix_override_delay_s: int = Field(default=5, ge=1, le=60)
+    fix_on_delay_s: int = Field(default=3, ge=1, le=60)
 
 
 class EVChargerEntities(BaseModel):
