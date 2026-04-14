@@ -305,6 +305,7 @@ guards:
     enabled: true
     floor_pct: 15.0
     cold_floor_pct: 20.0
+    freeze_floor_pct: 25.0
     action: "battery_standby"
 
   g2_fast_charging_conflict:

@@ -146,6 +146,7 @@ class CarmaBoxService:
             recovery_hold_s=g.g3_ellevio_breach.recovery_hold_s,
             normal_floor_pct=g.g1_soc_floor.floor_pct,
             cold_floor_pct=g.g1_soc_floor.cold_floor_pct,
+            freeze_floor_pct=g.g1_soc_floor.freeze_floor_pct,
             max_changes_per_window=g.g5_oscillation.max_changes_per_window,
             window_s=g.g5_oscillation.window_s,
             doubled_deadband_s=g.g5_oscillation.doubled_deadband_s,

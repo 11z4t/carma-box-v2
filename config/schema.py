@@ -441,6 +441,7 @@ class G1Config(BaseModel):
     enabled: bool = Field(default=True)
     floor_pct: float = Field(default=15.0, ge=5.0, le=50.0)
     cold_floor_pct: float = Field(default=20.0, ge=5.0, le=60.0)
+    freeze_floor_pct: float = Field(default=25.0, ge=5.0, le=70.0)
     action: str = Field(default="battery_standby")
 
 
