@@ -1037,6 +1037,38 @@ class CarmaBoxService:
         if self._surplus_dispatch is None or self._ha_api is None:
             return
 
+        # PLAT-1541: Cold förråd → start miner (heat source)
+        forrad_bat = next(
+            (b for b in snapshot.batteries if b.battery_id == "forrad"),
+            None,
+        )
+        miner_cfg = next(
+            (c for c in self._consumer_configs if c.id == "miner"),
+            None,
+        )
+        if forrad_bat and miner_cfg and miner_cfg.entity_switch:
+            forrad_cfg = next(
+                (b for b in self._config.batteries if b.id == "forrad"),
+                None,
+            )
+            cold_threshold = forrad_cfg.cold_temp_c if forrad_cfg else 4.0
+            if forrad_bat.cell_temp_c < cold_threshold:
+                # Cold förråd — start miner as heater
+                batch = await self._ha_api.get_states_batch(
+                    [miner_cfg.entity_switch],
+                )
+                miner_state = batch.get(miner_cfg.entity_switch, {})
+                if miner_state.get("state") != "on":
+                    domain = self._entity_domain(miner_cfg.entity_switch)
+                    await self._ha_api.call_service(
+                        domain, "turn_on",
+                        {"entity_id": miner_cfg.entity_switch},
+                    )
+                    logger.info(
+                        "MINER: cold förråd (%.1f°C < %.1f°C) → started",
+                        forrad_bat.cell_temp_c, cold_threshold,
+                    )
+
         # Calculate available surplus: negative grid = export
         surplus_w = -snapshot.grid.grid_power_w
         # Add power from currently active consumers (they're part of the surplus)
