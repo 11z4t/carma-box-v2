@@ -44,6 +44,7 @@ from core.models import (
     SystemSnapshot,
 )
 from core.ellevio import EllevioConfig, EllevioTracker
+from core.planner import Planner, PlannerConfig
 from core.ev_controller import EVAction, EVController, EVControllerConfig
 from core.surplus_dispatch import SurplusConfig as SurplusDispatchConfig, SurplusDispatch
 from health import HealthStatus, Metrics
@@ -125,6 +126,7 @@ class CarmaBoxService:
         else:
             self._engine: Optional[ControlEngine] = None
             self._surplus_dispatch: Optional[SurplusDispatch] = None
+            self._planner: Optional[Planner] = None
             self._ellevio: Optional[EllevioTracker] = None
             self._ev_controller: Optional[EVController] = None
             self._consumer_configs = config.consumers
@@ -188,6 +190,18 @@ class CarmaBoxService:
             ),
             ha_api=ha_api,
         )
+
+        # Planner
+        self._planner = Planner(PlannerConfig(
+            ev_target_soc_pct=config.ev.daily_target_soc_pct,
+            pv_high_threshold_kwh=float(
+                config.night_plan.house_baseload_kw
+                * config.night_plan.night_hours
+            ),
+            grid_charge_max_soc_pct=config.night_plan.grid_charge_max_soc_pct,
+            grid_charge_price_threshold_ore=config.night_plan.grid_charge_price_threshold_ore,
+        ))
+        self._last_plan_hour: int = -1
 
         # Ellevio peak tracker
         self._ellevio = EllevioTracker(EllevioConfig(
@@ -305,6 +319,16 @@ class CarmaBoxService:
         if snapshot is None:
             logger.warning("Cycle %d: failed to collect snapshot", self._cycle_count)
             return
+
+        # Phase 1.4: PLAN GENERATION at 06/12/17/22
+        plan_hours = {6, 12, 17, 22}
+        if (
+            self._planner
+            and snapshot.hour in plan_hours
+            and snapshot.hour != self._last_plan_hour
+        ):
+            self._last_plan_hour = snapshot.hour
+            await self._generate_plan(snapshot)
 
         # Phase 1.5: ELLEVIO TRACKING — update weighted hourly average
         if self._ellevio:
@@ -623,6 +647,80 @@ class CarmaBoxService:
                 {"entity_id": ev_cfg.entities.enabled},
             )
             logger.warning("EV EMERGENCY CUT: %s", result.reason)
+
+    async def _generate_plan(self, snapshot: SystemSnapshot) -> None:
+        """Generate energy plan at key hours (06/12/17/22)."""
+        if self._planner is None or self._ha_api is None:
+            return
+
+        hour = snapshot.hour
+        bat_soc = snapshot.total_battery_soc_pct
+        bat_cap = sum(b.cap_kwh for b in snapshot.batteries)
+        ev = snapshot.ev
+        pv_tomorrow = snapshot.grid.pv_forecast_tomorrow_kwh
+
+        try:
+            if hour == 22:
+                # Night plan: EV + bat charging strategy
+                plan = self._planner.generate_night_plan(
+                    bat_soc_pct=bat_soc,
+                    bat_cap_kwh=bat_cap,
+                    ev_connected=ev.connected,
+                    ev_soc_pct=ev.soc_pct,
+                    pv_tomorrow_kwh=pv_tomorrow,
+                    prices_by_hour={},
+                )
+                plan_text = (
+                    f"Night: EV {plan.ev_charge_need_kwh:.0f}kWh "
+                    f"({plan.ev_start_hour}-{plan.ev_stop_hour}h {plan.ev_amps}A) "
+                    f"Bat {plan.bat_charge_need_kwh:.0f}kWh "
+                    f"({plan.bat_charge_start_hour}-{plan.bat_charge_stop_hour}h) "
+                    f"{'skip EV: '+plan.ev_skip_reason if plan.ev_skip else ''}"
+                )
+                logger.info("PLAN 22:00 — %s", plan_text)
+
+            elif hour == 17:
+                # Evening plan: how much bat to use
+                eve_plan = self._planner.generate_evening_plan(
+                    bat_soc_pct=bat_soc,
+                    bat_cap_kwh=bat_cap,
+                    ev_connected=ev.connected,
+                    ev_soc_pct=ev.soc_pct,
+                )
+                plan_text = (
+                    f"Evening: alloc {eve_plan.evening_allocation_kwh:.1f}kWh "
+                    f"floor {eve_plan.evening_floor_soc_pct:.0f}%"
+                )
+                logger.info("PLAN 17:00 — %s", plan_text)
+
+            elif hour == 6:
+                # Morning review: what happened overnight
+                plan_text = (
+                    f"Morning: bat {bat_soc:.0f}% "
+                    f"EV {ev.soc_pct:.0f}% "
+                    f"PV today {snapshot.grid.pv_forecast_today_kwh:.0f}kWh"
+                )
+                logger.info("PLAN 06:00 — %s", plan_text)
+
+            elif hour == 12:
+                # Midday review: forenoon results
+                plan_text = (
+                    f"Midday: bat {bat_soc:.0f}% "
+                    f"PV remaining {snapshot.grid.pv_forecast_today_kwh:.0f}kWh "
+                    f"tomorrow {pv_tomorrow:.0f}kWh"
+                )
+                logger.info("PLAN 12:00 — %s", plan_text)
+            else:
+                return
+
+            # Write plan to HA
+            dash = self._config.dashboard
+            if hour in (22, 17):
+                await self._ha_api.set_input_text(
+                    dash.entity_plan_today, plan_text,
+                )
+        except Exception as exc:
+            logger.error("Plan generation failed at %d:00: %s", hour, exc)
 
     async def _apply_manual_override(self) -> None:
         """Read manual override helpers from HA and apply to state machine."""
