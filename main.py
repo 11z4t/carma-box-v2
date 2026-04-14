@@ -31,6 +31,7 @@ from adapters.goodwe import GoodWeAdapter
 from adapters.ha_api import HAApiClient
 from config.schema import CarmaConfig, load_config
 from core.balancer import BalancerConfig, BatteryBalancer
+from storage.local_db import CycleLogEntry, LocalDB
 from core.engine import ControlEngine, CycleResult
 from core.executor import CommandExecutor, ExecutorConfig
 from core.guards import GridGuard, GuardConfig
@@ -128,6 +129,7 @@ class CarmaBoxService:
         else:
             self._engine: Optional[ControlEngine] = None
             self._surplus_dispatch: Optional[SurplusDispatch] = None
+            self._db: Optional[LocalDB] = None
             self._planner: Optional[Planner] = None
             self._ellevio: Optional[EllevioTracker] = None
             self._ev_controller: Optional[EVController] = None
@@ -192,6 +194,10 @@ class CarmaBoxService:
             ),
             ha_api=ha_api,
         )
+
+        # Local DB
+        db_path = config.storage.sqlite.path
+        self._db = LocalDB(db_path)
 
         # Planner
         self._planner = Planner(PlannerConfig(
@@ -263,6 +269,13 @@ class CarmaBoxService:
             "Starting main loop (cycle=%ds, health=:%d)",
             cycle_s, health_port,
         )
+
+        # Initialize local DB
+        if self._db:
+            try:
+                await self._db.initialize()
+            except Exception as exc:
+                logger.warning("DB init failed: %s", exc)
 
         # Start health HTTP server
         self._health_task = asyncio.create_task(
@@ -391,6 +404,33 @@ class CarmaBoxService:
             cycle_result.scenario.value,
             cycle_result.guard.level.value if cycle_result.guard else "n/a",
         )
+
+        # Phase 9: PERSIST — write cycle to SQLite
+        if self._db:
+            try:
+                guard_level = (
+                    cycle_result.guard.level.value
+                    if cycle_result.guard else "ok"
+                )
+                headroom = (
+                    cycle_result.guard.headroom_kw
+                    if cycle_result.guard else 0.0
+                )
+                violations = (
+                    "; ".join(cycle_result.guard.violations)
+                    if cycle_result.guard else ""
+                )
+                await self._db.write_cycle(CycleLogEntry(
+                    cycle_id=cycle_result.cycle_id,
+                    timestamp=snapshot.timestamp.isoformat(),
+                    scenario=cycle_result.scenario.value,
+                    guard_level=guard_level,
+                    headroom_kw=headroom,
+                    elapsed_s=cycle_result.elapsed_s,
+                    violations=violations,
+                ))
+            except Exception as exc:
+                logger.debug("Cycle log write failed: %s", exc)
 
     def _on_health_done(self, task: asyncio.Task[None]) -> None:
         """Log health server task completion/failure."""
