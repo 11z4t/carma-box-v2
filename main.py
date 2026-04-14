@@ -270,9 +270,13 @@ class CarmaBoxService:
         await self._apply_manual_override()
 
         # Phases 2-6: delegated to ControlEngine
+        data_age_s = (
+            datetime.now(tz=timezone.utc) - snapshot.timestamp
+        ).total_seconds()
         cycle_result = await self._engine.run_cycle(
             snapshot=snapshot,
             ha_connected=ha_connected,
+            data_age_s=data_age_s,
         )
 
         # Phase 7: SURPLUS DISPATCH — manage dispatchable consumers
