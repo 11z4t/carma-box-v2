@@ -52,6 +52,7 @@ from core.ev_controller import EVAction, EVController, EVControllerConfig
 from core.surplus_dispatch import SurplusConfig as SurplusDispatchConfig, SurplusDispatch
 from health import HealthStatus, Metrics
 from core.state_machine import StateMachine, StateMachineConfig
+from notifications.slack import SlackNotifier
 
 __version__ = "2.0.0"
 
@@ -129,6 +130,7 @@ class CarmaBoxService:
         else:
             self._engine: Optional[ControlEngine] = None
             self._surplus_dispatch: Optional[SurplusDispatch] = None
+            self._slack: Optional[SlackNotifier] = None
             self._db: Optional[LocalDB] = None
             self._planner: Optional[Planner] = None
             self._ellevio: Optional[EllevioTracker] = None
@@ -194,6 +196,10 @@ class CarmaBoxService:
             ),
             ha_api=ha_api,
         )
+
+        # Slack notifier
+        self._slack = SlackNotifier()
+        self._last_scenario: Optional[str] = None
 
         # Local DB
         db_path = config.storage.sqlite.path
@@ -405,7 +411,26 @@ class CarmaBoxService:
             cycle_result.guard.level.value if cycle_result.guard else "n/a",
         )
 
-        # Phase 9: PERSIST — write cycle to SQLite
+        # Phase 9: SLACK NOTIFICATIONS — scenario transitions + guard triggers
+        if self._slack:
+            scenario_name = cycle_result.scenario.value
+            if self._last_scenario and scenario_name != self._last_scenario:
+                await self._slack.notify(
+                    "scenario_transition",
+                    f"{self._last_scenario} → {scenario_name}",
+                )
+            self._last_scenario = scenario_name
+
+            if cycle_result.guard and cycle_result.guard.commands:
+                guard_level = cycle_result.guard.level.value
+                await self._slack.notify(
+                    "guard_trigger",
+                    f"{guard_level}: "
+                    + ", ".join(c.command_type.value for c in cycle_result.guard.commands),
+                    severity=guard_level,
+                )
+
+        # Phase 10: PERSIST — write cycle to SQLite
         if self._db:
             try:
                 guard_level = (
