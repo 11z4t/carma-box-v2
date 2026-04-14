@@ -769,3 +769,99 @@ class TestHaApiConstantsPlat1574:
             if re.search(r"[0-9]", line) and not re.search(r"[#A-Z_]", line):
                 violations.append(f"  line {lineno}: {line.strip()}")
         assert violations == [], "Naked numbers found:\n" + "\n".join(violations)
+
+
+# ===========================================================================
+# PLAT-1575: Exponential backoff constants + behaviour
+# ===========================================================================
+
+
+class TestBackoffConstantsPlat1575:
+    """PLAT-1575: HA_API_BACKOFF_BASE / HA_API_MAX_BACKOFF_S must exist."""
+
+    def test_backoff_base_constant_exists(self) -> None:
+        import adapters.ha_api as module
+
+        assert hasattr(module, "HA_API_BACKOFF_BASE")
+        assert isinstance(module.HA_API_BACKOFF_BASE, int)
+        assert module.HA_API_BACKOFF_BASE == 2
+
+    def test_max_backoff_constant_exists(self) -> None:
+        import adapters.ha_api as module
+
+        assert hasattr(module, "HA_API_MAX_BACKOFF_S")
+        assert isinstance(module.HA_API_MAX_BACKOFF_S, int)
+        assert module.HA_API_MAX_BACKOFF_S == 30
+
+    def test_no_naked_sleep_delay(self) -> None:
+        """REGRESSION: naked sleep(self._retry_delay_s) must not exist."""
+        from pathlib import Path
+
+        src = (
+            Path(__file__).parent.parent.parent / "adapters" / "ha_api.py"
+        ).read_text()
+        assert "sleep(self._retry_delay_s)" not in src, (
+            "Naked sleep(self._retry_delay_s) found — use exponential backoff"
+        )
+
+
+@pytest.mark.asyncio()
+class TestExponentialBackoffPlat1575:
+    """PLAT-1575: Retry delays grow exponentially and are capped."""
+
+    async def test_exponential_backoff_applied(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B2: 3 retries with base_delay=2 → sleep calls [2.0, 4.0]."""
+        import asyncio as _asyncio
+
+        sleep_calls: list[float] = []
+
+        async def _capture_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        monkeypatch.setattr(_asyncio, "sleep", _capture_sleep)
+
+        config = HAConfig(
+            url="http://localhost:8123",
+            token_env="TEST_HA_TOKEN",
+            retry_count=3,
+            retry_delay_s=2,
+        )
+        client = HAApiClient(config)
+        resp = _make_response(500, text="err")
+        client._session = _make_session([resp, resp, resp])
+
+        await client.get_state("sensor.test")
+
+        assert sleep_calls == [2.0, 4.0]
+
+    async def test_backoff_capped_at_max(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B3: backoff is capped at HA_API_MAX_BACKOFF_S regardless of attempt."""
+        import asyncio as _asyncio
+        from adapters.ha_api import HA_API_MAX_BACKOFF_S
+
+        sleep_calls: list[float] = []
+
+        async def _capture_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        monkeypatch.setattr(_asyncio, "sleep", _capture_sleep)
+
+        config = HAConfig(
+            url="http://localhost:8123",
+            token_env="TEST_HA_TOKEN",
+            retry_count=4,
+            retry_delay_s=10,
+        )
+        client = HAApiClient(config)
+        resp = _make_response(500, text="err")
+        client._session = _make_session([resp, resp, resp, resp])
+
+        await client.get_state("sensor.test")
+
+        assert all(s <= HA_API_MAX_BACKOFF_S for s in sleep_calls), (
+            f"Backoff exceeded max: {sleep_calls}"
+        )

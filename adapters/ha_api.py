@@ -35,6 +35,10 @@ HA_API_BATCH_SIZE: int = 50
 HA_API_BATCH_TIMEOUT_S: int = 30
 _ERROR_BODY_MAX_LEN: int = 200
 
+# PLAT-1575: Exponential backoff constants (B2/B3).
+HA_API_BACKOFF_BASE: int = 2
+HA_API_MAX_BACKOFF_S: int = 30
+
 
 class HAApiClient:
     """Async Home Assistant REST API client.
@@ -170,7 +174,15 @@ class HAApiClient:
                 )
 
             if attempt < self._retry_count:
-                await asyncio.sleep(self._retry_delay_s)
+                sleep_s = min(
+                    self._retry_delay_s * (HA_API_BACKOFF_BASE ** (attempt - 1)),
+                    HA_API_MAX_BACKOFF_S,
+                )
+                logger.debug(
+                    "Retry %d/%d in %.1fs (backoff)",
+                    attempt, self._retry_count, sleep_s,
+                )
+                await asyncio.sleep(sleep_s)
 
         logger.error(
             "HA API %s %s failed after %d retries: %s",
