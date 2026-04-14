@@ -554,6 +554,7 @@ class SlackConfig(BaseModel):
     webhook_env: str = Field(default="CARMA_SLACK_WEBHOOK")
     channel: str = Field(default="#energy")
     notify_on: list[str] = Field(default_factory=list)
+    timeout_s: int = Field(default=5, ge=1, le=30)
 
 
 class HANotifyConfig(BaseModel):

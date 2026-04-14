@@ -32,6 +32,7 @@ class SlackConfig:
         "communication_lost",
         "daily_summary",
     )
+    timeout_s: int = 5
 
 
 @dataclass(frozen=True)
@@ -131,7 +132,7 @@ class SlackNotifier:
         """
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=5),
+                timeout=aiohttp.ClientTimeout(total=self._config.timeout_s),
                 headers={"Content-Type": "application/json"},
             )
         return self._session
