@@ -834,6 +834,21 @@ class CarmaBoxService:
             dash.entity_plan_day3, "",
         )
 
+        # PV forecast flags — pv_high_today/tomorrow
+        pv_high_threshold = 20.0  # kWh
+        pv_today = snapshot.grid.pv_forecast_today_kwh
+        pv_tomorrow = snapshot.grid.pv_forecast_tomorrow_kwh
+        await self._ha_api.call_service(
+            "input_boolean",
+            "turn_on" if pv_today >= pv_high_threshold else "turn_off",
+            {"entity_id": "input_boolean.pv_high_today"},
+        )
+        await self._ha_api.call_service(
+            "input_boolean",
+            "turn_on" if pv_tomorrow >= pv_high_threshold else "turn_off",
+            {"entity_id": "input_boolean.pv_high_tomorrow"},
+        )
+
         # Ellevio sensor — write peak tracking data
         if self._ellevio:
             ellevio_attrs: dict[str, object] = {
