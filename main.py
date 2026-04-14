@@ -25,7 +25,7 @@ import aiohttp.web
 from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from adapters.goodwe import GoodWeAdapter
 from adapters.ha_api import HAApiClient
@@ -200,6 +200,8 @@ class CarmaBoxService:
         # Slack notifier
         self._slack = SlackNotifier()
         self._last_scenario: Optional[str] = None
+        self._active_night_plan: Optional[Any] = None
+        self._active_evening_plan: Optional[Any] = None
 
         # Local DB
         db_path = config.storage.sqlite.path
@@ -371,7 +373,10 @@ class CarmaBoxService:
             data_age_s=data_age_s,
         )
 
-        # Phase 6.5: EV CONTROLLER — evaluate charging decision
+        # Phase 6.5: PLAN EXECUTION — execute active night/evening plan
+        await self._execute_plan(snapshot)
+
+        # Phase 6.6: EV CONTROLLER — evaluate charging decision
         await self._evaluate_ev(snapshot)
 
         # Phase 7: SURPLUS DISPATCH — manage dispatchable consumers
@@ -671,6 +676,61 @@ class CarmaBoxService:
             logger.error("Snapshot collection failed: %s", exc, exc_info=True)
             return None
 
+    async def _execute_plan(self, snapshot: SystemSnapshot) -> None:
+        """Execute active night/evening plan actions."""
+        if self._ha_api is None:
+            return
+
+        hour = snapshot.hour
+        plan = self._active_night_plan
+
+        if plan and snapshot.is_night:
+            # EV charging per plan
+            ev_cfg = self._config.ev_charger
+            if (
+                plan.ev_start_hour <= hour < plan.ev_stop_hour
+                and not plan.ev_skip
+                and snapshot.ev.connected
+                and snapshot.ev.soc_pct < MAX_SOC_PCT
+            ):
+                # Start EV if not already charging
+                if not snapshot.ev.charging:
+                    domain = self._entity_domain(ev_cfg.entities.enabled)
+                    await self._ha_api.call_service(
+                        domain, "turn_on",
+                        {"entity_id": ev_cfg.entities.enabled},
+                    )
+                    logger.info(
+                        "PLAN EXEC: EV start (plan h%d-%d)",
+                        plan.ev_start_hour, plan.ev_stop_hour,
+                    )
+
+            # Grid charge bat per plan
+            if (
+                plan.bat_charge_start_hour <= hour < plan.bat_charge_stop_hour
+                and plan.bat_charge_need_kwh > 0
+                and snapshot.total_battery_soc_pct < self._config.night_plan.grid_charge_max_soc_pct
+            ):
+                # Set charge mode with grid charge rate
+                rate_w = int(plan.bat_charge_rate_kw * 1000)
+                if rate_w > 0 and self._engine:
+                    for bat in snapshot.batteries:
+                        if not self._engine._mode_manager.is_in_progress(bat.battery_id):
+                            self._engine._mode_manager.request_change(
+                                battery_id=bat.battery_id,
+                                target_mode="charge_pv",
+                                reason=f"Plan: grid charge {rate_w}W",
+                            )
+                    logger.info(
+                        "PLAN EXEC: grid charge bat %dW (plan h%d-%d)",
+                        rate_w, plan.bat_charge_start_hour, plan.bat_charge_stop_hour,
+                    )
+
+        # Clear night plan at morning
+        if plan and not snapshot.is_night and hour >= 6:
+            self._active_night_plan = None
+            logger.info("PLAN: night plan cleared (morning)")
+
     async def _evaluate_ev(self, snapshot: SystemSnapshot) -> None:
         """Evaluate EV charging — proactive connect trigger + ramp."""
         if self._ev_controller is None or self._ha_api is None:
@@ -888,6 +948,7 @@ class CarmaBoxService:
                     f"{'skip EV: '+plan.ev_skip_reason if plan.ev_skip else ''}"
                 )
                 logger.info("PLAN 22:00 — %s", plan_text)
+                self._active_night_plan = plan
 
             elif hour == 17:
                 # Evening plan: how much bat to use
@@ -902,6 +963,7 @@ class CarmaBoxService:
                     f"floor {eve_plan.evening_floor_soc_pct:.0f}%"
                 )
                 logger.info("PLAN 17:00 — %s", plan_text)
+                self._active_evening_plan = eve_plan
 
             elif hour == 6:
                 # Morning review: what happened overnight
