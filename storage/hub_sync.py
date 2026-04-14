@@ -22,14 +22,14 @@ logger = logging.getLogger(__name__)
 class HubSyncConfig:
     """Hub sync configuration — from site.yaml."""
 
-    host: str = "192.168.5.10"
+    host: str = ""
     port: int = 5432
     database: str = "energy"
     user_env: str = "CARMA_PG_USER"
     password_env: str = "CARMA_PG_PASS"
     sync_interval_s: int = 300
     batch_size: int = 1000
-    site_id: str = "sanduddsvagen-60"
+    site_id: str = ""
 
 
 class HubSync:

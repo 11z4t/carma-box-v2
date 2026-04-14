@@ -36,6 +36,7 @@ class EVControllerConfig:
     start_amps: int = 6
     min_amps: int = 6
     max_amps: int = 10
+    voltage_v: int = 230
     steps: tuple[int, ...] = (6, 8, 10)
     step_interval_s: float = 300.0       # 5 min between ramp steps
     cooldown_after_start_s: float = 120.0  # 2 min after start
@@ -176,7 +177,7 @@ class EVController:
                     reason=f"EV connected but day, no PV surplus ({pv_surplus_w:.0f}W)",
                 )
             # Proactive connect trigger — request consumer bump + start
-            min_needed_w = float(self._config.start_amps * 230)
+            min_needed_w = float(self._config.start_amps * self._config.voltage_v)
             headroom_short = ellevio_headroom_w < min_needed_w
             return EVResult(
                 action=EVAction.CONNECT_TRIGGER,

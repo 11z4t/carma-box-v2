@@ -38,7 +38,7 @@ def db(tmp_path: Path) -> Generator[LocalDB, None, None]:
 
 @pytest.fixture()
 def sync(db: LocalDB) -> HubSync:
-    return HubSync(HubSyncConfig(), db)
+    return HubSync(HubSyncConfig(site_id="test-site"), db)
 
 
 class TestTransformRow:
@@ -47,7 +47,7 @@ class TestTransformRow:
     def test_adds_site_id(self, sync: HubSync) -> None:
         row: dict[str, Any] = {"cycle_id": "abc", "synced": 0, "id": 1}
         result = sync._transform_row("cycle_log", row)
-        assert result["site_id"] == "sanduddsvagen-60"
+        assert result["site_id"] == "test-site"
         assert "synced" not in result
         assert "id" not in result
         assert result["cycle_id"] == "abc"

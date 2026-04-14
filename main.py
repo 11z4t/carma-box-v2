@@ -703,10 +703,13 @@ class CarmaBoxService:
         if result.action == EVAction.CONNECT_TRIGGER:
             logger.info("EV CONNECT: %s", result.reason)
             # Bump low-priority consumers to make room
-            # ~6A single phase = start_amps * 230V
-            ev_cfg_ctrl = self._ev_controller._config if self._ev_controller else None
-            start_amps = ev_cfg_ctrl.start_amps if ev_cfg_ctrl else 6
-            min_needed_w = float(start_amps * 230)
+            ev_cfg_ctrl = (
+                self._ev_controller._config
+                if self._ev_controller else EVControllerConfig()
+            )
+            min_needed_w = float(
+                ev_cfg_ctrl.start_amps * ev_cfg_ctrl.voltage_v
+            )
             if headroom_w < min_needed_w:
                 freed_w = 0.0
                 for cc in sorted(
