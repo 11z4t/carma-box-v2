@@ -8,6 +8,7 @@ Tests cover:
 - Error handling (404, 500, timeout, connection error)
 - Session lifecycle (reuse, close)
 - Unavailable/unknown state filtering
+- PLAT-1574: batch fetch (single call), fallback, timeout constants
 """
 
 from __future__ import annotations
@@ -669,3 +670,102 @@ class TestPlat1573BatchFetch:
 
         assert "sensor.x" in result
         assert result["sensor.x"]["state"] == "42"
+
+
+# ===========================================================================
+# PLAT-1574: batch fetch optimisation + timeout constants
+# ===========================================================================
+
+
+@pytest.mark.asyncio()
+class TestBatchFetchPlat1574:
+    """PLAT-1574: AC1/AC3 — single batch call + per-entity fallback."""
+
+    async def test_batch_fetch_single_api_call(
+        self, ha_config: HAConfig
+    ) -> None:
+        """AC1: fetching 5 entities must issue exactly 1 API call."""
+        from unittest.mock import AsyncMock, patch
+
+        client = HAApiClient(ha_config)
+        all_states = [
+            {"entity_id": f"sensor.e{i}", "state": str(i)} for i in range(10)
+        ]
+        entity_ids = [f"sensor.e{i}" for i in range(5)]
+
+        with patch.object(
+            client, "_request", new_callable=AsyncMock, return_value=all_states
+        ) as mock_req:
+            result = await client.get_states_batch(entity_ids)
+
+        assert len(result) == 5
+        mock_req.assert_called_once()
+
+    async def test_batch_fallback_on_error(
+        self, ha_config: HAConfig
+    ) -> None:
+        """AC3: batch endpoint failure → per-entity fallback, no exception."""
+        from unittest.mock import patch
+
+        client = HAApiClient(ha_config)
+        entity_ids = ["sensor.a", "sensor.b"]
+        per_entity_data = {
+            "sensor.a": {"entity_id": "sensor.a", "state": "1"},
+            "sensor.b": {"entity_id": "sensor.b", "state": "2"},
+        }
+        call_paths: list[str] = []
+
+        async def mock_request(
+            method: str,
+            path: str,
+            json_data: Optional[dict[str, Any]] = None,
+            *,
+            timeout: Optional[aiohttp.ClientTimeout] = None,
+        ) -> Optional[Any]:
+            call_paths.append(path)
+            if path == "/api/states":
+                return None  # batch fails
+            eid = path.rsplit("/", maxsplit=1)[-1]
+            return per_entity_data.get(eid)
+
+        with patch.object(client, "_request", side_effect=mock_request):
+            result = await client.get_states_batch(entity_ids)
+
+        assert result["sensor.a"]["state"] == "1"
+        assert result["sensor.b"]["state"] == "2"
+        assert call_paths[0] == "/api/states"
+        assert "/api/states/sensor.a" in call_paths
+        assert "/api/states/sensor.b" in call_paths
+
+
+class TestHaApiConstantsPlat1574:
+    """PLAT-1574: AC2/AC4 — named constants, no naked numbers."""
+
+    def test_ha_timeout_constant_exists(self) -> None:
+        """AC2: HA_API_TIMEOUT_S must be a module-level int constant."""
+        import adapters.ha_api as module
+
+        assert hasattr(module, "HA_API_TIMEOUT_S")
+        assert isinstance(module.HA_API_TIMEOUT_S, int)
+
+    def test_ha_batch_timeout_constant_exists(self) -> None:
+        """AC2: HA_API_BATCH_TIMEOUT_S must be a module-level int constant."""
+        import adapters.ha_api as module
+
+        assert hasattr(module, "HA_API_BATCH_TIMEOUT_S")
+        assert isinstance(module.HA_API_BATCH_TIMEOUT_S, int)
+
+    def test_no_naked_timeouts(self) -> None:
+        """AC4: grep adapters/ha_api.py → 0 lines with digits but no [A-Z_#]."""
+        import re
+        from pathlib import Path
+
+        ha_api_path = (
+            Path(__file__).parent.parent.parent / "adapters" / "ha_api.py"
+        )
+        lines = ha_api_path.read_text().splitlines()
+        violations = []
+        for lineno, line in enumerate(lines, 1):
+            if re.search(r"[0-9]", line) and not re.search(r"[#A-Z_]", line):
+                violations.append(f"  line {lineno}: {line.strip()}")
+        assert violations == [], "Naked numbers found:\n" + "\n".join(violations)

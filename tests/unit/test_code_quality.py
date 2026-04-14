@@ -350,9 +350,12 @@ class TestNoRetryOnAuth:
     def test_ha_api_no_retry_on_auth_error(self) -> None:
         ha_api = PROJECT_ROOT / "adapters" / "ha_api.py"
         content = ha_api.read_text()
-        # Verify that 401/403 are mentioned in a no-retry context
-        assert "401" in content or "403" in content, (
-            "ha_api.py should handle 401/403 auth errors explicitly"
+        # Verify that 401/403 auth handling is present (via literal or HTTPStatus enum)
+        has_literal = "401" in content or "403" in content
+        has_http_status = "UNAUTHORIZED" in content or "FORBIDDEN" in content
+        assert has_literal or has_http_status, (
+            "ha_api.py should handle 401/403 auth errors explicitly "
+            "(either as literal ints or via HTTPStatus.UNAUTHORIZED/FORBIDDEN)"
         )
 
 
