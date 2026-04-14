@@ -27,6 +27,7 @@ from core.executor import CommandExecutor, ExecutionResult
 from core.guards import GridGuard, GuardEvaluation, GuardLevel
 from core.mode_change import ModeChangeManager
 from core.models import (
+    MAX_SOC_PCT,
     Command,
     CommandType,
     EMSMode,
@@ -129,27 +130,36 @@ class ControlEngine:
             if new_scenario is not None:
                 # Route through ModeChangeManager for 5-step standby
                 # (prevents B1/B2 firmware hangs from direct transitions)
-                if not self._mode_manager.is_in_progress("scenario"):
-                    # Map scenario to target EMS mode
-                    S = Scenario
-                    scenario_modes: dict[Scenario, EMSMode] = {
-                        S.MORNING_DISCHARGE: EMSMode.DISCHARGE_PV,
-                        S.FORENOON_PV_EV: EMSMode.CHARGE_PV,
-                        S.MIDDAY_CHARGE: EMSMode.CHARGE_PV,
-                        S.EVENING_DISCHARGE: EMSMode.DISCHARGE_PV,
-                        S.NIGHT_HIGH_PV: EMSMode.DISCHARGE_PV,
-                        S.NIGHT_LOW_PV: EMSMode.BATTERY_STANDBY,
-                        S.NIGHT_GRID_CHARGE: EMSMode.CHARGE_PV,
-                        S.PV_SURPLUS: EMSMode.CHARGE_PV,
-                    }
-                    target_mode = scenario_modes.get(
-                        new_scenario, EMSMode.BATTERY_STANDBY
-                    ).value
-                    self._mode_manager.request_change(
-                        battery_id="scenario",
-                        target_mode=target_mode,
-                        reason=f"Scenario transition → {new_scenario.value}",
-                    )
+                # Map scenario to target EMS mode
+                S = Scenario
+                scenario_modes: dict[Scenario, EMSMode] = {
+                    S.MORNING_DISCHARGE: EMSMode.DISCHARGE_PV,
+                    S.FORENOON_PV_EV: EMSMode.CHARGE_PV,
+                    S.MIDDAY_CHARGE: EMSMode.CHARGE_PV,
+                    S.EVENING_DISCHARGE: EMSMode.DISCHARGE_PV,
+                    S.NIGHT_HIGH_PV: EMSMode.DISCHARGE_PV,
+                    S.NIGHT_LOW_PV: EMSMode.BATTERY_STANDBY,
+                    S.NIGHT_GRID_CHARGE: EMSMode.CHARGE_PV,
+                    S.PV_SURPLUS: EMSMode.CHARGE_PV,
+                }
+                base_mode = scenario_modes.get(
+                    new_scenario, EMSMode.BATTERY_STANDBY
+                ).value
+                # Set mode on EACH battery — adjust for SoC
+                for bat in snapshot.batteries:
+                    if not self._mode_manager.is_in_progress(bat.battery_id):
+                        # At 100% SoC: standby (don't charge a full battery)
+                        if bat.soc_pct >= MAX_SOC_PCT and base_mode in (
+                            EMSMode.CHARGE_PV.value,
+                        ):
+                            target_mode = EMSMode.BATTERY_STANDBY.value
+                        else:
+                            target_mode = base_mode
+                        self._mode_manager.request_change(
+                            battery_id=bat.battery_id,
+                            target_mode=target_mode,
+                            reason=f"Scenario {new_scenario.value}",
+                        )
                 self._sm.transition_to(new_scenario)
                 result.scenario = new_scenario
 
