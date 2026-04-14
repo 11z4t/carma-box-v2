@@ -415,7 +415,7 @@ class CarmaBoxService:
                 current_peak_kw=_grid_float(grid_ents.entity_current_peak),
                 dynamic_tak_kw=_grid_float(grid_ents.entity_dynamic_tak, 3.0),
                 pv_total_w=pv_total,
-                price_ore=_grid_float(cfg.pricing.entity, 100.0),
+                price_ore=_grid_float(cfg.pricing.entity, 100.0) * 100,
                 pv_forecast_today_kwh=_grid_float(cfg.pv_forecast.entity_today),
                 pv_forecast_tomorrow_kwh=_grid_float(cfg.pv_forecast.entity_tomorrow),
             )
