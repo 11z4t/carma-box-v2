@@ -17,8 +17,9 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Protocol
 
+from adapters.ha_api import HAApiClient
 from core.guards import GuardCommand
 from core.mode_change import ModeChangeManager
 from core.models import Command, CommandType, EMSMode
@@ -68,7 +69,7 @@ class AuditEntry:
     timestamp: float         # monotonic
     command_type: str
     target_id: str
-    value: Any
+    value: int | float | str | bool | None
     rule_id: str
     reason: str
     success: bool
@@ -125,7 +126,7 @@ class CommandExecutor:
         consumers: dict[str, LoadPort] | None = None,
         mode_manager: ModeChangeManager | None = None,
         config: ExecutorConfig | None = None,
-        ha_api: Any | None = None,
+        ha_api: HAApiClient | None = None,
     ) -> None:
         self._inverters = inverters
         self._ev = ev_charger
