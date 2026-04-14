@@ -539,22 +539,30 @@ class CarmaBoxService:
             logger.error("Manual override read failed: %s", exc)
 
     async def _collect_consumers(self) -> list[ConsumerState]:
-        """Read consumer states from HA based on site.yaml config."""
+        """Read consumer states from HA via batch fetch (V5: 1 HTTP call)."""
         if not self._ha_api or not self._consumer_configs:
             return []
 
+        # Collect all entity IDs for one batch fetch
+        entity_ids: list[str] = []
+        for cc in self._consumer_configs:
+            if cc.entity_switch:
+                entity_ids.append(cc.entity_switch)
+            if cc.entity_power:
+                entity_ids.append(cc.entity_power)
+
+        batch = await self._ha_api.get_states_batch(entity_ids)
+
         consumers: list[ConsumerState] = []
         for cc in self._consumer_configs:
-            # Read switch state and power from HA
             active = False
             power = 0.0
             if cc.entity_switch:
-                state = await self._ha_api.get_state(cc.entity_switch)
-                active = state == "on"
+                switch_state = batch.get(cc.entity_switch, {})
+                active = switch_state.get("state") == "on"
             if cc.entity_power:
-                power_str = await self._ha_api.get_state(
-                    cc.entity_power,
-                )
+                power_state = batch.get(cc.entity_power, {})
+                power_str = power_state.get("state")
                 if (
                     power_str is None
                     or power_str in ("", "unavailable", "unknown")

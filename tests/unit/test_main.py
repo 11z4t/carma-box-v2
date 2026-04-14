@@ -270,17 +270,14 @@ class TestCollectConsumers:
         cfg = load_config(config_path)
 
         mock_api = AsyncMock()
-        # Simulate: miner ON at 380W, vp_kontor OFF
-        async def fake_get_state(entity: str) -> str:
-            responses: dict[str, str] = {
-                "switch.shelly1pmg4_a085e3bd1e60": "on",
-                "sensor.appliance_total_effekt": "380.5",
-                "switch.shellypro1pm_30c6f78289b8_switch_0": "off",
-                "sensor.carma_effekt_vp_kontor": "0",
-            }
-            return responses.get(entity, "0")
-
-        mock_api.get_state = AsyncMock(side_effect=fake_get_state)
+        # V5: batch fetch returns dict of entity_id → state dict
+        batch_data: dict[str, dict[str, str]] = {
+            "switch.shelly1pmg4_a085e3bd1e60": {"state": "on"},
+            "sensor.appliance_total_effekt": {"state": "380.5"},
+            "switch.shellypro1pm_30c6f78289b8_switch_0": {"state": "off"},
+            "sensor.carma_effekt_vp_kontor": {"state": "0"},
+        }
+        mock_api.get_states_batch = AsyncMock(return_value=batch_data)
         mock_api.health_check = AsyncMock(return_value=True)
 
         service = CarmaBoxService(cfg, ha_api=mock_api)
@@ -307,20 +304,20 @@ class TestCollectConsumers:
         cfg = load_config(config_path)
 
         mock_api = AsyncMock()
-        # pool_heater power sensor is offline → returns 'unavailable'
-        async def fake_get_state(entity: str) -> str:
-            if "power" in entity or "effekt" in entity:
-                return "unavailable"
-            return "off"
-
-        mock_api.get_state = AsyncMock(side_effect=fake_get_state)
+        # V5: batch fetch — power sensors return 'unavailable'
+        batch_data: dict[str, dict[str, str]] = {}
+        for cc in cfg.consumers:
+            if cc.entity_switch:
+                batch_data[cc.entity_switch] = {"state": "off"}
+            if cc.entity_power:
+                batch_data[cc.entity_power] = {"state": "unavailable"}
+        mock_api.get_states_batch = AsyncMock(return_value=batch_data)
         mock_api.health_check = AsyncMock(return_value=True)
 
         service = CarmaBoxService(cfg, ha_api=mock_api)
         # Must not raise
         consumers = await service._collect_consumers()
         assert len(consumers) > 0
-        # All power values should be 0.0 (fallback) or cc.power_w
         for c in consumers:
             assert isinstance(c.power_w, float)
 
