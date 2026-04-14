@@ -42,8 +42,11 @@ EV_EVENT_STOP = "stop_ev_charging"
 # Matches the CARMA Box 30-second control loop
 CYCLE_INTERVAL_S: float = 30.0
 
+# Seconds per hour — used for W×s → kWh conversion
+_SECONDS_PER_HOUR: float = 3600.0
+
 # Watts-to-kWh conversion factor for one cycle interval
-_WH_PER_CYCLE = CYCLE_INTERVAL_S / 3600.0
+_WH_PER_CYCLE = CYCLE_INTERVAL_S / _SECONDS_PER_HOUR
 
 # PV source inference thresholds (fraction of total power that is PV-sourced)
 _PV_DOMINANT_THRESHOLD: float = 0.8  # PV covers ≥80% → source = "pv"
@@ -180,7 +183,7 @@ class EnergySessionTracker:
         """Compute final metrics and write completed battery session to DB."""
         avg_power_w = sess.sum_power_w / sess.sample_count if sess.sample_count > 0 else 0.0
         duration_s = _iso_diff_s(sess.started_at, ended_at)
-        energy_kwh = avg_power_w * duration_s / 3600.0
+        energy_kwh = avg_power_w * duration_s / _SECONDS_PER_HOUR
 
         # Determine source from last known snapshot
         source = _infer_source(snapshot, sess.battery_id)
