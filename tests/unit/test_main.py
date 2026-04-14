@@ -326,6 +326,83 @@ class TestForceReplan:
 
 
 # ===========================================================================
+# PLAT-1583: Health + metrics HTTP handler tests
+# ===========================================================================
+
+
+@pytest.mark.asyncio()
+class TestHealthHandlers:
+    """F1: Test _handle_health and _handle_metrics handlers."""
+
+    async def test_handle_health_returns_json(self) -> None:
+        """F1a: /health returns JSON with expected fields."""
+        from unittest.mock import MagicMock
+
+        from config.schema import load_config
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+        service = CarmaBoxService(cfg)
+
+        mock_request = MagicMock()
+        response = await service._handle_health(mock_request)
+
+        assert response.content_type == "application/json"
+        import json
+        body = json.loads(response.text)
+        assert "status" in body
+        assert "scenario" in body
+        assert "uptime_s" in body
+        assert "guard_level" in body
+
+    async def test_handle_metrics_returns_prometheus(self) -> None:
+        """F1b: /metrics returns Prometheus text format."""
+        from unittest.mock import MagicMock
+
+        from config.schema import load_config
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+        service = CarmaBoxService(cfg)
+
+        mock_request = MagicMock()
+        response = await service._handle_metrics(mock_request)
+
+        assert response.content_type == "text/plain"
+        text = response.text
+        assert "# HELP carma_cycles_total" in text
+        assert "carma_cycles_total" in text
+
+    async def test_health_status_reflects_guard_level(self) -> None:
+        """F1c: guard_level in health JSON matches what was set."""
+        from unittest.mock import MagicMock
+
+        from config.schema import load_config
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+        service = CarmaBoxService(cfg)
+        service._health.guard_level = "freeze"
+
+        mock_request = MagicMock()
+        response = await service._handle_health(mock_request)
+
+        import json
+        body = json.loads(response.text)
+        assert body["guard_level"] == "freeze"
+
+    def test_health_port_from_config(self) -> None:
+        """F1d: Port 8412 is NOT a naked literal in main.py."""
+        source = Path(__file__).resolve().parents[2] / "main.py"
+        text = source.read_text()
+        # 8412 should only appear in comments or not at all
+        for i, line in enumerate(text.splitlines(), 1):
+            stripped = line.strip()
+            if "8412" in stripped and not stripped.startswith("#"):
+                assert False, f"Naked 8412 at main.py:{i}: {stripped}"
+
+
+# ===========================================================================
 # PLAT-1369: Consumer wiring tests
 # ===========================================================================
 
