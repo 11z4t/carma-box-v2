@@ -295,3 +295,55 @@ class TestExceptionHandling:
                 mock_logger.error.assert_called_once()
                 call_kwargs = mock_logger.error.call_args
                 assert call_kwargs[1].get("exc_info") is True
+
+
+# ---------------------------------------------------------------------------
+# PLAT-1581: C6+C7+C8 — FREEZE skip + sentinel price + skip logging
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+class TestFreezeSkipsPlan:
+    """C6: Engine skips planner call when FREEZE guard active."""
+
+    async def test_engine_skips_plan_on_freeze(self) -> None:
+        """FREEZE guard → planner NOT called."""
+        executor, _ = _make_executor(GuardLevel.FREEZE)
+        snap = _make_snapshot(hour=22)
+
+        with patch.object(
+            executor._planner, "generate_night_plan",
+        ) as mock_plan:
+            await executor.generate(snap)
+            mock_plan.assert_not_called()
+
+    async def test_engine_logs_skip_reason(self) -> None:
+        """C8: Skip reason logged with guard level and violations."""
+        executor, _ = _make_executor(GuardLevel.FREEZE)
+        snap = _make_snapshot(hour=22)
+
+        with patch("core.plan_executor.logger") as mock_logger:
+            await executor.generate(snap)
+            mock_logger.warning.assert_called_once()
+            log_msg = mock_logger.warning.call_args[0][0]
+            assert "SKIP" in log_msg
+            assert "FREEZE" in log_msg
+
+
+class TestPlannerFallbackPrice:
+    """C7: Missing price data uses _PRICE_SORT_SENTINEL_ORE."""
+
+    def test_missing_hours_sorted_last(self) -> None:
+        """Hours without price data should sort last (highest sentinel)."""
+        from core.planner import Planner
+
+        planner = Planner()
+        hours = [22, 23, 0, 1, 2]
+        prices = {22: 50.0, 0: 30.0, 2: 80.0}  # 23 and 1 missing
+        result = planner._sort_by_cheapest(hours, prices)
+        # 0(30) < 22(50) < 2(80) < 23(999) < 1(999)
+        assert result[0] == 0
+        assert result[1] == 22
+        assert result[2] == 2
+        # 23 and 1 should be at the end (sentinel price)
+        assert set(result[3:]) == {23, 1}

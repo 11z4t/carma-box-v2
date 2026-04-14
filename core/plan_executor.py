@@ -87,9 +87,10 @@ class PlanExecutor:
         )
         if guard_eval.level in _BLOCKING_GUARD_LEVELS:
             logger.warning(
-                "PlanExecutor: skipping plan at hour %d — guard level %s",
+                "PlanExecutor: SKIP reason=FREEZE hour=%d guard=%s violations=%s",
                 snapshot.hour,
                 guard_eval.level.value,
+                guard_eval.violations,
             )
             return
 
