@@ -201,9 +201,11 @@ class GridGuard:
     ) -> None:
         """Detect unintentional grid charging.
 
-        Conditions A and B always run (detect unintentional charging).
-        Condition C skipped during NIGHT_GRID_CHARGE (intentional grid charge).
+        EXCEPTION: During NIGHT_GRID_CHARGE, grid charging is intentional.
         """
+        if scenario == Scenario.NIGHT_GRID_CHARGE:
+            return
+
         for bat in batteries:
             # Condition A: ems_power_limit > 0 in charge_pv
             if (
@@ -250,9 +252,6 @@ class GridGuard:
                 )
 
             # Condition C: charging from grid at night (no PV)
-            # Skip during NIGHT_GRID_CHARGE — intentional grid charging
-            if scenario == Scenario.NIGHT_GRID_CHARGE:
-                continue
             # PLAT-1357: thresholds sourced from config (g0_charging_power_threshold_w,
             # g0_min_pv_power_w) instead of hardcoded -100W and 50W.
             if (
