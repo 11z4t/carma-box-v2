@@ -497,3 +497,16 @@ class TestManualOverride:
 
         assert service._engine is not None
         assert service._engine._sm._manual_override is None
+
+
+class TestEntityDomain:
+    """PLAT-1464: _entity_domain extracts domain from entity_id."""
+
+    def test_switch(self) -> None:
+        assert CarmaBoxService._entity_domain("switch.pump") == "switch"
+
+    def test_input_boolean(self) -> None:
+        assert CarmaBoxService._entity_domain("input_boolean.flag") == "input_boolean"
+
+    def test_no_dot_fallback(self) -> None:
+        assert CarmaBoxService._entity_domain("no_dot") == "homeassistant"
