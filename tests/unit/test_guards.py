@@ -611,6 +611,16 @@ class TestPlat1357G3BreachEmitsStopEv:
         assert len(set_current_cmds) >= 1
         assert set_current_cmds[0].value == 6
 
+    def test_g3_breach_emits_turn_off_consumer(self, guard: GridGuard) -> None:
+        """N3: G3 BREACH must shed all consumers."""
+        result = _eval(guard, weighted_avg_kw=3.1, hour=12)
+        off_cmds = [
+            c for c in result.commands
+            if c.command_type == CommandType.TURN_OFF_CONSUMER
+        ]
+        assert len(off_cmds) >= 1
+        assert off_cmds[0].target_id == "all"
+
     def test_g3_critical_still_emits_stop_ev(self, guard: GridGuard) -> None:
         """G3 CRITICAL also emits STOP_EV_CHARGING (existing behaviour)."""
         # CRITICAL when weighted_avg > tak * 1.10 = 3.3 kW
@@ -622,3 +632,12 @@ class TestPlat1357G3BreachEmitsStopEv:
             if c.command_type == CommandType.STOP_EV_CHARGING
         ]
         assert len(stop_ev_cmds) >= 1
+
+    def test_g3_critical_emits_turn_off_consumer(self, guard: GridGuard) -> None:
+        """N3: G3 CRITICAL must shed all consumers."""
+        result = _eval(guard, weighted_avg_kw=3.5, hour=12)
+        off_cmds = [
+            c for c in result.commands
+            if c.command_type == CommandType.TURN_OFF_CONSUMER
+        ]
+        assert len(off_cmds) >= 1
