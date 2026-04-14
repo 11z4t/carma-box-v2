@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from enum import Enum, unique
 from typing import Optional
 
+from core.models import ApplianceState
+
 logger = logging.getLogger(__name__)
 
 
@@ -131,6 +133,7 @@ class EVController:
         self._last_known_soc: float = -1.0
         self._last_soc_time: float = 0.0
         self._was_connected: bool = True  # Assume connected at startup (no false trigger)
+        self._prev_active_appliances: set[str] = set()  # entity_ids active last cycle
 
     @property
     def timers(self) -> EVTimers:
@@ -147,6 +150,8 @@ class EVController:
         reason_for_no_current: str = "",
         is_night: bool = False,
         pv_surplus_w: float = 0.0,
+        appliances: list[ApplianceState] | None = None,
+        ramp_pause_on_new_load: bool = True,
     ) -> EVResult:
         """Evaluate EV charging decision.
 
@@ -213,6 +218,27 @@ class EVController:
                 action=EVAction.STOP,
                 reason=f"Day — PV surplus lost ({pv_surplus_w:.0f}W), stop EV",
             )
+
+        # Detect new appliance start — pause ramp to protect headroom (PLAT-1535)
+        if ramp_pause_on_new_load and appliances:
+            active_now = {a.entity_id for a in appliances if a.active}
+            new_loads = active_now - self._prev_active_appliances
+            self._prev_active_appliances = active_now
+            if new_loads and charging:
+                names = ", ".join(
+                    f"{a.name} ({a.power_w:.0f}W)"
+                    for a in appliances
+                    if a.entity_id in new_loads
+                )
+                logger.info(
+                    "EV ramp paused: new appliance load detected (%s)", names
+                )
+                return EVResult(
+                    action=EVAction.NO_CHANGE,
+                    reason=f"New appliance detected: {names}",
+                )
+        elif appliances is not None:
+            self._prev_active_appliances = {a.entity_id for a in appliances if a.active}
 
         # Emergency cut at severe Ellevio breach (> 1kW over)
         if ellevio_headroom_w < self._config.emergency_headroom_w and charging:

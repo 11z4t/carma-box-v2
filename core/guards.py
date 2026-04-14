@@ -153,6 +153,7 @@ class GridGuard:
         ha_connected: bool,
         data_age_s: float = 0.0,
         stale_entities: Optional[list[str]] = None,
+        appliance_kw: float = 0.0,
     ) -> GuardEvaluation:
         """Run all guards in priority order, collect commands.
 
@@ -174,9 +175,9 @@ class GridGuard:
         self._check_g6_stale_data(data_age_s, stale_entities or [], result)
         self._check_g7_communication(ha_connected, result)
 
-        # Calculate headroom
+        # Calculate headroom — subtract active appliance load (PLAT-1535)
         effective_tak = self._effective_tak_kw(hour)
-        result.headroom_kw = effective_tak - weighted_avg_kw
+        result.headroom_kw = effective_tak - weighted_avg_kw - appliance_kw
 
         return result
 

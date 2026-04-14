@@ -52,6 +52,10 @@ class CTPlacement(Enum):
 # Maximum battery state-of-charge (physical ceiling — cannot exceed 100 %)
 MAX_SOC_PCT: float = 100.0
 
+# Appliance detection thresholds (Shelly sensors)
+DEFAULT_APPLIANCE_START_W: float = 50.0   # power above this → appliance active
+DEFAULT_APPLIANCE_STOP_W: float = 10.0    # power below this → appliance stopped
+
 
 @unique
 class Scenario(Enum):
@@ -145,6 +149,16 @@ class GridState:
     price_ore: float                   # Current electricity price
     pv_forecast_today_kwh: float       # Remaining PV forecast today
     pv_forecast_tomorrow_kwh: float    # PV forecast tomorrow
+
+
+@dataclass(frozen=True)
+class ApplianceState:
+    """Point-in-time state of a monitored Shelly appliance."""
+
+    entity_id: str
+    name: str
+    active: bool
+    power_w: float
 
 
 @dataclass(frozen=True)
@@ -274,6 +288,7 @@ class SystemSnapshot:
     minute: int
     night_start_h: int = 22
     night_end_h: int = 6
+    appliances: list[ApplianceState] = field(default_factory=list)
 
     @property
     def total_battery_soc_pct(self) -> float:
@@ -292,6 +307,11 @@ class SystemSnapshot:
     def is_night(self) -> bool:
         """Whether current time is in the night window (22:00-06:00)."""
         return self.hour >= self.night_start_h or self.hour < self.night_end_h
+
+    @property
+    def total_appliance_kw(self) -> float:
+        """Total active appliance load in kW."""
+        return sum(a.power_w for a in self.appliances if a.active) / 1000.0
 
     @property
     def available_surplus_w(self) -> float:

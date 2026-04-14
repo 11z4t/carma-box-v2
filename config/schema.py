@@ -255,6 +255,38 @@ class EVConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Appliance monitoring
+# ---------------------------------------------------------------------------
+
+
+class ApplianceConfig(BaseModel):
+    """Configuration for a single Shelly-monitored appliance."""
+
+    id: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1)
+    entity_id: str = Field(..., min_length=1, description="HA power sensor entity ID")
+    start_threshold_w: float = Field(
+        default=50.0, ge=0.0, le=10000.0,
+        description="Power above this (W) -> appliance considered active",
+    )
+    stop_threshold_w: float = Field(
+        default=10.0, ge=0.0, le=1000.0,
+        description="Power below this (W) -> appliance considered stopped",
+    )
+
+
+class ApplianceMonitorConfig(BaseModel):
+    """Appliance monitoring and EV ramp interaction configuration."""
+
+    enabled: bool = Field(default=True)
+    appliances: list[ApplianceConfig] = Field(default_factory=list)
+    ramp_pause_on_new_load: bool = Field(
+        default=True,
+        description="Pause EV ramp when a new appliance starts",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Consumers
 # ---------------------------------------------------------------------------
 
@@ -657,6 +689,7 @@ class CarmaConfig(BaseModel):
     ev_charger: EVChargerConfig
     ev: EVConfig
     consumers: list[ConsumerConfig] = Field(default_factory=list)
+    appliance_monitor: ApplianceMonitorConfig = Field(default_factory=ApplianceMonitorConfig)
     surplus: SurplusConfig = Field(default_factory=SurplusConfig)
     pricing: PricingConfig = Field(default_factory=PricingConfig)
     pv_forecast: PVForecastConfig = Field(default_factory=PVForecastConfig)
