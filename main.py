@@ -187,6 +187,9 @@ class CarmaBoxService:
             max_switches_per_window=surplus_cfg.max_switches_per_window,
             switch_window_s=surplus_cfg.switch_window_min * 60,
             bump_delay_s=surplus_cfg.bump_delay_s,
+            deadband_w=float(config.control.deadband.normal_w),
+            doubled_deadband_w=float(config.control.deadband.doubled_w),
+            doubled_deadband_s=float(config.control.deadband.doubled_duration_s),
         ))
         self._consumer_configs = config.consumers
 
