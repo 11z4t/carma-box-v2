@@ -17,11 +17,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from core.balancer import BatteryBalancer
-from core.engine import ControlEngine
+from core.engine import ControlEngine, _ScenarioMode
 from core.executor import CommandExecutor, ExecutorConfig
 from core.guards import GridGuard, GuardConfig
 from core.mode_change import ModeChangeConfig, ModeChangeManager
-from core.models import Scenario
+from core.models import EMSMode, Scenario
 from core.state_machine import StateMachine, StateMachineConfig
 from tests.conftest import make_battery_state, make_snapshot
 
@@ -293,3 +293,86 @@ class TestModeManagerProcessCalled:
         # FREEZE/ALARM returns early — mode manager process() is in the try block
         # after the FREEZE check, so it must NOT be called
         mock_process.assert_not_awaited()
+
+
+# ===========================================================================
+# PLAT-1570: Scenario→mode pipeline — class attribute + per-battery + limits
+# ===========================================================================
+
+
+class TestScenarioModesClassAttribute:
+    """AC2: _SCENARIO_MODES must be a class-level dict."""
+
+    def test_is_class_attribute(self) -> None:
+        assert hasattr(ControlEngine, "_SCENARIO_MODES")
+
+    def test_covers_all_scenarios(self) -> None:
+        for scenario in Scenario:
+            assert scenario in ControlEngine._SCENARIO_MODES
+
+    def test_values_are_scenario_mode(self) -> None:
+        for scenario, sm in ControlEngine._SCENARIO_MODES.items():
+            assert isinstance(sm, _ScenarioMode)
+
+
+class TestForenoonPvEvLimit:
+    """AC3: FORENOON_PV_EV → CHARGE_PV with ems_power_limit=0."""
+
+    def test_mode_is_charge_pv(self) -> None:
+        sm = ControlEngine._SCENARIO_MODES[Scenario.FORENOON_PV_EV]
+        assert sm.mode == EMSMode.CHARGE_PV
+
+    def test_ems_limit_is_zero(self) -> None:
+        sm = ControlEngine._SCENARIO_MODES[Scenario.FORENOON_PV_EV]
+        assert sm.ems_power_limit == 0
+
+
+@pytest.mark.asyncio
+class TestPerBatteryModeChange:
+    """AC1: request_change per battery_id, not hardcoded 'scenario'."""
+
+    async def test_scenario_change_calls_per_battery(self) -> None:
+        """2 batteries + scenario transition → 2 request_change calls."""
+        engine = _make_engine()
+        # Add second inverter mock
+        inv_mock2 = AsyncMock()
+        inv_mock2.set_ems_mode = AsyncMock(return_value=True)
+        inv_mock2.set_ems_power_limit = AsyncMock(return_value=True)
+        inv_mock2.set_fast_charging = AsyncMock(return_value=True)
+        inv_mock2.get_fast_charging = AsyncMock(return_value=False)
+        inv_mock2.get_ems_mode = AsyncMock(return_value="battery_standby")
+        engine._executor._inverters["forrad"] = inv_mock2
+
+        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        engine._sm.state.entry_time = datetime(2026, 4, 12, 11, 0, tzinfo=timezone.utc)
+
+        snap = make_snapshot(
+            hour=17,
+            batteries=[
+                make_battery_state(battery_id="kontor", soc_pct=60.0),
+                make_battery_state(battery_id="forrad", soc_pct=55.0),
+            ],
+        )
+
+        with patch.object(
+            engine._mode_manager, "request_change",
+            wraps=engine._mode_manager.request_change,
+        ) as mock_rc:
+            await engine.run_cycle(snap)
+
+        calls = mock_rc.call_args_list
+        battery_ids = [c.kwargs.get("battery_id") for c in calls]
+        assert "kontor" in battery_ids
+        assert "forrad" in battery_ids
+        assert len(calls) == 2
+
+
+class TestNoHardcodedScenarioString:
+    """REGRESSION: engine.py must not have battery_id='scenario'."""
+
+    def test_no_scenario_string_as_battery_id(self) -> None:
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[2] / "core" / "engine.py").read_text()
+        assert 'battery_id="scenario"' not in source
+        assert "battery_id='scenario'" not in source

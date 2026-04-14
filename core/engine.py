@@ -54,12 +54,33 @@ class CycleResult:
     error: Optional[str] = None
 
 
+class _ScenarioMode:
+    """EMS mode + power limit for a scenario."""
+
+    __slots__ = ("mode", "ems_power_limit")
+
+    def __init__(self, mode: EMSMode, ems_power_limit: int = 0) -> None:
+        self.mode = mode
+        self.ems_power_limit = ems_power_limit
+
+
 class ControlEngine:
     """Main 30-second control loop engine.
 
     Coordinates all components: guards, state machine, balancer,
     mode change manager, and command executor.
     """
+
+    _SCENARIO_MODES: dict[Scenario, _ScenarioMode] = {
+        Scenario.MORNING_DISCHARGE: _ScenarioMode(EMSMode.DISCHARGE_PV),
+        Scenario.FORENOON_PV_EV: _ScenarioMode(EMSMode.CHARGE_PV, ems_power_limit=0),
+        Scenario.MIDDAY_CHARGE: _ScenarioMode(EMSMode.CHARGE_PV),
+        Scenario.EVENING_DISCHARGE: _ScenarioMode(EMSMode.DISCHARGE_PV),
+        Scenario.NIGHT_HIGH_PV: _ScenarioMode(EMSMode.DISCHARGE_PV),
+        Scenario.NIGHT_LOW_PV: _ScenarioMode(EMSMode.BATTERY_STANDBY),
+        Scenario.NIGHT_GRID_CHARGE: _ScenarioMode(EMSMode.CHARGE_PV),
+        Scenario.PV_SURPLUS: _ScenarioMode(EMSMode.CHARGE_PV),
+    }
 
     def __init__(
         self,
@@ -136,18 +157,11 @@ class ControlEngine:
                 # Route through ModeChangeManager for 5-step standby
                 # (prevents B1/B2 firmware hangs from direct transitions)
                 # Map scenario to target EMS mode
-                S = Scenario
-                scenario_modes: dict[Scenario, EMSMode] = {
-                    S.MORNING_DISCHARGE: EMSMode.DISCHARGE_PV,
-                    S.FORENOON_PV_EV: EMSMode.CHARGE_PV,
-                    S.MIDDAY_CHARGE: EMSMode.CHARGE_PV,
-                    S.EVENING_DISCHARGE: EMSMode.DISCHARGE_PV,
-                    S.NIGHT_HIGH_PV: EMSMode.DISCHARGE_PV,
-                    S.NIGHT_LOW_PV: EMSMode.BATTERY_STANDBY,
-                    S.NIGHT_GRID_CHARGE: EMSMode.CHARGE_PV,
-                    S.PV_SURPLUS: EMSMode.CHARGE_PV,
-                }
-                base_mode = scenario_modes.get(new_scenario, EMSMode.BATTERY_STANDBY).value
+                sm = self._SCENARIO_MODES.get(
+                    new_scenario,
+                    _ScenarioMode(EMSMode.BATTERY_STANDBY),
+                )
+                base_mode = sm.mode.value
                 # Set mode on EACH battery — adjust for SoC
                 for bat in snapshot.batteries:
                     if not self._mode_manager.is_in_progress(bat.battery_id):
@@ -159,6 +173,7 @@ class ControlEngine:
                         self._mode_manager.request_change(
                             battery_id=bat.battery_id,
                             target_mode=target_mode,
+                            target_limit_w=sm.ems_power_limit,
                             reason=f"Scenario {new_scenario.value}",
                         )
                 self._sm.transition_to(new_scenario)
