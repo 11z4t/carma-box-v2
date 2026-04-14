@@ -272,6 +272,8 @@ class SystemSnapshot:
     current_scenario: Scenario
     hour: int
     minute: int
+    night_start_h: int = 22
+    night_end_h: int = 6
 
     @property
     def total_battery_soc_pct(self) -> float:
@@ -289,7 +291,7 @@ class SystemSnapshot:
     @property
     def is_night(self) -> bool:
         """Whether current time is in the night window (22:00-06:00)."""
-        return self.hour >= 22 or self.hour < 6
+        return self.hour >= self.night_start_h or self.hour < self.night_end_h
 
     @property
     def available_surplus_w(self) -> float:
