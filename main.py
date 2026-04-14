@@ -620,8 +620,14 @@ class CarmaBoxService:
             ev_soc_str = await self._ha_api.get_state(cfg.ev.entities.soc)
             ev_soc = float(ev_soc_str) if ev_soc_str else -1.0
             ev_status = ev_batch.get(ev_ents.status, {}).get("state", "disconnected")
-            ev_connected = ev_status.lower() in (
-                "awaiting_start", "charging", "completed", "ready_to_charge",
+            ev_enabled = ev_batch.get(ev_ents.enabled, {}).get("state") == "on"
+            # Easee reports "disconnected" when disabled even if cable plugged in
+            # If disabled → assume connected (cable always plugged in at home)
+            ev_connected = (
+                ev_status.lower() in (
+                    "awaiting_start", "charging", "completed", "ready_to_charge",
+                )
+                or not ev_enabled  # disabled = car connected but charger off
             )
 
             def _ev_float(eid: str) -> float:
