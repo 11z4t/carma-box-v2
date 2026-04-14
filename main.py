@@ -353,7 +353,11 @@ class CarmaBoxService:
         pv_tomorrow = snapshot.grid.pv_forecast_tomorrow_kwh
         if self._last_pv_tomorrow > 0:
             delta_pct = abs(pv_tomorrow - self._last_pv_tomorrow) / self._last_pv_tomorrow
-            if delta_pct > 0.2:
+            replan_threshold = (
+                self._planner._config.pv_replan_threshold
+                if self._planner else 0.2
+            )
+            if delta_pct > replan_threshold:
                 pv_changed = True
                 logger.info(
                     "PV forecast changed %.0f → %.0f kWh (%.0f%%) — re-planning",
@@ -938,13 +942,19 @@ class CarmaBoxService:
             return
 
         hour = snapshot.hour
+        pc = self._planner._config
+        night_h = pc.night_start_hour
+        morning_h = pc.night_end_hour
+        evening_h = night_h - pc.evening_offset_h
+        midday_h = pc.daylight_end_hour  # 12 from daylight config
+
         bat_soc = snapshot.total_battery_soc_pct
         bat_cap = sum(b.cap_kwh for b in snapshot.batteries)
         ev = snapshot.ev
         pv_tomorrow = snapshot.grid.pv_forecast_tomorrow_kwh
 
         try:
-            if hour == 22:
+            if hour == night_h:
                 # Night plan: EV + bat charging strategy
                 plan = self._planner.generate_night_plan(
                     bat_soc_pct=bat_soc,
@@ -964,7 +974,7 @@ class CarmaBoxService:
                 logger.info("PLAN 22:00 — %s", plan_text)
                 self._active_night_plan = plan
 
-            elif hour == 17:
+            elif hour == evening_h:
                 # Evening plan: how much bat to use
                 eve_plan = self._planner.generate_evening_plan(
                     bat_soc_pct=bat_soc,
@@ -979,7 +989,7 @@ class CarmaBoxService:
                 logger.info("PLAN 17:00 — %s", plan_text)
                 self._active_evening_plan = eve_plan
 
-            elif hour == 6:
+            elif hour == morning_h:
                 # Morning review: what happened overnight
                 plan_text = (
                     f"Morning: bat {bat_soc:.0f}% "
@@ -988,7 +998,7 @@ class CarmaBoxService:
                 )
                 logger.info("PLAN 06:00 — %s", plan_text)
 
-            elif hour == 12:
+            elif hour == midday_h:
                 # Midday review: forenoon results
                 plan_text = (
                     f"Midday: bat {bat_soc:.0f}% "
@@ -1000,7 +1010,7 @@ class CarmaBoxService:
                 return
 
             # Generate 48h hourly plan at 22:00 and 06:00
-            if hour in (22, 6):
+            if hour in (night_h, morning_h):
                 today_plan, tomorrow_plan = self._generate_48h_plan(
                     snapshot, hour,
                 )
@@ -1014,7 +1024,7 @@ class CarmaBoxService:
 
             # Write summary to HA
             dash = self._config.dashboard
-            if hour in (22, 17):
+            if hour in (night_h, evening_h):
                 await self._ha_api.set_input_text(
                     dash.entity_plan_today, plan_text,
                 )

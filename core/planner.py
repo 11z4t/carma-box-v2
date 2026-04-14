@@ -58,6 +58,7 @@ class PlannerConfig:
     pv_min_kwh_per_h: float = 2.0
     weekend_ev_end_hour: int = 12
     evening_offset_h: int = 5  # night_start - this = discharge start
+    pv_replan_threshold: float = 0.2  # re-plan if PV changes >20%
 
     # House baseload
     house_baseload_kw: float = 2.5
