@@ -430,6 +430,27 @@ class CarmaBoxService:
                     severity=guard_level,
                 )
 
+        # Phase 9.5: SOC SNAPSHOT — daily at 00:00 and 06:00
+        if self._db and self._planner:
+            snap_hours = (0, self._planner._config.night_end_hour)
+            if snapshot.hour in snap_hours and snapshot.minute == 0 and self._cycle_count > 1:
+                try:
+                    from storage.local_db import EventLogEntry
+                    for bat in snapshot.batteries:
+                        await self._db.write_event(EventLogEntry(
+                            timestamp=snapshot.timestamp.isoformat(),
+                            event_type="soc_snapshot",
+                            source=bat.battery_id,
+                            message=f"SoC={bat.soc_pct:.1f}%",
+                            data=f"hour={snapshot.hour}",
+                        ))
+                    logger.info("SoC snapshot: %s", {
+                        b.battery_id: f"{b.soc_pct:.0f}%"
+                        for b in snapshot.batteries
+                    })
+                except Exception as exc:
+                    logger.debug("SoC snapshot: %s", exc)
+
         # Phase 10: PERSIST — write cycle to SQLite
         if self._db:
             try:
