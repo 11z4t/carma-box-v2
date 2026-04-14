@@ -50,7 +50,8 @@ class TestEllevioTrackerIntegration:
         tracker = EllevioTracker(EllevioConfig())
         guard = GridGuard(GuardConfig())
 
-        now = datetime.now(tz=timezone.utc)
+        # Fixed daytime datetime — avoids night-weight (0.5) halving the reading
+        now = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         # Simulate 1 hour of safe load to establish rolling average
         tracker.update(_SAFE_LOAD_KW, now)
 
@@ -82,7 +83,8 @@ class TestEllevioTrackerIntegration:
         tracker = EllevioTracker(EllevioConfig())
         guard = GridGuard(GuardConfig())
 
-        now = datetime.now(tz=timezone.utc)
+        # Fixed daytime datetime — avoids night-weight (0.5) halving the reading
+        now = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
         # Push tracker above tak
         tracker.update(_BREACH_LOAD_KW, now)
 
