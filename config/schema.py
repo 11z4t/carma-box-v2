@@ -140,6 +140,8 @@ class BatteryConfig(BaseModel):
     max_discharge_kw: float = Field(default=5.0, gt=0.0, le=25.0)
     max_charge_kw: float = Field(default=5.0, gt=0.0, le=25.0)
     efficiency: float = Field(default=0.90, ge=0.5, le=1.0)
+    default_cell_temp_c: float = Field(default=20.0, ge=-20.0, le=50.0)
+    default_soh_pct: float = Field(default=100.0, ge=0.0, le=100.0)
     ct_placement: CTPlacement = Field(
         ...,
         description="CT clamp placement: 'local_load' or 'house_grid'",
