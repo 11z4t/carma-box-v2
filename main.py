@@ -435,7 +435,9 @@ class CarmaBoxService:
             return None
 
         try:
-            now = datetime.now(tz=timezone.utc)
+            import zoneinfo
+            tz = zoneinfo.ZoneInfo(self._config.site.timezone)
+            now = datetime.now(tz=tz)
             cfg = self._config
 
             # Read battery states
