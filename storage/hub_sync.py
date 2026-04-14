@@ -93,8 +93,18 @@ class HubSync:
             try:
                 count = await self._sync_table(table)
                 results[table] = count
-            except Exception as exc:
-                logger.error("Hub sync failed for %s: %s", table, exc)
+            except OSError as exc:
+                logger.error(
+                    "Hub sync failed for %s (connection): %s",
+                    table, exc, exc_info=True,
+                )
+                results[table] = 0
+            except (ValueError, KeyError) as exc:
+                logger.error(
+                    "Hub sync failed for %s (data): %s",
+                    table, exc, exc_info=True,
+                )
+                results[table] = 0
                 results[table] = 0
         total = sum(results.values())
         if total > 0:

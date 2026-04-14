@@ -385,6 +385,7 @@ manual_override:
   scenario_entity: "input_select.carma_manual_scenario"
   strategy_entity: "input_select.goodwe_battery_strategy"
   discharge_target_entity: "input_number.goodwe_total_discharge_target"
+  force_replan_entity: "input_boolean.carma_force_replan"
   scenarios:
     - "Auto"
     - "MORNING_DISCHARGE"

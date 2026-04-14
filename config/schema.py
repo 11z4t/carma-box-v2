@@ -621,6 +621,7 @@ class ManualOverrideConfig(BaseModel):
     scenario_entity: str = Field(default="")
     strategy_entity: str = Field(default="")
     discharge_target_entity: str = Field(default="")
+    force_replan_entity: str = Field(default="")
     scenarios: list[str] = Field(default_factory=list)
 
 

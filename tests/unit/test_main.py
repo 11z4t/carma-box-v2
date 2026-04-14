@@ -252,6 +252,80 @@ class TestServiceCancellation:
 
 
 # ===========================================================================
+# Force replan + startup replan
+# ===========================================================================
+
+
+class TestForceReplan:
+    """Force replan via HA input_boolean + startup replan on first cycle."""
+
+    @pytest.mark.asyncio()
+    async def test_check_force_replan_on(self) -> None:
+        """When input_boolean is 'on', should return True and turn it off."""
+        from unittest.mock import AsyncMock
+
+        from config.schema import load_config
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+
+        mock_api = AsyncMock()
+        mock_api.get_state.return_value = "on"
+        mock_api.call_service.return_value = None
+        mock_api.health_check.return_value = True
+
+        service = CarmaBoxService(cfg, ha_api=mock_api)
+        result = await service._check_force_replan()
+        assert result is True
+        mock_api.call_service.assert_called_once()
+
+    @pytest.mark.asyncio()
+    async def test_check_force_replan_off(self) -> None:
+        """When input_boolean is 'off', should return False."""
+        from unittest.mock import AsyncMock
+
+        from config.schema import load_config
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+
+        mock_api = AsyncMock()
+        mock_api.get_state.return_value = "off"
+        mock_api.health_check.return_value = True
+
+        service = CarmaBoxService(cfg, ha_api=mock_api)
+        result = await service._check_force_replan()
+        assert result is False
+
+    @pytest.mark.asyncio()
+    async def test_check_force_replan_no_entity(self) -> None:
+        """When no entity configured, should return False."""
+        from unittest.mock import AsyncMock
+
+        from config.schema import load_config
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+        object.__setattr__(cfg.manual_override, "force_replan_entity", "")
+
+        mock_api = AsyncMock()
+        mock_api.health_check.return_value = True
+
+        service = CarmaBoxService(cfg, ha_api=mock_api)
+        result = await service._check_force_replan()
+        assert result is False
+
+    def test_startup_replan_flag(self) -> None:
+        """_last_plan_hour == -1 on init → startup replan on first cycle."""
+        from config.schema import load_config
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+        service = CarmaBoxService(cfg)
+        assert service._last_plan_hour == -1
+
+
+# ===========================================================================
 # PLAT-1369: Consumer wiring tests
 # ===========================================================================
 

@@ -380,11 +380,24 @@ class CarmaBoxService:
                 )
         self._last_pv_tomorrow = pv_tomorrow
 
+        # Startup replan: first cycle has no plan → generate immediately
+        startup_replan = self._last_plan_hour == -1
+
+        # Force replan via HA input_boolean
+        force_replan = await self._check_force_replan()
+
         scheduled = (
             snapshot.hour in plan_hours
             and snapshot.hour != self._last_plan_hour
         )
-        if self._planner and (scheduled or pv_changed):
+        if self._planner and (scheduled or pv_changed or startup_replan or force_replan):
+            reason = (
+                "startup" if startup_replan
+                else "force_replan" if force_replan
+                else "pv_changed" if pv_changed
+                else f"scheduled (hour={snapshot.hour})"
+            )
+            logger.info("Plan generation triggered: %s", reason)
             self._last_plan_hour = snapshot.hour
             await self._plan_executor.generate(snapshot)
 
@@ -861,6 +874,32 @@ class CarmaBoxService:
                 {"entity_id": ev_cfg.entities.enabled},
             )
             logger.warning("EV EMERGENCY CUT: %s", result.reason)
+
+    async def _check_force_replan(self) -> bool:
+        """Check HA input_boolean for force replan request.
+
+        If the entity is 'on', turn it off and return True.
+        """
+        if self._ha_api is None:
+            return False
+
+        entity = self._config.manual_override.force_replan_entity
+        if not entity:
+            return False
+
+        try:
+            state = await self._ha_api.get_state(entity)
+            if state == "on":
+                await self._ha_api.call_service(
+                    self._entity_domain(entity), "turn_off",
+                    {"entity_id": entity},
+                )
+                logger.info("Force replan triggered via %s", entity)
+                return True
+        except Exception as exc:
+            logger.error("Force replan check failed: %s", exc)
+
+        return False
 
     async def _apply_manual_override(self) -> None:
         """Read manual override helpers from HA and apply to state machine."""

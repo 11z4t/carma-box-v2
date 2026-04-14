@@ -10,6 +10,7 @@ wasting resources during emergency states.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import zoneinfo
 from datetime import datetime, timedelta
@@ -178,8 +179,16 @@ class PlanExecutor:
                     dash.entity_plan_today, plan_text,
                 )
 
-        except Exception as exc:
-            logger.error("Plan generation failed at %d:00: %s", hour, exc)
+        except (asyncio.TimeoutError, OSError) as exc:
+            logger.error(
+                "Plan generation failed at %d:00 (I/O): %s",
+                hour, exc, exc_info=True,
+            )
+        except (ValueError, KeyError) as exc:
+            logger.error(
+                "Plan generation failed at %d:00 (data): %s",
+                hour, exc, exc_info=True,
+            )
 
     def generate_48h(
         self,
