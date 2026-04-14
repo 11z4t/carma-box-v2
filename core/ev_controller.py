@@ -266,7 +266,7 @@ class EVController:
                 reason=f"At min {current_a}A with negative headroom, stopping",
             )
         next_down = self._next_step_down(current_a)
-        if next_down is not None and ellevio_headroom_w < -200:
+        if next_down is not None and ellevio_headroom_w < self._config.stop_headroom_w:
             self._timers.record_ramp()
             if next_down < self._config.min_amps:
                 self._timers.record_stop()
