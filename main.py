@@ -1003,6 +1003,7 @@ class CarmaBoxService:
         attrs: dict[str, object] = {
             "friendly_name": "CARMA Box Scenario",
             "cycle": self._cycle_count,
+            "hour": snapshot.hour,
             "battery_soc": bat_socs,
             "grid_power_w": round(snapshot.grid.grid_power_w),
             "pv_total_w": round(snapshot.grid.pv_total_w),
