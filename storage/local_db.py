@@ -1,6 +1,7 @@
 """SQLite Local Database for CARMA Box.
 
-Stores cycle logs, event logs, audit logs, and state persistence.
+Stores cycle logs, event logs, audit logs, state persistence,
+and energy session logs (battery/EV/PV).
 Uses aiosqlite for async operations.
 
 Tables:
@@ -8,6 +9,9 @@ Tables:
 - event_log: scenario transitions, EV events, guard triggers
 - audit_log: every command sent to hardware
 - state: key-value persistence (survives restart)
+- battery_session: charge/discharge sessions per battery (PLAT-1534)
+- ev_session: EV charging sessions (PLAT-1534)
+- pv_daily_summary: daily PV production totals (PLAT-1534)
 
 Auto-created on first run. Retention cleanup configurable.
 """
@@ -24,7 +28,17 @@ import aiosqlite
 logger = logging.getLogger(__name__)
 
 # Allowlist of valid table names — guards against SQL injection in dynamic queries
-ALLOWED_TABLES: frozenset[str] = frozenset({"cycle_log", "event_log", "audit_log", "state"})
+ALLOWED_TABLES: frozenset[str] = frozenset(
+    {
+        "cycle_log",
+        "event_log",
+        "audit_log",
+        "state",
+        "battery_session",
+        "ev_session",
+        "pv_daily_summary",
+    }
+)
 
 
 def _validate_table(table: str) -> str:
@@ -33,9 +47,7 @@ def _validate_table(table: str) -> str:
     Raises ValueError if the name is not in the allowlist.
     """
     if table not in ALLOWED_TABLES:
-        raise ValueError(
-            f"Invalid table name '{table}'. Must be one of: {sorted(ALLOWED_TABLES)}"
-        )
+        raise ValueError(f"Invalid table name '{table}'. Must be one of: {sorted(ALLOWED_TABLES)}")
     return table
 
 
@@ -44,7 +56,7 @@ def _validate_table(table: str) -> str:
 # ---------------------------------------------------------------------------
 
 # Increment when DDL changes require a migration.
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 
 async def _check_schema_version(db: aiosqlite.Connection) -> None:
@@ -57,9 +69,7 @@ async def _check_schema_version(db: aiosqlite.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS schema_version "
         "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
     )
-    cursor = await db.execute(
-        "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
-    )
+    cursor = await db.execute("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
     row = await cursor.fetchone()
     on_disk = int(row[0]) if row else 0
 
@@ -71,9 +81,11 @@ async def _check_schema_version(db: aiosqlite.Connection) -> None:
             f"{_SCHEMA_VERSION} — upgrade the application."
         )
     # on_disk < _SCHEMA_VERSION: apply missing migrations
-    from datetime import datetime, timezone
     now = datetime.now(tz=timezone.utc).isoformat()
-    # Migration from version 0 → 1: initial schema (tables created by _DDL above)
+    # Migration 0 → 1: initial schema (tables created by _DDL above)
+    # Migration 1 → 2: energy session tables (battery_session, ev_session, pv_daily_summary)
+    if on_disk < 2:  # noqa: PLR2004
+        await db.executescript(_DDL_V2)
     await db.execute(
         "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)",
         (_SCHEMA_VERSION, now),
@@ -133,6 +145,52 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_synced ON audit_log(synced);
 CREATE INDEX IF NOT EXISTS idx_cycle_log_timestamp ON cycle_log(timestamp);
 """
 
+# DDL for schema version 2: energy session tables (PLAT-1534)
+_DDL_V2 = """
+CREATE TABLE IF NOT EXISTS battery_session (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    site_id TEXT NOT NULL,
+    battery_id TEXT NOT NULL,
+    session_type TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT NOT NULL DEFAULT '',
+    duration_s REAL NOT NULL DEFAULT 0.0,
+    energy_kwh REAL NOT NULL DEFAULT 0.0,
+    source TEXT NOT NULL,
+    avg_power_w REAL NOT NULL DEFAULT 0.0,
+    synced INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS ev_session (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    site_id TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    ended_at TEXT NOT NULL DEFAULT '',
+    duration_s REAL NOT NULL DEFAULT 0.0,
+    energy_kwh REAL NOT NULL DEFAULT 0.0,
+    soc_start_pct REAL NOT NULL DEFAULT 0.0,
+    soc_end_pct REAL NOT NULL DEFAULT 0.0,
+    avg_current_a REAL NOT NULL DEFAULT 0.0,
+    synced INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS pv_daily_summary (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    site_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    pv_kwh_total REAL NOT NULL,
+    pv_kwh_kontor REAL NOT NULL,
+    pv_kwh_forrad REAL NOT NULL,
+    created_at TEXT NOT NULL,
+    synced INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(site_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_battery_session_synced ON battery_session(synced);
+CREATE INDEX IF NOT EXISTS idx_ev_session_synced ON ev_session(synced);
+CREATE INDEX IF NOT EXISTS idx_pv_daily_summary_synced ON pv_daily_summary(synced);
+"""
+
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -175,6 +233,70 @@ class AuditLogEntry:
     reason: str = ""
     success: bool = True
     error: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Energy session data models (PLAT-1534)
+# ---------------------------------------------------------------------------
+
+# Valid session_type values for battery_session
+SESSION_TYPE_CHARGE = "charge"
+SESSION_TYPE_DISCHARGE = "discharge"
+
+# Valid source values for battery_session
+SESSION_SOURCE_PV = "pv"
+SESSION_SOURCE_GRID = "grid"
+SESSION_SOURCE_MIXED = "mixed"
+
+
+@dataclass(frozen=True)
+class BatterySessionEntry:
+    """One row in battery_session.
+
+    Records a single charge or discharge session for one battery.
+    """
+
+    site_id: str
+    battery_id: str
+    session_type: str  # SESSION_TYPE_CHARGE or SESSION_TYPE_DISCHARGE
+    started_at: str  # ISO-8601 UTC
+    source: str  # SESSION_SOURCE_PV / GRID / MIXED
+    ended_at: str = ""
+    duration_s: float = 0.0
+    energy_kwh: float = 0.0
+    avg_power_w: float = 0.0
+
+
+@dataclass(frozen=True)
+class EVSessionEntry:
+    """One row in ev_session.
+
+    Records a single EV charging session.
+    """
+
+    site_id: str
+    started_at: str  # ISO-8601 UTC
+    soc_start_pct: float
+    ended_at: str = ""
+    duration_s: float = 0.0
+    energy_kwh: float = 0.0
+    soc_end_pct: float = 0.0
+    avg_current_a: float = 0.0
+
+
+@dataclass(frozen=True)
+class PVDailySummaryEntry:
+    """One row in pv_daily_summary.
+
+    Daily aggregated PV production, split by CT placement.
+    """
+
+    site_id: str
+    date: str  # YYYY-MM-DD
+    pv_kwh_total: float
+    pv_kwh_kontor: float
+    pv_kwh_forrad: float
+    created_at: str  # ISO-8601 UTC
 
 
 # ---------------------------------------------------------------------------
@@ -230,8 +352,15 @@ class LocalDB:
         await db.execute(
             "INSERT INTO cycle_log (cycle_id, timestamp, scenario, guard_level, "
             "headroom_kw, elapsed_s, violations) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (entry.cycle_id, entry.timestamp, entry.scenario,
-             entry.guard_level, entry.headroom_kw, entry.elapsed_s, entry.violations),
+            (
+                entry.cycle_id,
+                entry.timestamp,
+                entry.scenario,
+                entry.guard_level,
+                entry.headroom_kw,
+                entry.elapsed_s,
+                entry.violations,
+            ),
         )
         if commit:
             await db.commit()
@@ -263,8 +392,101 @@ class LocalDB:
         await db.execute(
             "INSERT INTO audit_log (timestamp, command_type, target_id, value, "
             "rule_id, reason, success, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (entry.timestamp, entry.command_type, entry.target_id, entry.value,
-             entry.rule_id, entry.reason, int(entry.success), entry.error),
+            (
+                entry.timestamp,
+                entry.command_type,
+                entry.target_id,
+                entry.value,
+                entry.rule_id,
+                entry.reason,
+                int(entry.success),
+                entry.error,
+            ),
+        )
+        if commit:
+            await db.commit()
+
+    async def write_battery_session(
+        self, entry: BatterySessionEntry, *, commit: bool = True
+    ) -> None:
+        """Write a battery session entry (PLAT-1534).
+
+        Args:
+            entry: The battery session row to insert.
+            commit: If False, skip the immediate commit (use for batch writes).
+        """
+        db = await self._ensure_db()
+        await db.execute(
+            "INSERT INTO battery_session "
+            "(site_id, battery_id, session_type, started_at, ended_at, "
+            "duration_s, energy_kwh, source, avg_power_w) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                entry.site_id,
+                entry.battery_id,
+                entry.session_type,
+                entry.started_at,
+                entry.ended_at,
+                entry.duration_s,
+                entry.energy_kwh,
+                entry.source,
+                entry.avg_power_w,
+            ),
+        )
+        if commit:
+            await db.commit()
+
+    async def write_ev_session(self, entry: EVSessionEntry, *, commit: bool = True) -> None:
+        """Write an EV session entry (PLAT-1534).
+
+        Args:
+            entry: The EV session row to insert.
+            commit: If False, skip the immediate commit (use for batch writes).
+        """
+        db = await self._ensure_db()
+        await db.execute(
+            "INSERT INTO ev_session "
+            "(site_id, started_at, ended_at, duration_s, energy_kwh, "
+            "soc_start_pct, soc_end_pct, avg_current_a) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                entry.site_id,
+                entry.started_at,
+                entry.ended_at,
+                entry.duration_s,
+                entry.energy_kwh,
+                entry.soc_start_pct,
+                entry.soc_end_pct,
+                entry.avg_current_a,
+            ),
+        )
+        if commit:
+            await db.commit()
+
+    async def upsert_pv_daily_summary(
+        self, entry: PVDailySummaryEntry, *, commit: bool = True
+    ) -> None:
+        """Upsert a PV daily summary entry (PLAT-1534).
+
+        Uses INSERT OR REPLACE so the same (site_id, date) pair is idempotent.
+
+        Args:
+            entry: The PV daily summary row to upsert.
+            commit: If False, skip the immediate commit (use for batch writes).
+        """
+        db = await self._ensure_db()
+        await db.execute(
+            "INSERT OR REPLACE INTO pv_daily_summary "
+            "(site_id, date, pv_kwh_total, pv_kwh_kontor, pv_kwh_forrad, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                entry.site_id,
+                entry.date,
+                entry.pv_kwh_total,
+                entry.pv_kwh_kontor,
+                entry.pv_kwh_forrad,
+                entry.created_at,
+            ),
         )
         if commit:
             await db.commit()
@@ -296,7 +518,8 @@ class LocalDB:
         """Load state by key. Returns None if not found."""
         db = await self._ensure_db()
         cursor = await db.execute(
-            "SELECT value FROM state WHERE key = ?", (key,),
+            "SELECT value FROM state WHERE key = ?",
+            (key,),
         )
         row = await cursor.fetchone()
         return row[0] if row else None

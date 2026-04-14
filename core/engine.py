@@ -35,6 +35,7 @@ from core.models import (
     SystemSnapshot,
 )
 from core.state_machine import StateMachine
+from storage.session_tracker import EV_EVENT_START, EV_EVENT_STOP, EnergySessionTracker
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ class ControlEngine:
         mode_manager: ModeChangeManager,
         executor: CommandExecutor,
         battery_configs: Optional[dict[str, BatteryConfig]] = None,
+        session_tracker: Optional[EnergySessionTracker] = None,
     ) -> None:
         self._guard = guard
         self._sm = state_machine
@@ -76,6 +78,8 @@ class ControlEngine:
         self._executor = executor
         # H2: per-battery capacity limits sourced from config (not hardcoded)
         self._battery_configs: dict[str, BatteryConfig] = battery_configs or {}
+        self._session_tracker = session_tracker
+        self._last_ev_charging: Optional[bool] = None
         self._cycle_count = 0
         self._last_plan_time = 0.0
 
@@ -120,7 +124,8 @@ class ControlEngine:
             # Phase 2: Check for FREEZE — skip decision engine
             if guard_eval.level in (GuardLevel.FREEZE, GuardLevel.ALARM):
                 logger.warning(
-                    "Cycle %s: FREEZE/ALARM — skipping decision engine", cycle_id,
+                    "Cycle %s: FREEZE/ALARM — skipping decision engine",
+                    cycle_id,
                 )
                 result.elapsed_s = time.monotonic() - start
                 return result
@@ -142,16 +147,12 @@ class ControlEngine:
                     S.NIGHT_GRID_CHARGE: EMSMode.CHARGE_PV,
                     S.PV_SURPLUS: EMSMode.CHARGE_PV,
                 }
-                base_mode = scenario_modes.get(
-                    new_scenario, EMSMode.BATTERY_STANDBY
-                ).value
+                base_mode = scenario_modes.get(new_scenario, EMSMode.BATTERY_STANDBY).value
                 # Set mode on EACH battery — adjust for SoC
                 for bat in snapshot.batteries:
                     if not self._mode_manager.is_in_progress(bat.battery_id):
                         # At 100% SoC: standby (don't charge a full battery)
-                        if bat.soc_pct >= MAX_SOC_PCT and base_mode in (
-                            EMSMode.CHARGE_PV.value,
-                        ):
+                        if bat.soc_pct >= MAX_SOC_PCT and base_mode in (EMSMode.CHARGE_PV.value,):
                             target_mode = EMSMode.BATTERY_STANDBY.value
                         else:
                             target_mode = base_mode
@@ -231,7 +232,8 @@ class ControlEngine:
                         result.execution = exec_result
                         logger.debug(
                             "Cycle %s: balance → %d EMS limit commands (%d ok, %d fail)",
-                            cycle_id, len(limit_cmds),
+                            cycle_id,
+                            len(limit_cmds),
                             exec_result.commands_succeeded,
                             exec_result.commands_failed,
                         )
@@ -239,18 +241,37 @@ class ControlEngine:
             # Phase 5: MODE CHANGE MANAGER — process pending changes
             await self._mode_manager.process(self._executor)
 
-            # Phase 6: PERSIST — write scenario to HA sensor (handled by caller)
+            # Phase 6: SESSION TRACKING — record energy sessions (PLAT-1534)
+            if self._session_tracker is not None:
+                for bat in snapshot.batteries:
+                    await self._session_tracker.on_battery_mode_change(
+                        bat.battery_id, bat.ems_mode.value, snapshot
+                    )
+                # Detect EV state change and emit event to tracker
+                ev_charging_now = snapshot.ev.charging
+                if ev_charging_now != self._last_ev_charging:
+                    if self._last_ev_charging is not None:
+                        ev_event = EV_EVENT_START if ev_charging_now else EV_EVENT_STOP
+                        await self._session_tracker.on_ev_event(ev_event, snapshot)
+                self._last_ev_charging = ev_charging_now
+                await self._session_tracker.update_pv_daily(snapshot)
+
+            # Phase 7: PERSIST — write scenario to HA sensor (handled by caller)
 
         except Exception as exc:
             logger.error(
-                "Cycle %s error: %s", cycle_id, exc, exc_info=True,
+                "Cycle %s error: %s",
+                cycle_id,
+                exc,
+                exc_info=True,
             )
             result.error = str(exc)
 
         result.elapsed_s = time.monotonic() - start
         logger.debug(
             "Cycle %s complete in %.3fs (scenario=%s, guard=%s)",
-            cycle_id, result.elapsed_s,
+            cycle_id,
+            result.elapsed_s,
             result.scenario.value,
             result.guard.level.value if result.guard else "none",
         )
