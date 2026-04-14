@@ -553,6 +553,21 @@ class CarmaBoxService:
                         return default
 
                 soc = _float(ents.soc)
+
+                # PLAT-1539: Detect GoodWe bridge offline
+                soc_state = batch.get(ents.soc, {}).get("state")
+                if soc_state in ("unavailable", "unknown"):
+                    logger.warning(
+                        "GoodWe %s OFFLINE — sensor unavailable",
+                        bat_cfg.id,
+                    )
+                    if self._slack:
+                        await self._slack.notify(
+                            "communication_lost",
+                            f"GoodWe {bat_cfg.id} bridge OFFLINE",
+                            severity="critical",
+                        )
+
                 floor = cfg.guards.g1_soc_floor.floor_pct  # From site.yaml
                 avail = max(0.0, (soc - floor) / 100.0 * bat_cfg.cap_kwh * bat_cfg.efficiency)
 
