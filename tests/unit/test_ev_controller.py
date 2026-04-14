@@ -378,3 +378,39 @@ class TestCoverageBranches:
         )
         # 50% SoC < 75% target, so should try to start
         assert result.action in (EVAction.START, EVAction.NO_CHANGE)
+
+
+class TestPVOnlyUsesConfig:
+    """PLAT-1487: PV surplus thresholds must use config, not hardcoded."""
+
+    def test_config_ramp_headroom_w(self) -> None:
+        """Custom ramp_headroom_w=800 → EV should NOT start at 600W surplus."""
+        ctrl = EVController(EVControllerConfig(
+            ramp_headroom_w=800.0,
+            step_interval_s=0,
+            cooldown_after_start_s=0,
+            cooldown_after_stop_s=0,
+        ))
+        result = ctrl.evaluate(
+            ev_connected=True, ev_soc_pct=50.0, charging=False,
+            current_amps=0, grid_import_w=0, ellevio_headroom_w=5000,
+            is_night=False, pv_surplus_w=600.0,
+        )
+        # 600 < 800 (config) → should NOT start
+        assert result.action == EVAction.NO_CHANGE
+        assert "surplus" in result.reason.lower() or "pv" in result.reason.lower()
+
+    def test_config_stop_headroom_w(self) -> None:
+        """Custom stop_headroom_w=-100 → EV stops at -150W surplus."""
+        ctrl = EVController(EVControllerConfig(
+            stop_headroom_w=-100.0,
+            step_interval_s=0,
+            cooldown_after_start_s=0,
+            cooldown_after_stop_s=0,
+        ))
+        result = ctrl.evaluate(
+            ev_connected=True, ev_soc_pct=50.0, charging=True,
+            current_amps=6, grid_import_w=150, ellevio_headroom_w=5000,
+            is_night=False, pv_surplus_w=-150.0,
+        )
+        assert result.action == EVAction.STOP

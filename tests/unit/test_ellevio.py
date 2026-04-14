@@ -90,3 +90,11 @@ class TestEllevioTracker:
             t.update(-2.0, datetime(2026, 4, 14, 12, m, 0))
         t.update(0, datetime(2026, 4, 14, 13, 0, 0))
         assert t.state.top_peaks[0] == 0.0
+
+    def test_cost_per_kw_from_config(self) -> None:
+        """monthly_cost_kr must use config cost_per_kw, not hardcoded 81.25."""
+        cfg = EllevioConfig(cost_per_kw=100.0)
+        t = EllevioTracker(cfg)
+        t.state.top_peaks = [2.0, 3.0, 4.0]
+        # avg = 3.0, cost = 3.0 * 100.0 = 300.0 (NOT 243.75 = 3.0 * 81.25)
+        assert abs(t.monthly_cost_kr - 300.0) < 0.01
