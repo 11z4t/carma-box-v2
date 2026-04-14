@@ -24,6 +24,7 @@ DEFAULT_CONSUMPTION_PROFILE: list[float] = (
 # EMA alpha: 10% new data, 90% history
 EMA_ALPHA = 0.1
 MIN_SAMPLES_FOR_LEARNED = 168  # 7 days x 24 hours
+CONSUMPTION_MAX_KW: float = 20.0  # Clamp unreasonable readings
 
 
 class ConsumptionProfile:
@@ -51,7 +52,7 @@ class ConsumptionProfile:
         """Update profile with a new measurement."""
         if hour < 0 or hour > 23:
             return
-        consumption_kw = max(0.0, min(20.0, consumption_kw))
+        consumption_kw = max(0.0, min(CONSUMPTION_MAX_KW, consumption_kw))
 
         if is_weekend:
             self.weekend[hour] = (

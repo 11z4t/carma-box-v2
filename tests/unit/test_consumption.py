@@ -115,3 +115,11 @@ class TestCalculateHouseConsumption:
             battery_power_2_w=0, pv_power_w=3000, ev_power_w=0,
         )
         assert result == 3.0  # PV producing, export ignored
+
+    def test_clamp_uses_constant(self) -> None:
+        """PLAT-1554: Clamp uses CONSUMPTION_MAX_KW constant."""
+        from core.consumption import CONSUMPTION_MAX_KW
+        p = ConsumptionProfile()
+        p.update(0, CONSUMPTION_MAX_KW + 50, is_weekend=False)
+        expected = EMA_ALPHA * CONSUMPTION_MAX_KW + (1 - EMA_ALPHA) * DEFAULT_CONSUMPTION_PROFILE[0]
+        assert abs(p.weekday[0] - expected) < 0.001

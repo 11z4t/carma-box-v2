@@ -414,3 +414,19 @@ class TestPVOnlyUsesConfig:
             is_night=False, pv_surplus_w=-150.0,
         )
         assert result.action == EVAction.STOP
+
+
+class TestFallbackSoCUsesConstant:
+    """PLAT-1554: SoC fallback uses DEFAULT_SOC_FALLBACK_PCT."""
+
+    def test_xpeng_fallback_uses_constant(self) -> None:
+        from core.fallback import DEFAULT_SOC_FALLBACK_PCT
+        ctrl = EVController(EVControllerConfig(soc_stale_max_s=0))
+        result = ctrl.evaluate(
+            ev_connected=True, ev_soc_pct=-1.0, charging=False,
+            current_amps=0, grid_import_w=0, ellevio_headroom_w=5000,
+            is_night=True,
+        )
+        # Should use DEFAULT_SOC_FALLBACK_PCT as SoC (not crash)
+        assert DEFAULT_SOC_FALLBACK_PCT == 50.0  # verify constant exists
+        assert result.action in (EVAction.START, EVAction.NO_CHANGE)

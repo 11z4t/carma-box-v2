@@ -354,6 +354,10 @@ class EVController:
                 )
                 return self._last_known_soc
 
-        # No valid fallback — assume 50% (safe middle ground)
-        logger.warning("XPENG SoC=-1, no valid fallback, assuming 50%%")
-        return 50.0
+        # No valid fallback — use standard fallback SoC
+        from core.fallback import DEFAULT_SOC_FALLBACK_PCT
+        logger.warning(
+            "XPENG SoC=-1, no valid fallback, assuming %.0f%%",
+            DEFAULT_SOC_FALLBACK_PCT,
+        )
+        return DEFAULT_SOC_FALLBACK_PCT
