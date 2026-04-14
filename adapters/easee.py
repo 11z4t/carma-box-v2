@@ -34,6 +34,7 @@ class EaseeAdapter(EVChargerAdapter):
         self._config = config
         self._entities = config.entities
         self._fix_in_progress = False
+        self._fix_task: Optional[asyncio.Task[None]] = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -158,8 +159,19 @@ class EaseeAdapter(EVChargerAdapter):
             logger.info("waiting_in_fully fix already in progress")
             return False
         self._fix_in_progress = True
-        asyncio.create_task(self._run_fix_sequence())
+        self._fix_task = asyncio.create_task(self._run_fix_sequence())
+        self._fix_task.add_done_callback(self._on_fix_done)
         return True
+
+    def _on_fix_done(self, task: asyncio.Task[None]) -> None:
+        """Callback when fix task completes — log exceptions."""
+        self._fix_task = None
+        if task.cancelled():
+            logger.info("waiting_in_fully fix task cancelled")
+        elif task.exception():
+            logger.error(
+                "waiting_in_fully fix task failed: %s", task.exception(),
+            )
 
     async def _run_fix_sequence(self) -> None:
         """Background: 3-step fix (OFF, override, ON+6A). 18s total."""
