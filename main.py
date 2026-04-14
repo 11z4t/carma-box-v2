@@ -834,6 +834,26 @@ class CarmaBoxService:
             dash.entity_plan_day3, "",
         )
 
+        # Export limit — open during PV, close at evening
+        pv_producing = snapshot.grid.pv_total_w > 500
+        hour = snapshot.hour
+        for bat_cfg in self._config.batteries:
+            export_entity = bat_cfg.entities.export_limit
+            if not export_entity:
+                continue
+            if pv_producing and hour < 20:
+                # Open export limit during PV production
+                await self._ha_api.call_service(
+                    "number", "set_value",
+                    {"entity_id": export_entity, "value": 5000},
+                )
+            elif hour >= 20 or not pv_producing:
+                # Close export limit in evening / no PV
+                await self._ha_api.call_service(
+                    "number", "set_value",
+                    {"entity_id": export_entity, "value": 0},
+                )
+
         # PV forecast flags — pv_high_today/tomorrow
         pv_high_threshold = 20.0  # kWh
         pv_today = snapshot.grid.pv_forecast_today_kwh
