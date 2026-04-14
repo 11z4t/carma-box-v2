@@ -511,7 +511,7 @@ class GridGuard:
     ) -> None:
         """Raise SoC floor in cold weather, block discharge at freeze."""
         for bat in batteries:
-            if bat.cell_temp_c < 0.0:
+            if bat.cell_temp_c < self._config.freeze_temp_c:
                 # Freeze — block discharge
                 logger.warning(
                     "G4 FREEZE: %s cell_temp=%.1f°C, blocking discharge",

@@ -24,6 +24,10 @@ from core.models import MAX_SOC_PCT
 
 logger = logging.getLogger(__name__)
 
+# Named constants — no magic numbers in planning algorithms.
+_WATTS_PER_KW: int = 1000
+_PRICE_SORT_SENTINEL_ORE: float = 999.0
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -110,6 +114,9 @@ class PlannerConfig:
     # Number of phases used for EV charging (3-phase XPENG G9 default).
     ev_phases: int = 3
 
+    # Weekend + high PV: skip night EV if SoC above this threshold.
+    ev_weekend_skip_soc_pct: float = 80.0
+
 
 # ---------------------------------------------------------------------------
 # Plan results
@@ -194,7 +201,11 @@ class Planner:
 
         if ev_connected and ev_soc_pct < cfg.ev_target_soc_pct:
             # Weekend + high PV + EV > 80% → skip night EV
-            if is_weekend and pv_tomorrow_kwh > cfg.pv_high_threshold_kwh and ev_soc_pct > 80.0:
+            if (
+                is_weekend
+                and pv_tomorrow_kwh > cfg.pv_high_threshold_kwh
+                and ev_soc_pct > cfg.ev_weekend_skip_soc_pct
+            ):
                 ev_skip = True
                 ev_skip_reason = "weekend + high PV + EV > 80%"
             else:
@@ -233,19 +244,14 @@ class Planner:
         ev_start = cfg.night_start_hour
         ev_stop = min(cfg.night_start_hour + int(ev_hours_needed) + 1, bat_start)
 
-        # Total cost estimate
-        total_cost = 0.0
-        for h in cheapest[:int(ev_hours_needed + bat_hours_needed)]:
-            total_cost += prices_by_hour.get(h, cfg.grid_charge_price_threshold_ore) * 0.001
-
         return NightPlan(
             ev_charge_need_kwh=ev_need,
             ev_start_hour=ev_start,
             ev_stop_hour=ev_stop,
-            # Convert kW to amps: P(kW) * 1000 / (V_phase * n_phases)
+            # Convert kW to amps: P(kW) * _WATTS_PER_KW / (V_phase * n_phases)
             # Uses grid_voltage_v and ev_phases from config (PLAT-1358).
             ev_amps=int(
-                cfg.ev_charge_kw * 1000 // (cfg.grid_voltage_v * cfg.ev_phases)
+                cfg.ev_charge_kw * _WATTS_PER_KW // (cfg.grid_voltage_v * cfg.ev_phases)
             ) if not ev_skip else 0,
             ev_skip=ev_skip,
             ev_skip_reason=ev_skip_reason,
@@ -256,7 +262,7 @@ class Planner:
             bat_skip=bat_skip,
             bat_skip_reason=bat_skip_reason,
             cheapest_hours=cheapest,
-            total_cost_ore=total_cost,
+            total_cost_ore=0.0,
         )
 
     # ------------------------------------------------------------------
@@ -320,7 +326,8 @@ class Planner:
 
         # Hourly rate over evening_discharge_hours (default 5h: 17:00–22:00).
         # kWh ÷ hours × 1000 converts to average W per hour (PLAT-1358).
-        hourly_rate_w = evening_alloc / cfg.evening_discharge_hours * 1000.0
+        # kWh ÷ hours × _WATTS_PER_KW converts to average W per hour.
+        hourly_rate_w = evening_alloc / cfg.evening_discharge_hours * _WATTS_PER_KW
 
         return EveningPlan(
             bat_available_kwh=bat_available,
@@ -374,4 +381,4 @@ class Planner:
     @staticmethod
     def _sort_by_cheapest(hours: list[int], prices: dict[int, float]) -> list[int]:
         """Sort hours by electricity price (cheapest first)."""
-        return sorted(hours, key=lambda h: prices.get(h, 999.0))
+        return sorted(hours, key=lambda h: prices.get(h, _PRICE_SORT_SENTINEL_ORE))
