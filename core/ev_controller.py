@@ -145,6 +145,8 @@ class EVController:
         grid_import_w: float,
         ellevio_headroom_w: float,
         reason_for_no_current: str = "",
+        is_night: bool = False,
+        pv_surplus_w: float = 0.0,
     ) -> EVResult:
         """Evaluate EV charging decision.
 
@@ -162,6 +164,12 @@ class EVController:
         just_connected = ev_connected and not self._was_connected
         self._was_connected = True
         if just_connected and not charging and soc < self._config.target_soc_pct:
+            # Daytime: only trigger if PV surplus available
+            if not is_night and pv_surplus_w < 500:
+                return EVResult(
+                    action=EVAction.NO_CHANGE,
+                    reason=f"EV connected but day, no PV surplus ({pv_surplus_w:.0f}W)",
+                )
             # Proactive connect trigger — request consumer bump + start
             min_needed_w = 1400.0  # ~6A single phase
             headroom_short = ellevio_headroom_w < min_needed_w
@@ -191,6 +199,20 @@ class EVController:
                     reason=f"SoC {soc:.0f}% >= target {self._config.target_soc_pct:.0f}%",
                 )
             return EVResult(action=EVAction.NO_CHANGE, reason="At target, not charging")
+
+        # RULE: Never charge EV from grid during daytime
+        # Daytime = only charge if PV surplus (exporting)
+        if not is_night and not charging and pv_surplus_w < 500:
+            return EVResult(
+                action=EVAction.NO_CHANGE,
+                reason=f"Day — no PV surplus ({pv_surplus_w:.0f}W), EV waits",
+            )
+        # Daytime charging active but PV gone → stop
+        if not is_night and charging and pv_surplus_w < -200:
+            return EVResult(
+                action=EVAction.STOP,
+                reason=f"Day — PV surplus lost ({pv_surplus_w:.0f}W), stop EV",
+            )
 
         # Emergency cut at severe Ellevio breach (> 1kW over)
         if ellevio_headroom_w < self._config.emergency_headroom_w and charging:

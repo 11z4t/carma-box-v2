@@ -133,6 +133,7 @@ class TestCooldown:
         result = ctrl.evaluate(
             ev_connected=True, ev_soc_pct=50.0, charging=False,
             current_amps=0, grid_import_w=0, ellevio_headroom_w=5000,
+            is_night=True,
         )
         assert result.action == EVAction.NO_CHANGE
         assert "cooldown" in result.reason.lower()
@@ -214,6 +215,7 @@ class TestStartAt6A:
         result = ctrl.evaluate(
             ev_connected=True, ev_soc_pct=50.0, charging=False,
             current_amps=0, grid_import_w=0, ellevio_headroom_w=5000,
+            is_night=True,
         )
         assert result.action == EVAction.START
         assert result.target_amps == 6
@@ -297,6 +299,7 @@ class TestCoverageBranches:
         result = ctrl.evaluate(
             ev_connected=True, ev_soc_pct=50.0, charging=False,
             current_amps=0, grid_import_w=0, ellevio_headroom_w=500,
+            is_night=True,  # Night: grid OK, test headroom only
         )
         assert result.action == EVAction.NO_CHANGE
         assert "headroom" in result.reason.lower() or "insufficient" in result.reason.lower()

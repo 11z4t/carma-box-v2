@@ -531,6 +531,9 @@ class CarmaBoxService:
             - snapshot.grid.weighted_avg_kw * 1000
         )
 
+        # PV surplus = negative grid = export
+        pv_surplus_w = -snapshot.grid.grid_power_w
+
         result = self._ev_controller.evaluate(
             ev_connected=ev.connected,
             ev_soc_pct=ev.soc_pct,
@@ -539,6 +542,8 @@ class CarmaBoxService:
             grid_import_w=snapshot.grid.grid_power_w,
             ellevio_headroom_w=headroom_w,
             reason_for_no_current=ev.reason_for_no_current,
+            is_night=snapshot.is_night,
+            pv_surplus_w=pv_surplus_w,
         )
 
         if result.action == EVAction.NO_CHANGE:

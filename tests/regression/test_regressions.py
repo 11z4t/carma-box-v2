@@ -91,6 +91,7 @@ class TestB6EVMaxAndStart:
         result = ctrl.evaluate(
             ev_connected=True, ev_soc_pct=50.0, charging=False,
             current_amps=0, grid_import_w=0, ellevio_headroom_w=5000,
+            is_night=True,  # Night: grid OK
         )
         assert result.action == EVAction.START
         assert result.target_amps == 6, "B6: ALWAYS start at 6A"
