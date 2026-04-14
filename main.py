@@ -835,9 +835,9 @@ class CarmaBoxService:
             ):
                 action = "EV"
                 ev = min(ev + ev_weekend_pct_h, ev_target)
-            elif is_night and ev < ev_target:
+            elif is_night and ev < MAX_SOC_PCT:
                 action = "EV"
-                ev = min(ev + ev_night_pct_h, ev_target)
+                ev = min(ev + ev_night_pct_h, MAX_SOC_PCT)
             elif is_night and soc < grid_max_soc:
                 action = "GRD"
                 soc = min(soc + grid_charge_pct_h, grid_max_soc)
