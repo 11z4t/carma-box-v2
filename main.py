@@ -631,7 +631,7 @@ class CarmaBoxService:
             # Start EV charging
             ev_cfg = self._config.ev_charger
             await self._ha_api.call_service(
-                "switch", "turn_on",
+                self._entity_domain(ev_cfg.entities.enabled), "turn_on",
                 {"entity_id": ev_cfg.entities.enabled},
             )
             logger.info("EV CONNECT: started charging at %dA", result.target_amps)
@@ -639,21 +639,21 @@ class CarmaBoxService:
         elif result.action == EVAction.START:
             ev_cfg = self._config.ev_charger
             await self._ha_api.call_service(
-                "switch", "turn_on",
+                self._entity_domain(ev_cfg.entities.enabled), "turn_on",
                 {"entity_id": ev_cfg.entities.enabled},
             )
 
         elif result.action == EVAction.STOP:
             ev_cfg = self._config.ev_charger
             await self._ha_api.call_service(
-                "switch", "turn_off",
+                self._entity_domain(ev_cfg.entities.enabled), "turn_off",
                 {"entity_id": ev_cfg.entities.enabled},
             )
 
         elif result.action == EVAction.EMERGENCY_CUT:
             ev_cfg = self._config.ev_charger
             await self._ha_api.call_service(
-                "switch", "turn_off",
+                self._entity_domain(ev_cfg.entities.enabled), "turn_off",
                 {"entity_id": ev_cfg.entities.enabled},
             )
             logger.warning("EV EMERGENCY CUT: %s", result.reason)
@@ -958,13 +958,13 @@ class CarmaBoxService:
                 continue
             if pv_producing and snapshot.hour < evening_hour:
                 await self._ha_api.call_service(
-                    "number", "set_value",
+                    self._entity_domain(export_entity), "set_value",
                     {"entity_id": export_entity,
                      "value": int(bat_cfg.max_discharge_kw * 1000)},
                 )
             elif snapshot.hour >= evening_hour or not pv_producing:
                 await self._ha_api.call_service(
-                    "number", "set_value",
+                    self._entity_domain(export_entity), "set_value",
                     {"entity_id": export_entity, "value": 0},
                 )
 
@@ -972,15 +972,19 @@ class CarmaBoxService:
         pv_high_threshold = 20.0  # kWh
         pv_today = snapshot.grid.pv_forecast_today_kwh
         pv_tomorrow = snapshot.grid.pv_forecast_tomorrow_kwh
-        await self._ha_api.call_service(
-            "input_boolean",
-            "turn_on" if pv_today >= pv_high_threshold else "turn_off",
-            {"entity_id": "input_boolean.pv_high_today"},
-        )
-        await self._ha_api.call_service(
-            "input_boolean",
-            "turn_on" if pv_tomorrow >= pv_high_threshold else "turn_off",
-            {"entity_id": "input_boolean.pv_high_tomorrow"},
+        pv_high_today_entity = self._config.pv_forecast.entity_pv_high_today
+        pv_high_tomorrow_entity = self._config.pv_forecast.entity_pv_high_tomorrow
+        if pv_high_today_entity:
+            await self._ha_api.call_service(
+                self._entity_domain(pv_high_today_entity),
+                "turn_on" if pv_today >= pv_high_threshold else "turn_off",
+                {"entity_id": pv_high_today_entity},
+            )
+        if pv_high_tomorrow_entity:
+            await self._ha_api.call_service(
+                self._entity_domain(pv_high_tomorrow_entity),
+                "turn_on" if pv_tomorrow >= pv_high_threshold else "turn_off",
+                {"entity_id": pv_high_tomorrow_entity},
         )
 
         # Ellevio sensor — write peak tracking data

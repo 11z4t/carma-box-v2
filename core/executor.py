@@ -339,8 +339,9 @@ class CommandExecutor:
         """Set climate entity temperature via HA service."""
         if self._ha_api is None:
             return False
+        domain = cmd.target_id.split(".")[0] if "." in cmd.target_id else "climate"
         result: bool = await self._ha_api.call_service(
-            "climate", "set_temperature",
+            domain, "set_temperature",
             {"entity_id": cmd.target_id, "temperature": cmd.value},
         )
         return result
@@ -349,8 +350,9 @@ class CommandExecutor:
         """Set climate entity HVAC mode via HA service."""
         if self._ha_api is None:
             return False
+        domain = cmd.target_id.split(".")[0] if "." in cmd.target_id else "climate"
         result: bool = await self._ha_api.call_service(
-            "climate", "set_hvac_mode",
+            domain, "set_hvac_mode",
             {"entity_id": cmd.target_id, "hvac_mode": str(cmd.value)},
         )
         return result

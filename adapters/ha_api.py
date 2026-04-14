@@ -305,8 +305,9 @@ class HAApiClient:
         Used for plan text fields (v6_battery_plan_today etc).
         Truncates to 255 chars (HA input_text limit).
         """
+        domain = entity_id.split(".")[0] if "." in entity_id else "input_text"
         return await self.call_service(
-            "input_text", "set_value",
+            domain, "set_value",
             {"entity_id": entity_id, "value": value[:self._input_text_max_len]},
         )
 
