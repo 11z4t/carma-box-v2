@@ -786,8 +786,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         logger.info("Dry run — config valid, exiting")
         return 0
 
-    # Create service
-    service = CarmaBoxService(config)  # pragma: no cover
+    # Create HA API client and service
+    ha_api = HAApiClient(config.homeassistant)  # pragma: no cover
+    service = CarmaBoxService(config, ha_api=ha_api)  # pragma: no cover
 
     # Setup signal handlers for graceful shutdown
     loop = asyncio.new_event_loop()  # pragma: no cover
