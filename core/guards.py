@@ -26,6 +26,9 @@ from core.models import BatteryState, CommandType, EMSMode, Scenario, effective_
 
 logger = logging.getLogger(__name__)
 
+# Maximum discharge power commanded per battery during G3 CRITICAL emergency
+_G3_EMERGENCY_POWER_LIMIT_W: int = 6000
+
 
 # ---------------------------------------------------------------------------
 # Types
@@ -169,7 +172,7 @@ class GridGuard:
         self._check_g0_grid_charging(batteries, current_scenario, result)
         self._check_g1_soc_floor(batteries, result)
         self._check_g2_fast_charging_conflict(batteries, result)
-        self._check_g3_ellevio(weighted_avg_kw, hour, result)
+        self._check_g3_ellevio(batteries, weighted_avg_kw, hour, result)
         self._check_g4_temperature(batteries, result)
         self._check_g5_oscillation(result)
         self._check_g6_stale_data(data_age_s, stale_entities or [], result)
@@ -391,92 +394,99 @@ class GridGuard:
 
     def _check_g3_ellevio(
         self,
+        batteries: list[BatteryState],
         weighted_avg_kw: float,
         hour: int,
         result: GuardEvaluation,
     ) -> None:
         """Check weighted hourly average against Ellevio tak.
 
-        Three levels:
+        Three levels (BREACH tested first in code, CRITICAL nested inside):
           WARNING:  projected > tak * margin (85%)
-          CRITICAL: projected > tak * emergency_factor (110%)
           BREACH:   actual > tak (100%)
+          CRITICAL: actual > tak * emergency_factor (110%)
+
+        BREACH commands:  STOP_EV + SET_EMS_MODE=discharge_pv per battery
+        CRITICAL commands: BREACH commands + TURN_OFF_CONSUMER
+                           + SET_EMS_POWER_LIMIT=max per battery
         """
         effective_tak = self._effective_tak_kw(hour)
         warning_threshold = effective_tak * self._config.margin
         critical_threshold = effective_tak * self._config.emergency_factor
 
-        # Check order: highest severity FIRST (CRITICAL > BREACH > WARNING)
-        # critical_threshold (tak*1.10) > effective_tak > warning_threshold (tak*0.85)
-        if weighted_avg_kw > critical_threshold:
-            # CRITICAL — far above tak, emergency action needed
-            logger.critical(
-                "G3 CRITICAL: weighted_avg=%.2fkW > emergency=%.2fkW",
-                weighted_avg_kw, critical_threshold,
-            )
-            result.level = GuardLevel.CRITICAL
-            result.violations.append(
-                f"G3: Ellevio CRITICAL {weighted_avg_kw:.2f}kW > {critical_threshold:.2f}kW"
-            )
+        # BREACH threshold (>= 100%) checked first; CRITICAL (>= 110%) is nested
+        if weighted_avg_kw > effective_tak:
             result.replan_needed = True
-            # Emergency commands: stop EV, shed consumers, max discharge
-            result.commands.append(GuardCommand(
-                guard_id="G3",
-                command_type=CommandType.STOP_EV_CHARGING,
-                target_id="ev",
-                reason="G3 CRITICAL: stop EV to reduce grid import",
-            ))
-            result.commands.append(GuardCommand(
-                guard_id="G3",
-                command_type=CommandType.SET_EV_CURRENT,
-                target_id="ev",
-                value=6,
-                reason="G3 CRITICAL: emergency cut to 6A",
-            ))
-            # N3: Shed ALL consumers at CRITICAL
-            result.commands.append(GuardCommand(
-                guard_id="G3",
-                command_type=CommandType.TURN_OFF_CONSUMER,
-                target_id="all",
-                reason="G3 CRITICAL: load shedding — turn off all consumers",
-            ))
 
-        elif weighted_avg_kw > effective_tak:
-            # BREACH — actual exceeds tak
-            logger.critical(
-                "G3 BREACH: weighted_avg=%.2fkW > tak=%.2fkW (effective)",
-                weighted_avg_kw, effective_tak,
-            )
-            result.level = GuardLevel.BREACH
-            result.violations.append(
-                f"G3: Ellevio BREACH {weighted_avg_kw:.2f}kW > {effective_tak:.2f}kW"
-            )
-            result.replan_needed = True
-            # PLAT-1357: BREACH emits STOP_EV to immediately halt EV charging
-            # in addition to capping at 6A, matching CRITICAL behavior.
-            # Stopping EV first is safer than relying only on current reduction
-            # since the charger may take several seconds to ramp down.
-            result.commands.append(GuardCommand(
-                guard_id="G3",
-                command_type=CommandType.STOP_EV_CHARGING,
-                target_id="ev",
-                reason="G3 BREACH: stop EV to reduce grid import",
-            ))
-            # Corrective: cut EV to 6A (for when EV resumes)
-            result.commands.append(GuardCommand(
-                guard_id="G3",
-                command_type=CommandType.SET_EV_CURRENT,
-                target_id="ev",
-                value=6,
-                reason="G3 BREACH: cut EV to 6A",
-            ))
-            # N3: Shed ALL consumers at BREACH
-            result.commands.append(GuardCommand(
-                guard_id="G3",
-                command_type=CommandType.TURN_OFF_CONSUMER,
-                target_id="all",
-                reason="G3 BREACH: load shedding — turn off all consumers",
-            ))
+            if weighted_avg_kw > critical_threshold:
+                # CRITICAL — far above tak, full emergency response
+                logger.critical(
+                    "G3 CRITICAL: weighted_avg=%.2fkW > emergency=%.2fkW",
+                    weighted_avg_kw, critical_threshold,
+                )
+                result.level = GuardLevel.CRITICAL
+                result.violations.append(
+                    f"G3: Ellevio CRITICAL {weighted_avg_kw:.2f}kW > {critical_threshold:.2f}kW"
+                )
+                # Stop EV charging immediately
+                result.commands.append(GuardCommand(
+                    guard_id="G3",
+                    command_type=CommandType.STOP_EV_CHARGING,
+                    target_id="ev",
+                    reason="G3 CRITICAL: stop EV to reduce grid import",
+                ))
+                # Force all batteries to maximum discharge
+                for bat in batteries:
+                    result.commands.append(GuardCommand(
+                        guard_id="G3",
+                        command_type=CommandType.SET_EMS_MODE,
+                        target_id=bat.battery_id,
+                        value=EMSMode.DISCHARGE_PV.value,
+                        reason="G3 CRITICAL: force battery to discharge_pv mode",
+                    ))
+                # N3: Shed ALL consumers at CRITICAL
+                result.commands.append(GuardCommand(
+                    guard_id="G3",
+                    command_type=CommandType.TURN_OFF_CONSUMER,
+                    target_id="all",
+                    reason="G3 CRITICAL: load shedding — turn off all consumers",
+                ))
+                # Set maximum discharge power limit per battery
+                for bat in batteries:
+                    result.commands.append(GuardCommand(
+                        guard_id="G3",
+                        command_type=CommandType.SET_EMS_POWER_LIMIT,
+                        target_id=bat.battery_id,
+                        value=_G3_EMERGENCY_POWER_LIMIT_W,
+                        reason="G3 CRITICAL: max discharge to reduce grid import",
+                    ))
+
+            else:
+                # BREACH — actual exceeds tak but below critical threshold
+                logger.critical(
+                    "G3 BREACH: weighted_avg=%.2fkW > tak=%.2fkW (effective)",
+                    weighted_avg_kw, effective_tak,
+                )
+                result.level = GuardLevel.BREACH
+                result.violations.append(
+                    f"G3: Ellevio BREACH {weighted_avg_kw:.2f}kW > {effective_tak:.2f}kW"
+                )
+                # Stop EV charging immediately
+                result.commands.append(GuardCommand(
+                    guard_id="G3",
+                    command_type=CommandType.STOP_EV_CHARGING,
+                    target_id="ev",
+                    reason="G3 BREACH: stop EV to reduce grid import",
+                ))
+                # Force all batteries to discharge
+                for bat in batteries:
+                    result.commands.append(GuardCommand(
+                        guard_id="G3",
+                        command_type=CommandType.SET_EMS_MODE,
+                        target_id=bat.battery_id,
+                        value=EMSMode.DISCHARGE_PV.value,
+                        reason="G3 BREACH: force battery to discharge_pv mode",
+                    ))
 
         elif weighted_avg_kw > warning_threshold:
             # WARNING — getting close
