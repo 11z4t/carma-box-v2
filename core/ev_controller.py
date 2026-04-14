@@ -42,6 +42,10 @@ class EVControllerConfig:
     target_soc_pct: float = 75.0
     max_soc_jump_pct: float = 20.0       # Max SoC increase per night
     soc_stale_max_s: float = 3600.0      # 1 hour max for stale SoC
+    emergency_headroom_w: float = -1000.0  # Cut EV if headroom below this
+    start_headroom_w: float = 1000.0       # Min headroom to start charging
+    ramp_headroom_w: float = 500.0         # Min headroom for ramp up
+    stop_headroom_w: float = -200.0        # Stop at min_amps if below this
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +173,7 @@ class EVController:
             return EVResult(action=EVAction.NO_CHANGE, reason="At target, not charging")
 
         # Emergency cut at severe Ellevio breach (> 1kW over)
-        if ellevio_headroom_w < -1000 and charging:
+        if ellevio_headroom_w < self._config.emergency_headroom_w and charging:
             return EVResult(
                 action=EVAction.EMERGENCY_CUT,
                 target_amps=self._config.emergency_cut_amps,
@@ -183,7 +187,7 @@ class EVController:
                     action=EVAction.NO_CHANGE,
                     reason="Stop cooldown active",
                 )
-            if ellevio_headroom_w > 1000:
+            if ellevio_headroom_w > self._config.start_headroom_w:
                 self._timers.record_start()
                 return EVResult(
                     action=EVAction.START,
@@ -203,7 +207,7 @@ class EVController:
 
         # Ramp up if headroom allows
         next_up = self._next_step_up(current_a)
-        if next_up is not None and ellevio_headroom_w > 500:
+        if next_up is not None and ellevio_headroom_w > self._config.ramp_headroom_w:
             self._timers.record_ramp()
             return EVResult(
                 action=EVAction.SET_CURRENT,
@@ -212,7 +216,7 @@ class EVController:
             )
 
         # Ramp down if importing too much
-        if ellevio_headroom_w < -200 and current_a <= self._config.min_amps:
+        if ellevio_headroom_w < self._config.stop_headroom_w and current_a <= self._config.min_amps:
             # Already at min and still over → stop
             self._timers.record_stop()
             return EVResult(
