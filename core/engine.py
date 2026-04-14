@@ -39,6 +39,10 @@ from storage.session_tracker import EV_EVENT_START, EV_EVENT_STOP, EnergySession
 
 logger = logging.getLogger(__name__)
 
+# Grid power threshold below which the system is considered balanced (0W).
+# Used to detect near-zero import/export and trigger BATTERY_STANDBY.
+NEAR_ZERO_KW: float = 0.05
+
 
 @dataclass
 class CycleResult:
@@ -220,6 +224,23 @@ class ControlEngine:
                     b.power_w < 0 for b in snapshot.batteries
                 )
                 is_charging = scenario_charging or actual_charging
+                grid_kw = abs(snapshot.grid.grid_power_w) / 1000.0
+
+                # Near-zero grid power → balanced state, set standby to avoid
+                # unnecessary battery cycling at idle.
+                if grid_kw < NEAR_ZERO_KW:
+                    logger.debug(
+                        "Cycle %s: near-zero grid (%.3f kW < %.3f) — standby",
+                        cycle_id, grid_kw, NEAR_ZERO_KW,
+                    )
+                    for bat in snapshot.batteries:
+                        if not self._mode_manager.is_in_progress(bat.battery_id):
+                            self._mode_manager.request_change(
+                                battery_id=bat.battery_id,
+                                target_mode=EMSMode.BATTERY_STANDBY.value,
+                                reason="Near-zero grid — balanced",
+                            )
+
                 total_w = abs(snapshot.grid.grid_power_w)
                 balance = self._balancer.allocate(bat_infos, total_w, is_charging)
                 result.balance = balance
