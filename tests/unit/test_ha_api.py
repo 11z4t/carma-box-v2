@@ -8,6 +8,7 @@ Tests cover:
 - Error handling (404, 500, timeout, connection error)
 - Session lifecycle (reuse, close)
 - Unavailable/unknown state filtering
+- PLAT-1574: batch fetch (single call), fallback, timeout constants
 """
 
 from __future__ import annotations
@@ -669,3 +670,198 @@ class TestPlat1573BatchFetch:
 
         assert "sensor.x" in result
         assert result["sensor.x"]["state"] == "42"
+
+
+# ===========================================================================
+# PLAT-1574: batch fetch optimisation + timeout constants
+# ===========================================================================
+
+
+@pytest.mark.asyncio()
+class TestBatchFetchPlat1574:
+    """PLAT-1574: AC1/AC3 — single batch call + per-entity fallback."""
+
+    async def test_batch_fetch_single_api_call(
+        self, ha_config: HAConfig
+    ) -> None:
+        """AC1: fetching 5 entities must issue exactly 1 API call."""
+        from unittest.mock import AsyncMock, patch
+
+        client = HAApiClient(ha_config)
+        all_states = [
+            {"entity_id": f"sensor.e{i}", "state": str(i)} for i in range(10)
+        ]
+        entity_ids = [f"sensor.e{i}" for i in range(5)]
+
+        with patch.object(
+            client, "_request", new_callable=AsyncMock, return_value=all_states
+        ) as mock_req:
+            result = await client.get_states_batch(entity_ids)
+
+        assert len(result) == 5
+        mock_req.assert_called_once()
+
+    async def test_batch_fallback_on_error(
+        self, ha_config: HAConfig
+    ) -> None:
+        """AC3: batch endpoint failure → per-entity fallback, no exception."""
+        from unittest.mock import patch
+
+        client = HAApiClient(ha_config)
+        entity_ids = ["sensor.a", "sensor.b"]
+        per_entity_data = {
+            "sensor.a": {"entity_id": "sensor.a", "state": "1"},
+            "sensor.b": {"entity_id": "sensor.b", "state": "2"},
+        }
+        call_paths: list[str] = []
+
+        async def mock_request(
+            method: str,
+            path: str,
+            json_data: dict[str, Any] | None = None,
+            *,
+            timeout: aiohttp.ClientTimeout | None = None,
+        ) -> Any:
+            call_paths.append(path)
+            if path == "/api/states":
+                return None  # batch fails
+            eid = path.rsplit("/", maxsplit=1)[-1]
+            return per_entity_data.get(eid)
+
+        with patch.object(client, "_request", side_effect=mock_request):
+            result = await client.get_states_batch(entity_ids)
+
+        assert result["sensor.a"]["state"] == "1"
+        assert result["sensor.b"]["state"] == "2"
+        assert call_paths[0] == "/api/states"
+        assert "/api/states/sensor.a" in call_paths
+        assert "/api/states/sensor.b" in call_paths
+
+
+class TestHaApiConstantsPlat1574:
+    """PLAT-1574: AC2/AC4 — named constants, no naked numbers."""
+
+    def test_ha_timeout_constant_exists(self) -> None:
+        """AC2: HA_API_TIMEOUT_S must be a module-level int constant."""
+        import adapters.ha_api as module
+
+        assert hasattr(module, "HA_API_TIMEOUT_S")
+        assert isinstance(module.HA_API_TIMEOUT_S, int)
+
+    def test_ha_batch_timeout_constant_exists(self) -> None:
+        """AC2: HA_API_BATCH_TIMEOUT_S must be a module-level int constant."""
+        import adapters.ha_api as module
+
+        assert hasattr(module, "HA_API_BATCH_TIMEOUT_S")
+        assert isinstance(module.HA_API_BATCH_TIMEOUT_S, int)
+
+    def test_no_naked_timeouts(self) -> None:
+        """AC4: grep adapters/ha_api.py → 0 lines with digits but no [A-Z_#]."""
+        import re
+        from pathlib import Path
+
+        ha_api_path = (
+            Path(__file__).parent.parent.parent / "adapters" / "ha_api.py"
+        )
+        lines = ha_api_path.read_text().splitlines()
+        violations = []
+        for lineno, line in enumerate(lines, 1):
+            if re.search(r"[0-9]", line) and not re.search(r"[#A-Z_]", line):
+                violations.append(f"  line {lineno}: {line.strip()}")
+        assert violations == [], "Naked numbers found:\n" + "\n".join(violations)
+
+
+# ===========================================================================
+# PLAT-1575: Exponential backoff constants + behaviour
+# ===========================================================================
+
+
+class TestBackoffConstantsPlat1575:
+    """PLAT-1575: HA_API_BACKOFF_BASE / HA_API_MAX_BACKOFF_S must exist."""
+
+    def test_backoff_base_constant_exists(self) -> None:
+        import adapters.ha_api as module
+
+        assert hasattr(module, "HA_API_BACKOFF_BASE")
+        assert isinstance(module.HA_API_BACKOFF_BASE, int)
+        assert module.HA_API_BACKOFF_BASE == 2
+
+    def test_max_backoff_constant_exists(self) -> None:
+        import adapters.ha_api as module
+
+        assert hasattr(module, "HA_API_MAX_BACKOFF_S")
+        assert isinstance(module.HA_API_MAX_BACKOFF_S, int)
+        assert module.HA_API_MAX_BACKOFF_S == 30
+
+    def test_no_naked_sleep_delay(self) -> None:
+        """REGRESSION: naked sleep(self._retry_delay_s) must not exist."""
+        from pathlib import Path
+
+        src = (
+            Path(__file__).parent.parent.parent / "adapters" / "ha_api.py"
+        ).read_text()
+        assert "sleep(self._retry_delay_s)" not in src, (
+            "Naked sleep(self._retry_delay_s) found — use exponential backoff"
+        )
+
+
+@pytest.mark.asyncio()
+class TestExponentialBackoffPlat1575:
+    """PLAT-1575: Retry delays grow exponentially and are capped."""
+
+    async def test_exponential_backoff_applied(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B2: 3 retries with base_delay=2 → sleep calls [2.0, 4.0]."""
+        import asyncio as _asyncio
+
+        sleep_calls: list[float] = []
+
+        async def _capture_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        monkeypatch.setattr(_asyncio, "sleep", _capture_sleep)
+
+        config = HAConfig(
+            url="http://localhost:8123",
+            token_env="TEST_HA_TOKEN",
+            retry_count=3,
+            retry_delay_s=2,
+        )
+        client = HAApiClient(config)
+        resp = _make_response(500, text="err")
+        client._session = _make_session([resp, resp, resp])
+
+        await client.get_state("sensor.test")
+
+        assert sleep_calls == [2.0, 4.0]
+
+    async def test_backoff_capped_at_max(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """B3: backoff is capped at HA_API_MAX_BACKOFF_S regardless of attempt."""
+        import asyncio as _asyncio
+        from adapters.ha_api import HA_API_MAX_BACKOFF_S
+
+        sleep_calls: list[float] = []
+
+        async def _capture_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        monkeypatch.setattr(_asyncio, "sleep", _capture_sleep)
+
+        config = HAConfig(
+            url="http://localhost:8123",
+            token_env="TEST_HA_TOKEN",
+            retry_count=4,
+            retry_delay_s=10,
+        )
+        client = HAApiClient(config)
+        resp = _make_response(500, text="err")
+        client._session = _make_session([resp, resp, resp, resp])
+
+        await client.get_state("sensor.test")
+
+        assert all(s <= HA_API_MAX_BACKOFF_S for s in sleep_calls), (
+            f"Backoff exceeded max: {sleep_calls}"
+        )
