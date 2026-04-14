@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from adapters.base import AdapterReading, InverterAdapter
 from adapters.ha_api import HAApiClient
+from adapters.service_map import InverterServiceMap
 from config.schema import BatteryConfig
 from core.models import CTPlacement
 
@@ -41,9 +42,15 @@ class GoodWeAdapter(InverterAdapter):
     Entity IDs come from BatteryConfig — zero hardcoding.
     """
 
-    def __init__(self, ha_api: HAApiClient, config: BatteryConfig) -> None:
+    def __init__(
+        self,
+        ha_api: HAApiClient,
+        config: BatteryConfig,
+        services: InverterServiceMap | None = None,
+    ) -> None:
         self._api = ha_api
         self._config = config
+        self._svc = services or InverterServiceMap()
         self._entities = config.entities
         self._log = logger.getChild(config.id)
 
@@ -166,8 +173,9 @@ class GoodWeAdapter(InverterAdapter):
             return False
 
         self._log.info("Setting EMS mode → %s on %s", mode, self.battery_id)
+        svc = self._svc.set_mode
         return await self._api.call_service(
-            "select", "select_option",
+            svc.domain, svc.service,
             {
                 "entity_id": self._entities.ems_mode,
                 "option": mode,
@@ -188,8 +196,9 @@ class GoodWeAdapter(InverterAdapter):
             "Setting EMS power limit → %d W on %s", watts, self.battery_id,
         )
         # ALWAYS send the value — even 0. This is the truthy-trap defense.
+        svc = self._svc.set_power_limit
         return await self._api.call_service(
-            "number", "set_value",
+            svc.domain, svc.service,
             {
                 "entity_id": self._entities.ems_power_limit,
                 "value": watts,  # Explicitly send 0, never skip
@@ -201,12 +210,12 @@ class GoodWeAdapter(InverterAdapter):
 
         MUST be OFF before any discharge_pv command (INV-3/B7).
         """
-        service = "turn_on" if on else "turn_off"
+        svc = self._svc.set_fast_charging_on if on else self._svc.set_fast_charging_off
         self._log.info(
-            "Setting fast_charging → %s on %s", service, self.battery_id,
+            "Setting fast_charging → %s on %s", svc.service, self.battery_id,
         )
         return await self._api.call_service(
-            "switch", service,
+            svc.domain, svc.service,
             {"entity_id": self._entities.fast_charging},
         )
 
@@ -215,8 +224,9 @@ class GoodWeAdapter(InverterAdapter):
         self._log.info(
             "Setting export limit → %d W on %s", watts, self.battery_id,
         )
+        svc = self._svc.set_export_limit
         return await self._api.call_service(
-            "number", "set_value",
+            svc.domain, svc.service,
             {
                 "entity_id": self._entities.export_limit,
                 "value": watts,

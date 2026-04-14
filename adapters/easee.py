@@ -18,6 +18,7 @@ from typing import Optional
 
 from adapters.base import EVChargerAdapter
 from adapters.ha_api import HAApiClient
+from adapters.service_map import EVChargerServiceMap
 from config.schema import EVChargerConfig
 
 logger = logging.getLogger(__name__)
@@ -29,10 +30,16 @@ class EaseeAdapter(EVChargerAdapter):
     Entity IDs and charger_id come from config — zero hardcoding.
     """
 
-    def __init__(self, ha_api: HAApiClient, config: EVChargerConfig) -> None:
+    def __init__(
+        self,
+        ha_api: HAApiClient,
+        config: EVChargerConfig,
+        services: EVChargerServiceMap | None = None,
+    ) -> None:
         self._api = ha_api
         self._config = config
         self._entities = config.entities
+        self._svc = services or EVChargerServiceMap()
         self._fix_in_progress = False
         self._fix_task: Optional[asyncio.Task[None]] = None
 
@@ -113,8 +120,9 @@ class EaseeAdapter(EVChargerAdapter):
             "Setting EV current → %dA (charger_id=%s)",
             amps, self.charger_id,
         )
+        svc = self._svc.set_current
         return await self._api.call_service(
-            "easee", "set_charger_dynamic_limit",
+            svc.domain, svc.service,
             {
                 "charger_id": self.charger_id,
                 "current": amps,
@@ -124,16 +132,18 @@ class EaseeAdapter(EVChargerAdapter):
     async def start_charging(self) -> bool:
         """Enable charging by turning on the is_enabled switch."""
         logger.info("Starting EV charging")
+        svc = self._svc.enable
         return await self._api.call_service(
-            "switch", "turn_on",
+            svc.domain, svc.service,
             {"entity_id": self._entities.enabled},
         )
 
     async def stop_charging(self) -> bool:
         """Disable charging by turning off the is_enabled switch."""
         logger.info("Stopping EV charging")
+        svc = self._svc.disable
         return await self._api.call_service(
-            "switch", "turn_off",
+            svc.domain, svc.service,
             {"entity_id": self._entities.enabled},
         )
 
@@ -177,22 +187,25 @@ class EaseeAdapter(EVChargerAdapter):
         """Background: 3-step fix (OFF, override, ON+6A). 18s total."""
         try:
             logger.warning("Attempting waiting_in_fully fix (B3)")
+            svc_off = self._svc.disable
             await self._api.call_service(
-                "switch", "turn_off",
+                svc_off.domain, svc_off.service,
                 {"entity_id": self._entities.enabled},
             )
             await asyncio.sleep(self._config.easee.fix_off_delay_s)  # pragma: no cover
 
             override_entity = self._entities.override_schedule
             if override_entity:
+                svc_btn = self._svc.press_override
                 await self._api.call_service(
-                    "button", "press",
+                    svc_btn.domain, svc_btn.service,
                     {"entity_id": override_entity},
                 )
                 await asyncio.sleep(self._config.easee.fix_override_delay_s)  # pragma: no cover
 
+            svc_on = self._svc.enable
             await self._api.call_service(
-                "switch", "turn_on",
+                svc_on.domain, svc_on.service,
                 {"entity_id": self._entities.enabled},
             )
             await asyncio.sleep(self._config.easee.fix_on_delay_s)  # pragma: no cover
@@ -230,8 +243,9 @@ class EaseeAdapter(EVChargerAdapter):
         logger.warning(
             "smart_charging is ON — turning off to restore CARMA Box control"
         )
+        svc = self._svc.disable
         success = await self._api.call_service(
-            "switch", "turn_off",
+            svc.domain, svc.service,
             {"entity_id": smart_charging_entity},
         )
         if not success:
