@@ -568,7 +568,10 @@ class CarmaBoxService:
         if result.action == EVAction.CONNECT_TRIGGER:
             logger.info("EV CONNECT: %s", result.reason)
             # Bump low-priority consumers to make room
-            min_needed_w = 1400.0
+            # ~6A single phase = start_amps * 230V
+            ev_cfg_ctrl = self._ev_controller._config if self._ev_controller else None
+            start_amps = ev_cfg_ctrl.start_amps if ev_cfg_ctrl else 6
+            min_needed_w = float(start_amps * 230)
             if headroom_w < min_needed_w:
                 freed_w = 0.0
                 for cc in sorted(
@@ -835,20 +838,21 @@ class CarmaBoxService:
         )
 
         # Export limit — open during PV, close at evening
-        pv_producing = snapshot.grid.pv_total_w > 500
-        hour = snapshot.hour
+        # Uses surplus PV min threshold + night start hour from config
+        pv_min_w = self._config.surplus.start_threshold_kw * 1000
+        evening_hour = self._config.grid.ellevio.night_start_hour
+        pv_producing = snapshot.grid.pv_total_w > pv_min_w
         for bat_cfg in self._config.batteries:
             export_entity = bat_cfg.entities.export_limit
             if not export_entity:
                 continue
-            if pv_producing and hour < 20:
-                # Open export limit during PV production
+            if pv_producing and snapshot.hour < evening_hour:
                 await self._ha_api.call_service(
                     "number", "set_value",
-                    {"entity_id": export_entity, "value": 5000},
+                    {"entity_id": export_entity,
+                     "value": int(bat_cfg.max_discharge_kw * 1000)},
                 )
-            elif hour >= 20 or not pv_producing:
-                # Close export limit in evening / no PV
+            elif snapshot.hour >= evening_hour or not pv_producing:
                 await self._ha_api.call_service(
                     "number", "set_value",
                     {"entity_id": export_entity, "value": 0},
@@ -878,7 +882,7 @@ class CarmaBoxService:
                 "hit_rate_pct": round(self._ellevio.state.hit_rate_pct, 1),
                 "hours_total": self._ellevio.state.hours_total,
                 "last_hourly_kw": round(self._ellevio.state.last_hourly_kw, 2),
-                "monthly_cost_kr": round(self._ellevio.state.monthly_cost_kr, 0),
+                "monthly_cost_kr": round(self._ellevio.monthly_cost_kr, 0),
             }
             await self._ha_api.set_state(
                 "sensor.carma_box_ellevio",

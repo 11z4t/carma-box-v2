@@ -75,9 +75,6 @@ class EllevioState:
             return 100.0
         return (self.hours_under_target / self.hours_total) * 100.0
 
-    @property
-    def monthly_cost_kr(self) -> float:
-        return self.top_n_avg * 81.25
 
 
 class EllevioTracker:
@@ -90,6 +87,11 @@ class EllevioTracker:
     def __init__(self, config: EllevioConfig | None = None) -> None:
         self._config = config or EllevioConfig()
         self.state = EllevioState()
+
+    @property
+    def monthly_cost_kr(self) -> float:
+        """Monthly peak cost using configured cost_per_kw."""
+        return self.state.top_n_avg * self._config.cost_per_kw
 
     def update(
         self,
