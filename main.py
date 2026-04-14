@@ -658,6 +658,79 @@ class CarmaBoxService:
             )
             logger.warning("EV EMERGENCY CUT: %s", result.reason)
 
+    def _generate_48h_plan(
+        self, snapshot: SystemSnapshot, current_hour: int,
+    ) -> str:
+        """Generate 48h hourly plan as compact text.
+
+        Format per hour: HH:action:SoC%
+        Actions: CHG=charge, DIS=discharge, STB=standby, EV=EV charge
+        """
+        cfg = self._config
+        bat_soc = snapshot.total_battery_soc_pct
+        bat_cap = sum(b.cap_kwh for b in snapshot.batteries)
+        ev_soc = snapshot.ev.soc_pct
+        pv_today = snapshot.grid.pv_forecast_today_kwh
+        pv_tomorrow = snapshot.grid.pv_forecast_tomorrow_kwh
+        night_start = cfg.grid.ellevio.night_start_hour
+        night_end = cfg.grid.ellevio.night_end_hour
+        target_soc = cfg.ev.daily_target_soc_pct
+
+        hours: list[str] = []
+        soc = bat_soc
+        ev = ev_soc
+        import datetime as dt
+        today = dt.date.today()
+
+        for offset in range(72):
+            h = (current_hour + offset) % 24
+            is_night = h >= night_start or h < night_end
+            # PV estimate per hour (rough: spread forecast over 8h daylight)
+            pv_h = 0.0
+            if 8 <= h <= 16:
+                if offset < 24:
+                    pv_src = pv_today
+                elif offset < 48:
+                    pv_src = pv_tomorrow
+                else:
+                    pv_src = pv_tomorrow * 0.8  # day 3 estimate
+                pv_h = pv_src / 8.0
+
+            # Reset EV SoC at 22:00 day 2+ (assumed daily usage)
+            if h == night_start and offset >= 24:
+                ev = target_soc - 30.0  # assumed daily usage ~30% drop
+
+            # Weekend + high PV: prioritize EV charging in forenoon
+            day_offset = offset // 24
+            plan_date = today + dt.timedelta(days=day_offset)
+            is_weekend = plan_date.weekday() >= 5
+            day_pv = pv_today if day_offset == 0 else pv_tomorrow
+            high_pv = day_pv > 20.0  # from config ideally
+            if is_weekend and high_pv and 6 <= h < 12 and ev < target_soc:
+                action = "EV"
+                ev = min(ev + 8, target_soc)  # PV-powered EV charging
+                hours.append(f"{h:02d}:{action}:{soc:.0f}%")
+                continue
+
+            if is_night and ev < target_soc:
+                action = "EV"
+                ev = min(ev + 5, target_soc)  # ~5%/h at 6A
+            elif is_night and soc < 90:
+                action = "GRD"
+                soc = min(soc + 8, 95.0)  # grid charge ~1.5kW
+            elif pv_h > 2.0 and soc < 100:
+                action = "CHG"
+                soc = min(soc + pv_h / bat_cap * 100, 100.0)
+            elif 17 <= h < night_start and soc > 20:
+                action = "DIS"
+                soc = max(soc - 3, 15.0)
+            else:
+                action = "STB"
+
+            hours.append(f"{h:02d}:{action}:{soc:.0f}%")
+
+        return "|".join(hours)
+
     async def _generate_plan(self, snapshot: SystemSnapshot) -> None:
         """Generate energy plan at key hours (06/12/17/22)."""
         if self._planner is None or self._ha_api is None:
@@ -723,7 +796,21 @@ class CarmaBoxService:
             else:
                 return
 
-            # Write plan to HA
+            # Generate 48h hourly plan at 22:00 and 06:00
+            if hour in (22, 6):
+                plan_48h = self._generate_48h_plan(snapshot, hour)
+                dash = self._config.dashboard
+                await self._ha_api.set_input_text(
+                    dash.entity_plan_today,
+                    plan_48h[:255],
+                )
+                if len(plan_48h) > 255:
+                    await self._ha_api.set_input_text(
+                        dash.entity_plan_tomorrow,
+                        plan_48h[255:510],
+                    )
+
+            # Write summary to HA
             dash = self._config.dashboard
             if hour in (22, 17):
                 await self._ha_api.set_input_text(
