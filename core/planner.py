@@ -44,6 +44,9 @@ class PlannerConfig:
     night_start_hour: int = 22
     night_end_hour: int = 6
 
+    # Plan generation hours
+    plan_hours: tuple[int, ...] = (6, 12, 17, 22)
+
     # House baseload
     house_baseload_kw: float = 2.5
     night_hours: int = 8

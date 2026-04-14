@@ -320,8 +320,10 @@ class CarmaBoxService:
             logger.warning("Cycle %d: failed to collect snapshot", self._cycle_count)
             return
 
-        # Phase 1.4: PLAN GENERATION at 06/12/17/22
-        plan_hours = {6, 12, 17, 22}
+        # Phase 1.4: PLAN GENERATION at configured hours
+        plan_hours = set(
+            self._planner._config.plan_hours
+        ) if self._planner else set()
         if (
             self._planner
             and snapshot.hour in plan_hours
