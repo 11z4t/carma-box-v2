@@ -19,6 +19,7 @@ import asyncio
 import logging
 import signal
 import sys
+import zoneinfo
 
 import aiohttp.web
 from datetime import datetime, timezone
@@ -440,7 +441,6 @@ class CarmaBoxService:
             return None
 
         try:
-            import zoneinfo
             tz = zoneinfo.ZoneInfo(self._config.site.timezone)
             now = datetime.now(tz=tz)
             cfg = self._config

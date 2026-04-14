@@ -337,3 +337,13 @@ class TestPlat1358PlannerConfigCoefficients:
         # Fewer hours → higher hourly rate for same surplus
         if plan_5h.bat_surplus_kwh > 0:
             assert plan_2h.hourly_rate_w > plan_5h.hourly_rate_w
+
+
+class TestPlanHoursConfig:
+    """PLAT-1551: plan_hours must be injectable from config."""
+
+    def test_plan_hours_injected_from_config(self) -> None:
+        custom = PlannerConfig(plan_hours=(13,))
+        planner = Planner(custom)
+        assert set(planner._config.plan_hours) == {13}
+        assert 22 not in planner._config.plan_hours
