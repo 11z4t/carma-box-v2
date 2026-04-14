@@ -15,6 +15,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+# Defaults — overridden by SavingsConfig in production
+DEFAULT_COST_PER_KW: float = 81.25
+DEFAULT_TOP_N: int = 3
+
 
 @dataclass
 class DailySavings:
@@ -76,7 +80,7 @@ def record_peak(
     state: SavingsState,
     weighted_kw: float,
     baseline_kw: float,
-    top_n: int = 3,
+    top_n: int = DEFAULT_TOP_N,
 ) -> None:
     """Record a weighted peak sample.
 
@@ -142,8 +146,8 @@ def record_grid_charge(
 
 def calculate_peak_savings(
     state: SavingsState,
-    cost_per_kw: float = 80.0,
-    top_n: int = 3,
+    cost_per_kw: float = DEFAULT_COST_PER_KW,
+    top_n: int = DEFAULT_TOP_N,
 ) -> float:
     """Calculate peak reduction savings (kr/month).
 
@@ -173,8 +177,8 @@ def calculate_peak_savings(
 
 def total_savings(
     state: SavingsState,
-    cost_per_kw: float = 80.0,
-    top_n: int = 3,
+    cost_per_kw: float = DEFAULT_COST_PER_KW,
+    top_n: int = DEFAULT_TOP_N,
 ) -> float:
     """Total estimated savings this month (kr).
 
@@ -187,8 +191,8 @@ def total_savings(
 def record_daily_snapshot(
     state: SavingsState,
     date_str: str,
-    cost_per_kw: float = 80.0,
-    top_n: int = 3,
+    cost_per_kw: float = DEFAULT_COST_PER_KW,
+    top_n: int = DEFAULT_TOP_N,
 ) -> None:
     """Snapshot today's savings into the daily trend list.
 
@@ -251,7 +255,7 @@ def record_cost_estimate(
 
 def peak_comparison(
     state: SavingsState,
-    top_n: int = 3,
+    top_n: int = DEFAULT_TOP_N,
 ) -> dict[str, list[float]]:
     """Return top-N peaks with vs without CARMA Box.
 
@@ -265,8 +269,8 @@ def peak_comparison(
 
 def savings_breakdown(
     state: SavingsState,
-    cost_per_kw: float = 80.0,
-    top_n: int = 3,
+    cost_per_kw: float = DEFAULT_COST_PER_KW,
+    top_n: int = DEFAULT_TOP_N,
 ) -> dict[str, float]:
     """Detailed savings breakdown."""
     peak = calculate_peak_savings(state, cost_per_kw, top_n)
@@ -282,8 +286,8 @@ def savings_breakdown(
 
 def savings_whatif(
     state: SavingsState,
-    cost_per_kw: float = 80.0,
-    top_n: int = 3,
+    cost_per_kw: float = DEFAULT_COST_PER_KW,
+    top_n: int = DEFAULT_TOP_N,
 ) -> dict[str, float]:
     """What-if comparison: cost with vs without CARMA Box.
 
