@@ -207,25 +207,31 @@ class GridGuard:
             return
 
         for bat in batteries:
-            # Condition A: ems_power_limit > 0 in charge_pv
+            # Condition A: ems_power_limit > 0 in charge_pv WITHOUT PV
+            # With PV producing, charge_pv + limit > 0 is normal (PV charging).
+            # Grid charging only happens when limit exceeds PV production.
             if (
                 bat.ems_mode == EMSMode.CHARGE_PV
                 and bat.ems_power_limit_w > 0
+                and bat.pv_power_w < self._config.g0_min_pv_power_w
             ):
                 logger.critical(
-                    "G0 GRID CHARGING: %s ems_power_limit=%dW in charge_pv",
+                    "G0 GRID CHARGING: %s limit=%dW in charge_pv, pv=%dW",
                     bat.battery_id, bat.ems_power_limit_w,
+                    bat.pv_power_w,
                 )
                 result.commands.append(GuardCommand(
                     guard_id="G0",
                     command_type=CommandType.SET_EMS_POWER_LIMIT,
                     target_id=bat.battery_id,
                     value=0,
-                    reason=f"G0: ems_power_limit={bat.ems_power_limit_w}W in charge_pv",
+                    reason=f"G0: limit={bat.ems_power_limit_w}W, no PV ({bat.pv_power_w}W)",
                 ))
                 result.level = GuardLevel.CRITICAL
                 result.violations.append(
-                    f"G0: {bat.battery_id} grid charging (limit={bat.ems_power_limit_w}W)"
+                    f"G0: {bat.battery_id} grid charging"
+                    f" (limit={bat.ems_power_limit_w}W,"
+                    f" pv={bat.pv_power_w}W)"
                 )
 
             # Condition B: charging at SoC floor (autonomous)
