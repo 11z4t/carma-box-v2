@@ -718,10 +718,10 @@ class TestBatchFetchPlat1574:
         async def mock_request(
             method: str,
             path: str,
-            json_data: Optional[dict[str, Any]] = None,
+            json_data: dict[str, Any] | None = None,
             *,
-            timeout: Optional[aiohttp.ClientTimeout] = None,
-        ) -> Optional[Any]:
+            timeout: aiohttp.ClientTimeout | None = None,
+        ) -> Any:
             call_paths.append(path)
             if path == "/api/states":
                 return None  # batch fails
