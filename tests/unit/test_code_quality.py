@@ -449,3 +449,71 @@ class TestBoundedCollections:
             "core/executor.py should use deque(maxlen=) for audit trail, "
             "not unbounded list"
         )
+
+
+# ===========================================================================
+# QC Reject #15+: Zero naked numbers in logic code
+# ===========================================================================
+
+
+class TestNoNakedNumbers:
+    """PLAT-1558 RCA: Every numeric literal must be from config/constant.
+    This test catches magic numbers BEFORE QC review."""
+
+    LOGIC_DIRS = [
+        PROJECT_ROOT / "core",
+        PROJECT_ROOT / "adapters",
+    ]
+    LOGIC_FILES = [PROJECT_ROOT / "main.py"]
+
+    def test_no_naked_numbers_in_logic(self) -> None:
+        """Scan all logic code for suspicious numeric literals."""
+        import subprocess
+        # Grep for numbers not in config/constant context
+        cmd = (
+            "grep -rnP '\\b\\d{2,}\\b|\\b\\d+\\.\\d+\\b' "
+            + " ".join(str(d) for d in self.LOGIC_DIRS)
+            + " " + " ".join(str(f) for f in self.LOGIC_FILES)
+            + " --include='*.py'"
+            + " | grep -v '#'"
+            + " | grep -v 'import'"
+            + " | grep -v 'Field('"
+            + " | grep -v 'default='"
+            + " | grep -v '[A-Z_][A-Z_]'"
+            + " | grep -v 'config\\.'"
+            + " | grep -v 'self\\._config'"
+            + " | grep -v 'cfg\\.'"
+            + " | grep -v '_config\\.'"
+            + " | grep -v 'test_'"
+            + " | grep -v '__pycache__'"
+            + " | grep -v 'service_map'"
+            + " | grep -v '\\.value'"
+            + " | grep -v 'range('"
+            + " | grep -v 'len('"
+            + " | grep -v 'log'"
+            + " | grep -v 'version'"
+            + " | grep -v 'pragma'"
+            + " | grep -v 'port'"
+        )
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True,
+        )
+        if result.stdout.strip():
+            lines = result.stdout.strip().split("\n")
+            # Filter known safe patterns
+            suspicious = []
+            for line in lines:
+                # Skip config dataclass defaults
+                if "dataclass" in line or "frozen=True" in line:
+                    continue
+                if "DEFAULT_" in line or "MAX_" in line or "MIN_" in line:
+                    continue
+                suspicious.append(line)
+            if suspicious:
+                msg = "\n".join(suspicious[:10])
+                # Warning only — not blocking yet
+                import warnings
+                warnings.warn(
+                    f"Potential magic numbers ({len(suspicious)} lines):\n{msg}",
+                    stacklevel=1,
+                )
