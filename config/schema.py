@@ -45,6 +45,8 @@ class HAConfig(BaseModel):
     timeout_s: int = Field(default=10, ge=1, le=120)
     retry_count: int = Field(default=3, ge=0, le=10)
     retry_delay_s: int = Field(default=2, ge=1, le=30)
+    batch_cache_ttl_s: float = Field(default=25.0, ge=1.0, le=120.0)
+    input_text_max_len: int = Field(default=255, ge=1, le=1000)
 
 
 # ---------------------------------------------------------------------------

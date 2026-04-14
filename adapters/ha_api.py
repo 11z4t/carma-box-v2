@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # H5: Cache TTL — one fetch per control cycle (30 s interval).
 # All adapters sharing the client will reuse this within the same cycle.
-_BATCH_CACHE_TTL_S: float = 25.0
+_DEFAULT_BATCH_CACHE_TTL_S: float = 25.0
 
 
 class HAApiClient:
@@ -42,6 +42,10 @@ class HAApiClient:
         self._timeout = aiohttp.ClientTimeout(total=config.timeout_s)
         self._retry_count = config.retry_count
         self._retry_delay_s = config.retry_delay_s
+        self._batch_cache_ttl_s = getattr(
+            config, "batch_cache_ttl_s", _DEFAULT_BATCH_CACHE_TTL_S,
+        )
+        self._input_text_max_len = getattr(config, "input_text_max_len", 255)
         self._session: Optional[aiohttp.ClientSession] = None
 
         # Resolve token from environment
@@ -211,7 +215,7 @@ class HAApiClient:
         async with self._batch_cache_lock:
             now = time.monotonic()
             age = now - self._batch_cache_ts
-            if self._batch_cache is None or age >= _BATCH_CACHE_TTL_S:
+            if self._batch_cache is None or age >= self._batch_cache_ttl_s:
                 all_states = await self._request("GET", "/api/states")
                 if all_states is None:
                     return {}
@@ -303,7 +307,7 @@ class HAApiClient:
         """
         return await self.call_service(
             "input_text", "set_value",
-            {"entity_id": entity_id, "value": value[:255]},
+            {"entity_id": entity_id, "value": value[:self._input_text_max_len]},
         )
 
     async def health_check(self) -> bool:
