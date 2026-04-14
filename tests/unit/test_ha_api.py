@@ -24,9 +24,11 @@ from config.schema import HAConfig
 
 # Patch asyncio.sleep to avoid real delays in retry tests
 
+
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     """Replace asyncio.sleep with a no-op for all tests."""
+
     async def _instant_sleep(seconds: float) -> None:
         pass
 
@@ -111,9 +113,7 @@ def _make_session(responses: list[AsyncMock]) -> AsyncMock:
 class TestGetState:
     """Tests for HAApiClient.get_state()."""
 
-    async def test_returns_state_on_success(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_returns_state_on_success(self, ha_config: HAConfig) -> None:
         client = HAApiClient(ha_config)
         resp = _make_response(200, {"state": "60.5", "attributes": {}})
         client._session = _make_session([resp])
@@ -129,9 +129,7 @@ class TestGetState:
         result = await client.get_state("sensor.nonexistent")
         assert result is None
 
-    async def test_returns_none_on_unavailable(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_returns_none_on_unavailable(self, ha_config: HAConfig) -> None:
         client = HAApiClient(ha_config)
         resp = _make_response(200, {"state": "unavailable", "attributes": {}})
         client._session = _make_session([resp])
@@ -139,9 +137,7 @@ class TestGetState:
         result = await client.get_state("sensor.offline_device")
         assert result is None
 
-    async def test_returns_none_on_unknown(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_returns_none_on_unknown(self, ha_config: HAConfig) -> None:
         client = HAApiClient(ha_config)
         resp = _make_response(200, {"state": "unknown", "attributes": {}})
         client._session = _make_session([resp])
@@ -174,9 +170,7 @@ class TestGetStateWithAttributes:
         assert result["state"] == "42"
         assert result["attributes"]["unit"] == "W"
 
-    async def test_returns_none_on_failure(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_returns_none_on_failure(self, ha_config: HAConfig) -> None:
         client = HAApiClient(ha_config)
         resp = _make_response(404)
         client._session = _make_session([resp])
@@ -194,9 +188,7 @@ class TestGetStateWithAttributes:
 class TestGetStatesBatch:
     """Tests for HAApiClient.get_states_batch()."""
 
-    async def test_filters_to_requested_entities(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_filters_to_requested_entities(self, ha_config: HAConfig) -> None:
         all_states = [
             {"entity_id": "sensor.a", "state": "1"},
             {"entity_id": "sensor.b", "state": "2"},
@@ -213,9 +205,7 @@ class TestGetStatesBatch:
         assert result["sensor.c"]["state"] == "3"
         assert "sensor.b" not in result
 
-    async def test_missing_entities_omitted(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_missing_entities_omitted(self, ha_config: HAConfig) -> None:
         all_states = [
             {"entity_id": "sensor.a", "state": "1"},
         ]
@@ -223,22 +213,16 @@ class TestGetStatesBatch:
         resp = _make_response(200, all_states)
         client._session = _make_session([resp])
 
-        result = await client.get_states_batch(
-            ["sensor.a", "sensor.missing"]
-        )
+        result = await client.get_states_batch(["sensor.a", "sensor.missing"])
         assert len(result) == 1
         assert "sensor.missing" not in result
 
-    async def test_empty_list_returns_empty(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_empty_list_returns_empty(self, ha_config: HAConfig) -> None:
         client = HAApiClient(ha_config)
         result = await client.get_states_batch([])
         assert result == {}
 
-    async def test_returns_empty_on_api_failure(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_returns_empty_on_api_failure(self, ha_config: HAConfig) -> None:
         client = HAApiClient(ha_config)
         resp = _make_response(500, text="Internal Server Error")
         client._session = _make_session([resp, resp, resp])
@@ -256,28 +240,20 @@ class TestGetStatesBatch:
 class TestCallService:
     """Tests for HAApiClient.call_service()."""
 
-    async def test_returns_true_on_success(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_returns_true_on_success(self, ha_config: HAConfig) -> None:
         client = HAApiClient(ha_config)
         resp = _make_response(200, [])
         client._session = _make_session([resp])
 
-        result = await client.call_service(
-            "switch", "turn_on", {"entity_id": "switch.test"}
-        )
+        result = await client.call_service("switch", "turn_on", {"entity_id": "switch.test"})
         assert result is True
 
-    async def test_returns_false_on_failure(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_returns_false_on_failure(self, ha_config: HAConfig) -> None:
         client = HAApiClient(ha_config)
         resp = _make_response(500, text="Error")
         client._session = _make_session([resp, resp, resp])
 
-        result = await client.call_service(
-            "switch", "turn_on", {"entity_id": "switch.test"}
-        )
+        result = await client.call_service("switch", "turn_on", {"entity_id": "switch.test"})
         assert result is False
 
     async def test_with_empty_data(self, ha_config: HAConfig) -> None:
@@ -288,9 +264,7 @@ class TestCallService:
         result = await client.call_service("homeassistant", "reload")
         assert result is True
 
-    async def test_returns_false_on_ha_error_response(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_returns_false_on_ha_error_response(self, ha_config: HAConfig) -> None:
         """PLAT-1354: HA error dict with 'message' key must return False."""
         client = HAApiClient(ha_config)
         # HA returns 200 with an error body when service is unknown
@@ -301,9 +275,7 @@ class TestCallService:
         result = await client.call_service("bad_domain", "bad_service")
         assert result is False
 
-    async def test_returns_true_on_list_response(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_returns_true_on_list_response(self, ha_config: HAConfig) -> None:
         """PLAT-1354: HA success returns list of states — must be True."""
         client = HAApiClient(ha_config)
         # HA returns list of affected state objects on success
@@ -333,9 +305,7 @@ class TestHealthCheck:
         result = await client.health_check()
         assert result is True
 
-    async def test_returns_false_when_down(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_returns_false_when_down(self, ha_config: HAConfig) -> None:
         client = HAApiClient(ha_config)
 
         class _FailSession:
@@ -349,9 +319,7 @@ class TestHealthCheck:
         result = await client.health_check()
         assert result is False
 
-    async def test_returns_false_on_timeout(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_returns_false_on_timeout(self, ha_config: HAConfig) -> None:
         client = HAApiClient(ha_config)
 
         class _TimeoutSession:
@@ -386,9 +354,7 @@ class TestRetryLogic:
         result = await client.get_state("sensor.test")
         assert result == "ok"
 
-    async def test_all_retries_exhausted(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_all_retries_exhausted(self, ha_config: HAConfig) -> None:
         """Should return None when all retries fail."""
         client = HAApiClient(ha_config)
         fail = _make_response(500, text="Error")
@@ -397,9 +363,7 @@ class TestRetryLogic:
         result = await client.get_state("sensor.test")
         assert result is None
 
-    async def test_no_retry_on_404(
-        self, ha_config_no_retry: HAConfig
-    ) -> None:
+    async def test_no_retry_on_404(self, ha_config_no_retry: HAConfig) -> None:
         """404 should not be retried — entity simply doesn't exist."""
         client = HAApiClient(ha_config_no_retry)
         resp_404 = _make_response(404)
@@ -428,9 +392,7 @@ class TestRetryLogic:
         result = await client.get_state("sensor.test")
         assert result is None
 
-    async def test_retry_on_connection_error(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_retry_on_connection_error(self, ha_config: HAConfig) -> None:
         """Should retry on connection errors."""
         client = HAApiClient(ha_config)
 
@@ -448,9 +410,7 @@ class TestRetryLogic:
         class _RetrySession:
             closed = False
 
-            def request(
-                self_inner: Any, method: str, url: str, **kwargs: Any
-            ) -> Any:
+            def request(self_inner: Any, method: str, url: str, **kwargs: Any) -> Any:
                 nonlocal call_count
                 call_count += 1
                 if call_count < 3:
@@ -507,9 +467,7 @@ class TestSessionLifecycle:
         client = HAApiClient(ha_config)
         assert "Bearer " in client._headers["Authorization"]
 
-    async def test_ensure_session_creates_new_when_none(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_ensure_session_creates_new_when_none(self, ha_config: HAConfig) -> None:
         """_ensure_session should create a session when _session is None."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -518,15 +476,15 @@ class TestSessionLifecycle:
         mock_session = MagicMock()
         mock_session.closed = False
         mock_session.close = AsyncMock()
-        with patch("aiohttp.ClientSession", return_value=mock_session), \
-             patch("aiohttp.TCPConnector"):
+        with (
+            patch("aiohttp.ClientSession", return_value=mock_session),
+            patch("aiohttp.TCPConnector"),
+        ):
             session = await client._ensure_session()
         assert session is not None
         await client.close()
 
-    async def test_ensure_session_reuses_open_session(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_ensure_session_reuses_open_session(self, ha_config: HAConfig) -> None:
         """_ensure_session should reuse existing open session."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -534,8 +492,10 @@ class TestSessionLifecycle:
         mock_session = MagicMock()
         mock_session.closed = False
         mock_session.close = AsyncMock()
-        with patch("aiohttp.ClientSession", return_value=mock_session), \
-             patch("aiohttp.TCPConnector"):
+        with (
+            patch("aiohttp.ClientSession", return_value=mock_session),
+            patch("aiohttp.TCPConnector"),
+        ):
             session1 = await client._ensure_session()
             session2 = await client._ensure_session()
         assert session1 is session2
@@ -549,9 +509,7 @@ class TestSessionLifecycle:
         assert hasattr(client, "_batch_cache_lock")
         assert isinstance(client._batch_cache_lock, _asyncio.Lock)
 
-    async def test_ensure_session_recreates_when_closed(
-        self, ha_config: HAConfig
-    ) -> None:
+    async def test_ensure_session_recreates_when_closed(self, ha_config: HAConfig) -> None:
         """_ensure_session should create a new session if old one is closed."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -587,12 +545,15 @@ class TestSetState:
 
         client = HAApiClient(ha_config)
         with patch.object(
-            client, "_request",
+            client,
+            "_request",
             new_callable=AsyncMock,
             return_value={"entity_id": "sensor.test", "state": "active"},
         ) as mock_req:
             result = await client.set_state(
-                "sensor.test", "active", {"friendly_name": "Test"},
+                "sensor.test",
+                "active",
+                {"friendly_name": "Test"},
             )
             assert result is True
             mock_req.assert_called_once()
@@ -601,13 +562,15 @@ class TestSetState:
             assert "sensor.test" in args[0][1]
 
     async def test_set_state_failure_returns_false(
-        self, ha_config: HAConfig,
+        self,
+        ha_config: HAConfig,
     ) -> None:
         from unittest.mock import AsyncMock, patch
 
         client = HAApiClient(ha_config)
         with patch.object(
-            client, "_request",
+            client,
+            "_request",
             new_callable=AsyncMock,
             return_value=None,
         ):
@@ -625,14 +588,84 @@ class TestSetInputText:
         client = HAApiClient(ha_config)
         long_value = "x" * 300
         with patch.object(
-            client, "_request",
+            client,
+            "_request",
             new_callable=AsyncMock,
             return_value=[],  # HA service success = list
         ) as mock_req:
             result = await client.set_input_text(
-                "input_text.test", long_value,
+                "input_text.test",
+                long_value,
             )
             assert result is True
             # Verify truncation in the call_service data
             call_data = mock_req.call_args[1]["json_data"]
             assert len(call_data["value"]) == 255
+
+
+# ---------------------------------------------------------------------------
+# PLAT-1573: Batch fetch constants and fallback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestPlat1573BatchFetch:
+    """PLAT-1573: HA_API_TIMEOUT_S / HA_API_BATCH_SIZE constants + per-entity fallback."""
+
+    def test_ha_timeout_constant_exists(self) -> None:
+        import adapters.ha_api as ha_api_mod
+
+        assert hasattr(ha_api_mod, "HA_API_TIMEOUT_S")
+        assert ha_api_mod.HA_API_TIMEOUT_S == 10
+
+    def test_ha_batch_size_constant_exists(self) -> None:
+        import adapters.ha_api as ha_api_mod
+
+        assert hasattr(ha_api_mod, "HA_API_BATCH_SIZE")
+        assert ha_api_mod.HA_API_BATCH_SIZE == 50
+
+    def test_no_naked_pool_size_in_source(self) -> None:
+        """Connector limit must use the named constant, not a literal 10."""
+        import pathlib
+
+        src = pathlib.Path("adapters/ha_api.py").read_text()
+        assert "limit=10" not in src, "naked limit=10 found — use _HA_CONNECTOR_POOL_SIZE"
+
+    async def test_batch_fetch_single_api_call(self, ha_config: HAConfig) -> None:
+        """get_states_batch must use a single /api/states call."""
+        from unittest.mock import AsyncMock, patch
+
+        all_states = [
+            {"entity_id": "sensor.a", "state": "1"},
+            {"entity_id": "sensor.b", "state": "2"},
+            {"entity_id": "sensor.c", "state": "3"},
+        ]
+        client = HAApiClient(ha_config)
+        with patch.object(
+            client, "_request", new_callable=AsyncMock, return_value=all_states
+        ) as mock_req:
+            result = await client.get_states_batch(["sensor.a", "sensor.b", "sensor.c"])
+        assert result["sensor.a"]["state"] == "1"
+        assert result["sensor.b"]["state"] == "2"
+        assert result["sensor.c"]["state"] == "3"
+        # Exactly one call to /api/states
+        assert mock_req.call_count == 1
+        assert mock_req.call_args[0] == ("GET", "/api/states")
+
+    async def test_batch_fallback_on_http_error(self, ha_config: HAConfig) -> None:
+        """When /api/states fails, fall back to individual entity fetches."""
+        from unittest.mock import AsyncMock, patch
+
+        individual = {"entity_id": "sensor.x", "state": "42", "attributes": {}}
+
+        async def _side_effect(method: str, path: str, **_: object) -> object:
+            if path == "/api/states":
+                return None  # batch fails
+            return individual  # per-entity succeeds
+
+        client = HAApiClient(ha_config)
+        with patch.object(client, "_request", new_callable=AsyncMock, side_effect=_side_effect):
+            result = await client.get_states_batch(["sensor.x"])
+
+        assert "sensor.x" in result
+        assert result["sensor.x"]["state"] == "42"
