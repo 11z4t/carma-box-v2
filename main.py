@@ -43,6 +43,7 @@ from core.models import (
     Scenario,
     SystemSnapshot,
 )
+from core.ev_controller import EVAction, EVController, EVControllerConfig
 from core.surplus_dispatch import SurplusConfig as SurplusDispatchConfig, SurplusDispatch
 from health import HealthStatus, Metrics
 from core.state_machine import StateMachine, StateMachineConfig
@@ -123,6 +124,7 @@ class CarmaBoxService:
         else:
             self._engine: Optional[ControlEngine] = None
             self._surplus_dispatch: Optional[SurplusDispatch] = None
+            self._ev_controller: Optional[EVController] = None
             self._consumer_configs = config.consumers
 
         logger.info(
@@ -184,6 +186,11 @@ class CarmaBoxService:
             ),
             ha_api=ha_api,
         )
+
+        # EV controller
+        self._ev_controller = EVController(EVControllerConfig(
+            target_soc_pct=config.ev.daily_target_soc_pct,
+        ))
 
         # Surplus dispatch from consumer configs
         surplus_cfg = config.surplus
@@ -300,6 +307,9 @@ class CarmaBoxService:
             ha_connected=ha_connected,
             data_age_s=data_age_s,
         )
+
+        # Phase 6.5: EV CONTROLLER — evaluate charging decision
+        await self._evaluate_ev(snapshot)
 
         # Phase 7: SURPLUS DISPATCH — manage dispatchable consumers
         if snapshot.consumers:
@@ -509,6 +519,86 @@ class CarmaBoxService:
         except Exception as exc:
             logger.error("Snapshot collection failed: %s", exc, exc_info=True)
             return None
+
+    async def _evaluate_ev(self, snapshot: SystemSnapshot) -> None:
+        """Evaluate EV charging — proactive connect trigger + ramp."""
+        if self._ev_controller is None or self._ha_api is None:
+            return
+
+        ev = snapshot.ev
+        headroom_w = (
+            snapshot.grid.dynamic_tak_kw * 1000
+            - snapshot.grid.weighted_avg_kw * 1000
+        )
+
+        result = self._ev_controller.evaluate(
+            ev_connected=ev.connected,
+            ev_soc_pct=ev.soc_pct,
+            charging=ev.charging,
+            current_amps=ev.current_a,
+            grid_import_w=snapshot.grid.grid_power_w,
+            ellevio_headroom_w=headroom_w,
+            reason_for_no_current=ev.reason_for_no_current,
+        )
+
+        if result.action == EVAction.NO_CHANGE:
+            return
+
+        if result.action == EVAction.CONNECT_TRIGGER:
+            logger.info("EV CONNECT: %s", result.reason)
+            # Bump low-priority consumers to make room
+            min_needed_w = 1400.0
+            if headroom_w < min_needed_w:
+                freed_w = 0.0
+                for cc in sorted(
+                    self._consumer_configs, key=lambda c: c.priority,
+                ):
+                    if freed_w >= (min_needed_w - headroom_w):
+                        break
+                    # Check if consumer is active
+                    batch = await self._ha_api.get_states_batch(
+                        [cc.entity_switch],
+                    )
+                    state = batch.get(cc.entity_switch, {})
+                    if state.get("state") == "on":
+                        await self._ha_api.call_service(
+                            "homeassistant", "turn_off",
+                            {"entity_id": cc.entity_switch},
+                        )
+                        freed_w += cc.power_w
+                        logger.info(
+                            "EV BUMP: stopped %s (+%dW)",
+                            cc.name, cc.power_w,
+                        )
+            # Start EV charging
+            ev_cfg = self._config.ev_charger
+            await self._ha_api.call_service(
+                "switch", "turn_on",
+                {"entity_id": ev_cfg.entities.enabled},
+            )
+            logger.info("EV CONNECT: started charging at %dA", result.target_amps)
+
+        elif result.action == EVAction.START:
+            ev_cfg = self._config.ev_charger
+            await self._ha_api.call_service(
+                "switch", "turn_on",
+                {"entity_id": ev_cfg.entities.enabled},
+            )
+
+        elif result.action == EVAction.STOP:
+            ev_cfg = self._config.ev_charger
+            await self._ha_api.call_service(
+                "switch", "turn_off",
+                {"entity_id": ev_cfg.entities.enabled},
+            )
+
+        elif result.action == EVAction.EMERGENCY_CUT:
+            ev_cfg = self._config.ev_charger
+            await self._ha_api.call_service(
+                "switch", "turn_off",
+                {"entity_id": ev_cfg.entities.enabled},
+            )
+            logger.warning("EV EMERGENCY CUT: %s", result.reason)
 
     async def _apply_manual_override(self) -> None:
         """Read manual override helpers from HA and apply to state machine."""

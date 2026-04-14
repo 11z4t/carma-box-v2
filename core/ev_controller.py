@@ -62,6 +62,7 @@ class EVAction(Enum):
     SET_CURRENT = "set_current"
     EMERGENCY_CUT = "emergency_cut"
     FIX_WAITING_IN_FULLY = "fix_waiting_in_fully"
+    CONNECT_TRIGGER = "connect_trigger"
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,7 @@ class EVController:
         self._timers = EVTimers(self._config)
         self._last_known_soc: float = -1.0
         self._last_soc_time: float = 0.0
+        self._was_connected: bool = True  # Assume connected at startup (no false trigger)
 
     @property
     def timers(self) -> EVTimers:
@@ -151,9 +153,27 @@ class EVController:
         # XPENG SoC=-1 fallback
         soc = self._resolve_soc(ev_soc_pct)
 
-        # Not connected → nothing to do
+        # Not connected → reset connect state
         if not ev_connected:
+            self._was_connected = False
             return EVResult(action=EVAction.NO_CHANGE, reason="EV not connected")
+
+        # Detect fresh connect — cable just plugged in
+        just_connected = ev_connected and not self._was_connected
+        self._was_connected = True
+        if just_connected and not charging and soc < self._config.target_soc_pct:
+            # Proactive connect trigger — request consumer bump + start
+            min_needed_w = 1400.0  # ~6A single phase
+            headroom_short = ellevio_headroom_w < min_needed_w
+            return EVResult(
+                action=EVAction.CONNECT_TRIGGER,
+                target_amps=self._config.start_amps,
+                reason=(
+                    f"EV connected (SoC {soc:.0f}%), "
+                    f"headroom {ellevio_headroom_w:.0f}W"
+                    f"{' — bump consumers needed' if headroom_short else ''}"
+                ),
+            )
 
         # Waiting in fully fix (B3)
         if reason_for_no_current == "waiting_in_fully":
