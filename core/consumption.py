@@ -33,11 +33,17 @@ class ConsumptionProfile:
     Uses EMA to update smoothly as new data arrives.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        ema_alpha: float = EMA_ALPHA,
+        min_samples: int = MIN_SAMPLES_FOR_LEARNED,
+    ) -> None:
         self.weekday: list[float] = list(DEFAULT_CONSUMPTION_PROFILE)
         self.weekend: list[float] = list(DEFAULT_CONSUMPTION_PROFILE)
         self.samples_weekday: int = 0
         self.samples_weekend: int = 0
+        self._ema_alpha = ema_alpha
+        self._min_samples = min_samples
 
     def update(
         self, hour: int, consumption_kw: float, is_weekend: bool,
@@ -49,14 +55,14 @@ class ConsumptionProfile:
 
         if is_weekend:
             self.weekend[hour] = (
-                EMA_ALPHA * consumption_kw
-                + (1 - EMA_ALPHA) * self.weekend[hour]
+                self._ema_alpha * consumption_kw
+                + (1 - self._ema_alpha) * self.weekend[hour]
             )
             self.samples_weekend += 1
         else:
             self.weekday[hour] = (
-                EMA_ALPHA * consumption_kw
-                + (1 - EMA_ALPHA) * self.weekday[hour]
+                self._ema_alpha * consumption_kw
+                + (1 - self._ema_alpha) * self.weekday[hour]
             )
             self.samples_weekday += 1
 
@@ -65,7 +71,7 @@ class ConsumptionProfile:
 
         Falls back to static default until MIN_SAMPLES_FOR_LEARNED samples.
         """
-        if self.total_samples < MIN_SAMPLES_FOR_LEARNED:
+        if self.total_samples < self._min_samples:
             return list(DEFAULT_CONSUMPTION_PROFILE)
         if is_weekend:
             return [round(v, 2) for v in self.weekend]
