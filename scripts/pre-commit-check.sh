@@ -31,3 +31,39 @@ if [ -n "$BAD_HARDCODE" ]; then
 fi
 
 echo "=== ALL CHECKS PASSED ==="
+
+# ══════════════════════════════════════════════════════════════
+# MAGIC NUMBER CHECK — added after 11+ QC rejects
+# Scans changed files for naked numeric literals in logic code
+# ══════════════════════════════════════════════════════════════
+echo "Checking for magic numbers in staged files..."
+MAGIC_FOUND=0
+for f in $(git diff --cached --name-only --diff-filter=ACMR | grep '\.py$' | grep -v test | grep -v __pycache__); do
+    # Find lines with naked numbers (not in comments, imports, config defaults)
+    HITS=$(grep -nP '\b\d+\.?\d*\b' "$f" 2>/dev/null | \
+        grep -v '#' | \
+        grep -v 'import' | \
+        grep -v 'Field(' | \
+        grep -v 'default=' | \
+        grep -v '[A-Z_][A-Z_]' | \
+        grep -v 'config\.' | \
+        grep -v 'self\._config' | \
+        grep -v '\.0\b' | \
+        grep -v '\b[01]\b' | \
+        grep -v 'range(' | \
+        grep -v 'len(' | \
+        grep -v 'log\.' | \
+        grep -v '\.py:' | \
+        grep -v 'version' | \
+        grep -v '__version__')
+    if [ -n "$HITS" ]; then
+        echo "⚠️  POTENTIAL MAGIC NUMBERS in $f:"
+        echo "$HITS" | head -5
+        MAGIC_FOUND=1
+    fi
+done
+if [ "$MAGIC_FOUND" -eq 1 ]; then
+    echo ""
+    echo "⚠️  Review above — are these from config/constants? If yes, proceed. If no, extract to config."
+    echo "   Checklista: 'Är detta site-specifikt? → config flag. Är detta ett tal? → config/constant.'"
+fi
