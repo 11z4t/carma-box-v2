@@ -70,6 +70,15 @@ logger = logging.getLogger("carma_box")
 _W_TO_KW: float = 1000.0
 _MS_PER_S: int = 1000
 _PCT_TO_RATIO: float = 100.0
+
+# DayPlan generation fallback constants (PLAT-1627)
+_DEFAULT_SOC_PCT: float = 50.0
+_PV_P10_RATIO: float = 0.7
+_PV_P90_RATIO: float = 1.3
+_DEFAULT_BASELOAD_KW: float = 2.5
+_DAYLIGHT_HOURS: int = 12
+_FALLBACK_WINDOW_START_H: int = 6
+_FALLBACK_WINDOW_END_H: int = 22
 _PV_REPLAN_FALLBACK_THRESHOLD: float = 0.20
 _DYNAMIC_TAK_DEFAULT_KW: float = 3.0
 _PRICE_DEFAULT_ORE: float = 100.0
@@ -577,7 +586,7 @@ class CarmaBoxService:
                 min_soc_pct=bat_cfg.min_soc_pct,
                 current_soc_pct=next(
                     (b.soc_pct for b in snapshot.batteries if b.battery_id == bat_cfg.id),
-                    50.0,
+                    _DEFAULT_SOC_PCT,
                 ),
             )
             for bat_cfg in cfg.batteries
@@ -598,23 +607,20 @@ class CarmaBoxService:
         if not pv_hourly:
             # Fallback: flat distribution of daily total
             total = snapshot.grid.pv_forecast_today_kwh
-            _DAYLIGHT_HOURS: int = 12
-            _FALLBACK_START_H: int = 6
-            _FALLBACK_END_H: int = 22
             per_hour = total / _DAYLIGHT_HOURS if total > 0 else 0.0
             pv_hourly = {
                 h: HourlyForecast(
-                    p10_kwh=per_hour * 0.7,
+                    p10_kwh=per_hour * _PV_P10_RATIO,
                     p50_kwh=per_hour,
-                    p90_kwh=per_hour * 1.3,
+                    p90_kwh=per_hour * _PV_P90_RATIO,
                 )
-                for h in range(_FALLBACK_START_H, _FALLBACK_END_H)
+                for h in range(_FALLBACK_WINDOW_START_H, _FALLBACK_WINDOW_END_H)
             }
 
         plan_cfg = DayPlanConfig(
             batteries=batteries,
             ev=ev,
-            baseload_kw=cfg.planner.house_baseload_kw if self._planner else 2.5,
+            baseload_kw=cfg.planner.house_baseload_kw if self._planner else _DEFAULT_BASELOAD_KW,
         )
         try:
             return generate_day_plan(pv_hourly, plan_cfg)
