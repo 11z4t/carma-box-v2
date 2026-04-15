@@ -79,10 +79,13 @@ class TestPerBatteryDispatch:
         bat_forrad = make_battery_state(
             battery_id="forrad", soc_pct=60.0, ct_placement=CTPlacement.HOUSE_GRID
         )
+        from tests.conftest import make_grid_state
+
         snap = make_snapshot(
             batteries=[bat_kontor, bat_forrad],
             current_scenario=Scenario.MIDDAY_CHARGE,
             hour=12,
+            grid=make_grid_state(grid_power_w=-2000.0),  # PV export
         )
 
         with patch.object(mode_mgr, "request_change") as mock_request:
@@ -177,10 +180,13 @@ class TestSoC100Standby:
             soc_pct=60.0,
             ct_placement=CTPlacement.LOCAL_LOAD,
         )
+        from tests.conftest import make_grid_state
+
         snap = make_snapshot(
             batteries=[bat_partial],
             current_scenario=Scenario.MIDDAY_CHARGE,
             hour=12,
+            grid=make_grid_state(grid_power_w=-2000.0),  # PV export
         )
 
         with patch.object(mode_mgr, "request_change") as mock_request:
@@ -210,10 +216,13 @@ class TestSingleBatteryRegression:
         )
         engine = _make_engine(mode_mgr)
 
+        from tests.conftest import make_grid_state
+
         snap = make_snapshot(
             batteries=[make_battery_state(battery_id="kontor", soc_pct=60.0)],
             current_scenario=Scenario.MIDDAY_CHARGE,
             hour=12,
+            grid=make_grid_state(grid_power_w=-2000.0),  # PV export
         )
 
         with patch.object(mode_mgr, "request_change") as mock_request:

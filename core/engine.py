@@ -181,6 +181,18 @@ class ControlEngine:
                 _ScenarioMode(EMSMode.BATTERY_STANDBY),
             )
             base_mode = sm.mode.value
+            # CRITICAL: During daytime charge scenarios, grid import means
+            # PV doesn't cover house load → bat MUST be standby.
+            # Only allow charge_pv when there is actual PV surplus (export).
+            grid_importing = snapshot.grid.grid_power_w > 0
+            is_day_charge = base_mode == EMSMode.CHARGE_PV.value and not snapshot.is_night
+            if is_day_charge and grid_importing:
+                base_mode = EMSMode.BATTERY_STANDBY.value
+                logger.info(
+                    "Daytime charge blocked: grid importing %.0fW → standby",
+                    snapshot.grid.grid_power_w,
+                )
+
             for bat in snapshot.batteries:
                 if not self._mode_manager.is_in_progress(bat.battery_id):
                     # At 100% SoC: standby (don't charge a full battery)
