@@ -25,6 +25,16 @@ from core.models import EMSMode, Scenario
 from core.state_machine import StateMachine, StateMachineConfig
 from tests.conftest import make_battery_state, make_snapshot
 
+# Named test constants
+_TEST_MIDDAY_HOUR: int = 14
+_TEST_EVENING_HOUR: int = 18
+_TEST_SOC_NOMINAL_PCT: float = 60.0
+_TEST_ENTRY_YEAR: int = 2026
+_TEST_ENTRY_MONTH: int = 4
+_TEST_ENTRY_DAY: int = 12
+_TEST_ENTRY_HOUR_MIDDAY: int = 11
+_TEST_ENTRY_HOUR_EVENING: int = 16
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -440,14 +450,17 @@ class TestNearZeroBalance:
         """grid_kw < NEAR_ZERO_KW in discharge mode → BATTERY_STANDBY."""
         engine = _make_engine()
         engine._sm.state.current = Scenario.EVENING_DISCHARGE
-        engine._sm.state.entry_time = datetime(2026, 4, 12, 16, 0, tzinfo=timezone.utc)
+        engine._sm.state.entry_time = datetime(
+            _TEST_ENTRY_YEAR, _TEST_ENTRY_MONTH, _TEST_ENTRY_DAY,
+            _TEST_ENTRY_HOUR_EVENING, 0, tzinfo=timezone.utc,
+        )
 
         from tests.conftest import make_grid_state
 
         # grid_power_w = 30W → 0.03 kW < NEAR_ZERO_KW (0.05)
         snap = make_snapshot(
-            hour=18,
-            batteries=[make_battery_state(soc_pct=60.0)],
+            hour=_TEST_EVENING_HOUR,
+            batteries=[make_battery_state(soc_pct=_TEST_SOC_NOMINAL_PCT)],
             grid=make_grid_state(grid_power_w=30.0),
         )
 
@@ -513,13 +526,16 @@ class TestChargePvLimitZero:
         """Balancer allocates >0W but engine overrides to _CHARGE_PV_EMS_LIMIT_W."""
         engine = _make_engine()
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
-        engine._sm.state.entry_time = datetime(2026, 4, 12, 11, 0, tzinfo=timezone.utc)
+        engine._sm.state.entry_time = datetime(
+            _TEST_ENTRY_YEAR, _TEST_ENTRY_MONTH, _TEST_ENTRY_DAY,
+            _TEST_ENTRY_HOUR_MIDDAY, 0, tzinfo=timezone.utc,
+        )
 
         from tests.conftest import make_grid_state
 
         snap = make_snapshot(
-            hour=14,
-            batteries=[make_battery_state(soc_pct=60.0)],
+            hour=_TEST_MIDDAY_HOUR,
+            batteries=[make_battery_state(soc_pct=_TEST_SOC_NOMINAL_PCT)],
             grid=make_grid_state(grid_power_w=self._BALANCE_GRID_W),
         )
         result = await engine.run_cycle(snap)
