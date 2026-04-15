@@ -437,16 +437,16 @@ class TestNearZeroBalance:
     """AC1: Near-zero grid triggers standby."""
 
     async def test_near_zero_grid_triggers_standby(self) -> None:
-        """grid_kw < NEAR_ZERO_KW → mode change to BATTERY_STANDBY."""
+        """grid_kw < NEAR_ZERO_KW in discharge mode → BATTERY_STANDBY."""
         engine = _make_engine()
-        engine._sm.state.current = Scenario.MIDDAY_CHARGE
-        engine._sm.state.entry_time = datetime(2026, 4, 12, 11, 0, tzinfo=timezone.utc)
+        engine._sm.state.current = Scenario.EVENING_DISCHARGE
+        engine._sm.state.entry_time = datetime(2026, 4, 12, 16, 0, tzinfo=timezone.utc)
 
         from tests.conftest import make_grid_state
 
         # grid_power_w = 30W → 0.03 kW < NEAR_ZERO_KW (0.05)
         snap = make_snapshot(
-            hour=12,
+            hour=18,
             batteries=[make_battery_state(soc_pct=60.0)],
             grid=make_grid_state(grid_power_w=30.0),
         )

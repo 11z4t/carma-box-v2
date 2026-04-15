@@ -236,9 +236,10 @@ class ControlEngine:
                 is_charging = scenario_charging or actual_charging
                 grid_kw = abs(snapshot.grid.grid_power_w) / _W_TO_KW
 
-                # Near-zero grid power → balanced state, set standby to avoid
-                # unnecessary battery cycling at idle.
-                if grid_kw < NEAR_ZERO_KW:
+                # Near-zero grid power → balanced state. But ONLY set standby
+                # during discharge scenarios. During charge_pv, near-zero grid
+                # means PV matches load perfectly — bat should still charge.
+                if grid_kw < NEAR_ZERO_KW and sm.mode == EMSMode.DISCHARGE_PV:
                     logger.debug(
                         "Cycle %s: near-zero grid (%.3f kW < %.3f) — standby",
                         cycle_id, grid_kw, NEAR_ZERO_KW,
