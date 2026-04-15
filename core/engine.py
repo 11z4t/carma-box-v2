@@ -24,7 +24,7 @@ from typing import Optional
 from config.schema import BatteryConfig
 from core.balancer import BalanceResult, BatteryBalancer, BatteryInfo
 from core.executor import CommandExecutor, ExecutionResult
-from core.guards import GridGuard, GuardEvaluation, GuardLevel
+from core.guards import GridGuard, GuardCommand, GuardEvaluation, GuardLevel
 from core.mode_change import ModeChangeManager
 from core.models import (
     MAX_SOC_PCT,
@@ -188,6 +188,21 @@ class ControlEngine:
             is_day_charge = base_mode == EMSMode.CHARGE_PV.value and not snapshot.is_night
             if is_day_charge and grid_importing:
                 base_mode = EMSMode.BATTERY_STANDBY.value
+                # EMERGENCY: Set standby IMMEDIATELY via guard commands.
+                # Cannot wait for 5-step mode change — bat would grid-import
+                # for 5 minutes during standby transition.
+                for bat in snapshot.batteries:
+                    if bat.ems_mode.value == EMSMode.CHARGE_PV.value:
+                        guard_eval.commands.append(GuardCommand(
+                            guard_id="G_GRID_IMPORT",
+                            command_type=CommandType.SET_EMS_MODE,
+                            target_id=bat.battery_id,
+                            value=EMSMode.BATTERY_STANDBY.value,
+                            reason=(
+                                f"EMERGENCY: grid importing {snapshot.grid.grid_power_w:.0f}W"
+                                f" daytime — standby to prevent grid charge"
+                            ),
+                        ))
                 logger.info(
                     "Daytime charge blocked: grid importing %.0fW → standby",
                     snapshot.grid.grid_power_w,
