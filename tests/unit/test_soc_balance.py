@@ -316,3 +316,53 @@ class TestExportLimitKontor:
         ]
         assert len(export_entries) >= _MIN_ALLOCATIONS
         assert int(export_entries[0].value) == _EXPECTED_EXPORT_LIMIT_STANDBY
+
+
+# ===========================================================================
+# PLAT-1619: Night charge_pv limit forced to 0
+# ===========================================================================
+
+_NIGHT_CHARGE_HOUR: int = 23
+_CONFIG_LIMIT_NON_ZERO: int = 500
+
+
+@pytest.mark.asyncio()
+class TestNightChargePvLimitZero:
+    """Branch B: charge_pv at night → limit forced to 0."""
+
+    async def test_night_charge_pv_limit_forced_zero(self) -> None:
+        """NIGHT_GRID_CHARGE with sm.ems_power_limit=500 → limit=0."""
+        engine = _make_engine()
+        engine._sm.state.current = Scenario.NIGHT_GRID_CHARGE
+        engine._sm.state.entry_time = datetime(
+            _ENTRY_YEAR, _ENTRY_MONTH, _ENTRY_DAY,
+            _NIGHT_CHARGE_HOUR, 0, tzinfo=timezone.utc,
+        )
+
+        snap = make_snapshot(
+            hour=_NIGHT_CHARGE_HOUR,
+            batteries=[make_battery_state(
+                battery_id="kontor", soc_pct=_SOC_LOW_PCT,
+                ems_mode=_STANDBY_MODE,
+                ct_placement=CTPlacement.LOCAL_LOAD,
+            )],
+            grid=make_grid_state(
+                pv_forecast_tomorrow_kwh=5.0,
+            ),
+        )
+
+        from unittest.mock import patch
+
+        # Patch mode_manager to capture request_change args
+        with patch.object(
+            engine._mode_manager, "request_change",
+            wraps=engine._mode_manager.request_change,
+        ) as mock_rc:
+            await engine.run_cycle(snap)
+
+        if mock_rc.called:
+            for call in mock_rc.call_args_list:
+                if call.kwargs.get("target_mode") == _CHARGE_PV_MODE:
+                    assert call.kwargs.get("target_limit_w", -1) == _EXPECTED_EXPORT_LIMIT_CHARGE, (
+                        f"Night charge_pv limit must be 0, got {call.kwargs.get('target_limit_w')}"
+                    )
