@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 # Named constants — no magic numbers in planning algorithms.
 _WATTS_PER_KW: int = 1000
 _PRICE_SORT_SENTINEL_ORE: float = 999.0
+_PCT_TO_RATIO: float = 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +213,7 @@ class Planner:
                 ev_need = self._calculate_ev_charge_need(ev_soc_pct)
                 # Low PV: limit to max_soc_jump
                 if pv_tomorrow_kwh <= cfg.pv_high_threshold_kwh:
-                    max_jump_kwh = (cfg.max_soc_jump_pct / 100.0) * cfg.ev_battery_kwh
+                    max_jump_kwh = (cfg.max_soc_jump_pct / _PCT_TO_RATIO) * cfg.ev_battery_kwh
                     ev_need = min(ev_need, max_jump_kwh / cfg.ev_efficiency)
                 ev_hours_needed = ev_need / cfg.ev_charge_kw
         elif not ev_connected:
@@ -287,7 +288,7 @@ class Planner:
         # Available battery energy above minimum
         bat_available = max(
             0.0,
-            (bat_soc_pct - cfg.min_soc_pct) / 100.0 * bat_cap_kwh * cfg.bat_efficiency,
+            (bat_soc_pct - cfg.min_soc_pct) / _PCT_TO_RATIO * bat_cap_kwh * cfg.bat_efficiency,
         )
 
         # Night need estimate
@@ -315,8 +316,8 @@ class Planner:
             )
 
         # 50/50 split
-        evening_alloc = bat_surplus * (cfg.evening_allocation_pct / 100.0)
-        morning_alloc = bat_surplus * (cfg.morning_allocation_pct / 100.0)
+        evening_alloc = bat_surplus * (cfg.evening_allocation_pct / _PCT_TO_RATIO)
+        morning_alloc = bat_surplus * (cfg.morning_allocation_pct / _PCT_TO_RATIO)
 
         # Evening floor SoC: min_soc + night_need / cap * 100, clamped to 100%
         evening_floor = min(
@@ -349,7 +350,7 @@ class Planner:
         soc_gap = cfg.ev_target_soc_pct - ev_soc_pct
         if soc_gap <= 0:
             return 0.0
-        return (soc_gap / 100.0) * cfg.ev_battery_kwh / cfg.ev_efficiency
+        return (soc_gap / _PCT_TO_RATIO) * cfg.ev_battery_kwh / cfg.ev_efficiency
 
     def _calculate_bat_charge_need(
         self, bat_soc_pct: float, bat_cap_kwh: float, pv_tomorrow_kwh: float
@@ -360,7 +361,7 @@ class Planner:
         soc_gap = target_soc - bat_soc_pct
         if soc_gap <= 0:
             return 0.0
-        raw_need = (soc_gap / 100.0) * bat_cap_kwh / cfg.bat_efficiency
+        raw_need = (soc_gap / _PCT_TO_RATIO) * bat_cap_kwh / cfg.bat_efficiency
         # Reduce by expected PV contribution (pv_bat_contribution_factor fraction
         # of tomorrow's forecast reaches the battery — conservative estimate).
         pv_contribution = min(pv_tomorrow_kwh * cfg.pv_bat_contribution_factor, raw_need)

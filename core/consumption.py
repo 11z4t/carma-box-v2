@@ -12,6 +12,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+# Watts-to-kilowatts conversion factor.
+_W_TO_KW: float = 1000.0
+
 # Default 24h consumption profile (kW per hour)
 # 00-05: 0.8 kW (night baseload)
 # 06-08: 2.0 kW (morning activity)
@@ -158,4 +161,4 @@ def calculate_house_consumption(
     ev = max(0.0, ev_power_w)
 
     house_w = grid_import + bat_discharge + pv - ev
-    return max(0.0, house_w) / 1000
+    return max(0.0, house_w) / _W_TO_KW
