@@ -414,6 +414,20 @@ class TestNoNaked1000InEngineModels:
                 if not line.strip().startswith("#"):
                     assert False, f"Naked 5000 at engine.py:{i}: {line.strip()}"
 
+    def test_no_naked_ratio_literals_in_engine(self) -> None:
+        """Guard: 0.75/0.25 must be named constants, not inline."""
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[2] / "core" / "engine.py").read_text()
+        for i, line in enumerate(source.splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if "* 0.75" in stripped or "* 0.25" in stripped:
+                assert False, (
+                    f"Naked ratio literal at engine.py:{i}: {stripped}"
+                )
+
     def test_no_naked_1000_in_models(self) -> None:
         from pathlib import Path
         import re
