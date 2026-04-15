@@ -27,6 +27,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Optional
 
+from adapters.easee import EaseeAdapter
 from adapters.goodwe import GoodWeAdapter
 from adapters.ha_api import HAApiClient
 from config.schema import CarmaConfig, load_config
@@ -57,6 +58,7 @@ from core.day_planner import (
 )
 from core.planner import Planner, PlannerConfig
 from core.ev_controller import EVAction, EVController, EVControllerConfig
+from core.ev_surplus import EVSurplusConfig, EVSurplusController
 from core.surplus_dispatch import SurplusConfig as SurplusDispatchConfig, SurplusDispatch
 from health import HealthStatus, Metrics
 from core.state_machine import StateMachine, StateMachineConfig
@@ -227,6 +229,18 @@ class CarmaBoxService:
             set_wait_s=float(config.control.mode_change_set_wait_s),
             verify_wait_s=float(config.control.mode_change_verify_wait_s),
         ))
+        # EV charger adapter — wired into executor for EV commands
+        ev_adapter: Optional[EaseeAdapter] = None
+        if config.ev_charger and config.ev_charger.charger_id:
+            ev_adapter = EaseeAdapter(
+                ha_api=ha_api,
+                config=config.ev_charger,
+            )
+            logger.info(
+                "EaseeAdapter wired: charger_id=%s",
+                config.ev_charger.charger_id,
+            )
+
         executor = CommandExecutor(
             inverters=dict(inverters),
             mode_manager=mode_mgr,
@@ -234,6 +248,7 @@ class CarmaBoxService:
                 mode_change_cooldown_s=config.control.mode_change_cooldown_s,
             ),
             ha_api=ha_api,
+            ev_charger=ev_adapter,
         )
 
         # Slack notifier
@@ -289,12 +304,32 @@ class CarmaBoxService:
         ))
         self._consumer_configs = config.consumers
 
+        # EV surplus controller — PV-only EV charging with ramp
+        ev_surplus_ctrl: Optional[EVSurplusController] = None
+        if ev_adapter is not None:
+            ev_ramp = config.ev_charger.ramp
+            ev_surplus_ctrl = EVSurplusController(EVSurplusConfig(
+                min_amps=config.ev_charger.min_amps,
+                max_amps=config.ev_charger.max_amps,
+                phases=config.ev_charger.phases,
+                voltage_v=config.ev_charger.voltage_v,
+                step_amps=ev_ramp.step_amps,
+            ))
+            logger.info(
+                "EVSurplusController wired: %d-%dA, %d-phase",
+                config.ev_charger.min_amps,
+                config.ev_charger.max_amps,
+                config.ev_charger.phases,
+            )
+
         # H2: map battery_id → config so engine can read per-battery limits
         battery_cfg_map = {bc.id: bc for bc in config.batteries}
 
         self._engine = ControlEngine(
             grid_guard, sm, balancer, mode_mgr, executor,
             battery_configs=battery_cfg_map,
+            ev_surplus=ev_surplus_ctrl,
+            surplus_dispatch=self._surplus_dispatch,
         )
 
     @property
