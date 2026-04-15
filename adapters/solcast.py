@@ -2,6 +2,7 @@
 
 Reads PV forecast from HA Solcast integration entities.
 Includes p10/p90 risk assessment for conservative planning.
+Hourly breakdown from entity attributes.forecast[] for day planning.
 
 All entity IDs from config — zero hardcoding.
 """
@@ -10,10 +11,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 
 from adapters.ha_api import HAApiClient
+from core.day_plan import HourlyForecast
 
 logger = logging.getLogger(__name__)
+
+# Cache: re-fetch hourly forecast only when the hour changes.
+_CACHE_SENTINEL_HOUR: int = -1
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,9 @@ class SolcastAdapter:
         self._entity_today = entity_today
         self._entity_tomorrow = entity_tomorrow
         self._p10 = p10_config or P10SafetyConfig()
+        # Hourly forecast cache — keyed by hour-of-day.
+        self._hourly_cache: dict[int, HourlyForecast] = {}
+        self._last_fetch_hour: int = _CACHE_SENTINEL_HOUR
 
     async def get_today(self) -> PVForecast:
         """Get today's PV forecast."""
@@ -75,6 +84,58 @@ class SolcastAdapter:
         if forecast.total_kwh < self._p10.threshold_kwh * 2:
             return self._p10.moderate_kw
         return self._p10.normal_kw
+
+    async def get_hourly_forecast(
+        self, current_hour: int,
+    ) -> dict[int, HourlyForecast]:
+        """Get hourly PV forecast from today entity's attributes.forecast[].
+
+        Returns dict[hour, HourlyForecast] with p10/p50/p90 per hour.
+        Missing hours return ZERO_HOURLY_FORECAST.
+        Cache: re-fetches only when current_hour changes.
+
+        PLAT-1628: Part of EPIC PLAT-1618 (PV Surplus Optimizer).
+        """
+        if current_hour == self._last_fetch_hour and self._hourly_cache:
+            return self._hourly_cache
+
+        data = await self._api.get_state_with_attributes(self._entity_today)
+        if data is None:
+            logger.warning("Solcast entity unavailable — returning empty forecast")
+            return {}
+
+        attrs = data.get("attributes", {})
+        forecast_list = attrs.get("forecast", [])
+
+        result: dict[int, HourlyForecast] = {}
+        for entry in forecast_list:
+            if not isinstance(entry, dict):
+                continue
+            period_start = entry.get("period_start", "")
+            try:
+                dt = datetime.fromisoformat(str(period_start))
+                hour = dt.astimezone().hour
+            except (ValueError, TypeError):
+                continue
+
+            p50 = float(entry.get("pv_estimate", 0.0))
+            p10_raw = float(entry.get("pv_estimate10", p50 * self._p10.p10_factor))
+            p90_raw = float(entry.get("pv_estimate90", p50 * self._p10.p90_factor))
+
+            # HourlyForecast __post_init__ handles p10/p90 clamping
+            result[hour] = HourlyForecast(
+                p10_kwh=p10_raw,
+                p50_kwh=p50,
+                p90_kwh=p90_raw,
+            )
+
+        self._hourly_cache = result
+        self._last_fetch_hour = current_hour
+        logger.debug(
+            "Solcast hourly forecast: %d hours loaded (cache hour=%d)",
+            len(result), current_hour,
+        )
+        return result
 
     async def _read_forecast(self, entity_id: str) -> PVForecast:
         """Read forecast from HA entity with attributes."""
