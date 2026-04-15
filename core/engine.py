@@ -24,7 +24,7 @@ from typing import Optional
 from config.schema import BatteryConfig
 from core.balancer import BalanceResult, BatteryBalancer, BatteryInfo
 from core.executor import CommandExecutor, ExecutionResult
-from core.guards import GridGuard, GuardCommand, GuardEvaluation, GuardLevel
+from core.guards import GridGuard, GuardEvaluation, GuardLevel
 from core.mode_change import ModeChangeManager
 from core.models import (
     MAX_SOC_PCT,
@@ -182,49 +182,19 @@ class ControlEngine:
                 _ScenarioMode(EMSMode.BATTERY_STANDBY),
             )
             base_mode = sm.mode.value
-            # Daytime charge_pv: CT-aware PV-only guard.
-            # - local_load CT (Kontor): PV surplus = pv_power > load_power
-            # - house_grid CT (Förråd): PV surplus = grid_power < 0 (export)
-            # If no PV surplus on that inverter → standby to prevent grid charge.
-            # If PV surplus → charge_pv to absorb it.
+            # Daytime PV surplus regulator (charge_pv mode).
+            # Regulates ems_power_limit per battery every cycle to match
+            # actual PV surplus. Prevents grid import while maximizing
+            # PV absorption.
+            #
+            # CT-aware:
+            # - Kontor (local_load): export_limit + ems_limit = PV surplus
+            # - Förråd (house_grid): ems_limit = PV surplus
+            #
+            # SoC balancing: lower SoC battery gets all charging until
+            # SoC matches, then proportional by capacity (K75/F25).
             if base_mode == EMSMode.CHARGE_PV.value and not snapshot.is_night:
-                pv_only_cmds: list[GuardCommand] = []
-                for bat in snapshot.batteries:
-                    has_pv_surplus: bool
-                    if bat.ct_placement == CTPlacement.LOCAL_LOAD:
-                        # Kontor: PV surplus when PV > local load
-                        has_pv_surplus = bat.pv_power_w > bat.load_power_w
-                    else:
-                        # Förråd (house_grid): PV surplus when exporting
-                        has_pv_surplus = bat.grid_power_w < 0
-
-                    if not has_pv_surplus and bat.ems_mode.value == EMSMode.CHARGE_PV.value:
-                        pv_only_cmds.append(GuardCommand(
-                            guard_id="G_PV_ONLY",
-                            command_type=CommandType.SET_EMS_MODE,
-                            target_id=bat.battery_id,
-                            value=EMSMode.BATTERY_STANDBY.value,
-                            reason=(
-                                f"PV-only: {bat.battery_id} no surplus"
-                                f" (pv={bat.pv_power_w:.0f}W,"
-                                f" grid={bat.grid_power_w:.0f}W) → standby"
-                            ),
-                        ))
-                    elif has_pv_surplus and bat.ems_mode.value == EMSMode.BATTERY_STANDBY.value:
-                        # PV surplus available but bat idle → switch to charge_pv
-                        pv_only_cmds.append(GuardCommand(
-                            guard_id="G_PV_ONLY",
-                            command_type=CommandType.SET_EMS_MODE,
-                            target_id=bat.battery_id,
-                            value=EMSMode.CHARGE_PV.value,
-                            reason=(
-                                f"PV surplus: {bat.battery_id}"
-                                f" (pv={bat.pv_power_w:.0f}W,"
-                                f" grid={bat.grid_power_w:.0f}W) → charge_pv"
-                            ),
-                        ))
-                if pv_only_cmds:
-                    await self._executor.execute_guard_commands(pv_only_cmds)
+                await self._regulate_pv_charging(snapshot)
 
             for bat in snapshot.batteries:
                 if not self._mode_manager.is_in_progress(bat.battery_id):
@@ -394,6 +364,130 @@ class ControlEngine:
             result.guard.level.value if result.guard else "none",
         )
         return result
+
+    # ------------------------------------------------------------------
+    # PV Surplus Regulator
+    # ------------------------------------------------------------------
+
+    _SOC_BALANCE_THRESHOLD_PCT: float = 2.0  # SoC diff below this = balanced
+    _GRID_HYSTERESIS_W: float = 100.0  # Accept <100W import/export
+
+    async def _regulate_pv_charging(self, snapshot: SystemSnapshot) -> None:
+        """Regulate bat charging to match PV surplus every cycle.
+
+        CT-aware per battery:
+        - Kontor (local_load): set export_limit + ems_limit
+        - Förråd (house_grid): set ems_limit only
+
+        SoC balancing: lower SoC bat gets all charging until SoC matches,
+        then proportional by capacity (K75/F25).
+        """
+        if not snapshot.batteries:
+            return
+
+        # Find house_grid battery for total PV surplus
+        house_grid_bat = None
+        for bat in snapshot.batteries:
+            if bat.ct_placement == CTPlacement.HOUSE_GRID:
+                house_grid_bat = bat
+            else:
+                pass  # local_load batteries handled via allocations
+
+        # Total PV surplus = house grid export (negative = export)
+        total_pv_surplus_w = max(
+            0, int(-house_grid_bat.grid_power_w) if house_grid_bat else 0,
+        )
+
+        # Add back what batteries are currently charging (to get true surplus)
+        for bat in snapshot.batteries:
+            if bat.power_w < 0:  # Negative = charging
+                total_pv_surplus_w += int(abs(bat.power_w))
+
+        if total_pv_surplus_w < self._GRID_HYSTERESIS_W:
+            # No meaningful PV surplus — keep current state
+            return
+
+        # SoC balancing: allocate PV surplus between batteries
+        bat_socs = {bat.battery_id: bat.soc_pct for bat in snapshot.batteries}
+        bat_caps = {bat.battery_id: bat.cap_kwh for bat in snapshot.batteries}
+        total_cap = sum(bat_caps.values()) or 1.0
+
+        allocations: dict[str, int] = {}
+
+        if len(snapshot.batteries) == 2:
+            ids = list(bat_socs.keys())
+            soc_diff = abs(bat_socs[ids[0]] - bat_socs[ids[1]])
+
+            if soc_diff > self._SOC_BALANCE_THRESHOLD_PCT:
+                # Unbalanced — all power to lower SoC battery
+                lower_id = ids[0] if bat_socs[ids[0]] < bat_socs[ids[1]] else ids[1]
+                higher_id = ids[1] if lower_id == ids[0] else ids[0]
+                allocations[lower_id] = total_pv_surplus_w
+                allocations[higher_id] = 0
+            else:
+                # Balanced — proportional by capacity
+                for bid in ids:
+                    share = bat_caps[bid] / total_cap
+                    allocations[bid] = int(total_pv_surplus_w * share)
+        else:
+            # Single battery
+            for bat in snapshot.batteries:
+                allocations[bat.battery_id] = total_pv_surplus_w
+
+        # Apply limits per battery
+        cmds: list[Command] = []
+        for bat in snapshot.batteries:
+            limit_w = allocations.get(bat.battery_id, 0)
+
+            # Set ems_power_limit
+            cmds.append(Command(
+                command_type=CommandType.SET_EMS_POWER_LIMIT,
+                target_id=bat.battery_id,
+                value=limit_w,
+                rule_id="PV_REGULATOR",
+                reason=(
+                    f"PV surplus: {limit_w}W"
+                    f" (total={total_pv_surplus_w}W,"
+                    f" soc={bat.soc_pct:.0f}%)"
+                ),
+            ))
+
+            # Kontor (local_load): also set export_limit
+            if bat.ct_placement == CTPlacement.LOCAL_LOAD:
+                cmds.append(Command(
+                    command_type=CommandType.SET_EXPORT_LIMIT,
+                    target_id=bat.battery_id,
+                    value=limit_w,
+                    rule_id="PV_REGULATOR",
+                    reason=f"export_limit={limit_w}W (match ems_limit)",
+                ))
+
+            # Set charge_pv mode if limit > 0 and bat in standby
+            if limit_w > 0 and bat.ems_mode.value == EMSMode.BATTERY_STANDBY.value:
+                cmds.append(Command(
+                    command_type=CommandType.SET_EMS_MODE,
+                    target_id=bat.battery_id,
+                    value=EMSMode.CHARGE_PV.value,
+                    rule_id="PV_REGULATOR",
+                    reason=f"PV surplus {limit_w}W → charge_pv",
+                ))
+            # Set standby if limit = 0 and bat in charge_pv
+            elif limit_w == 0 and bat.ems_mode.value == EMSMode.CHARGE_PV.value:
+                cmds.append(Command(
+                    command_type=CommandType.SET_EMS_MODE,
+                    target_id=bat.battery_id,
+                    value=EMSMode.BATTERY_STANDBY.value,
+                    rule_id="PV_REGULATOR",
+                    reason="No PV allocation → standby",
+                ))
+
+        if cmds:
+            await self._executor.execute(cmds)
+            logger.info(
+                "PV regulator: surplus=%dW, allocations=%s",
+                total_pv_surplus_w,
+                {k: f"{v}W" for k, v in allocations.items()},
+            )
 
     @property
     def cycle_count(self) -> int:
