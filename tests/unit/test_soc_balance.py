@@ -324,6 +324,7 @@ class TestExportLimitKontor:
 
 _NIGHT_CHARGE_HOUR: int = 23
 _CONFIG_LIMIT_NON_ZERO: int = 500
+_LOW_PV_FORECAST_KWH: float = 5.0
 
 
 @pytest.mark.asyncio()
@@ -347,7 +348,7 @@ class TestNightChargePvLimitZero:
                 ct_placement=CTPlacement.LOCAL_LOAD,
             )],
             grid=make_grid_state(
-                pv_forecast_tomorrow_kwh=5.0,
+                pv_forecast_tomorrow_kwh=_LOW_PV_FORECAST_KWH,
             ),
         )
 
