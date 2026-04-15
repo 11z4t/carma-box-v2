@@ -23,6 +23,9 @@ from config.schema import EVChargerConfig
 
 logger = logging.getLogger(__name__)
 
+# kW to W conversion factor.
+_KWH_TO_W: float = 1000.0
+
 
 class EaseeAdapter(EVChargerAdapter):
     """Easee Home charger adapter.
@@ -77,7 +80,7 @@ class EaseeAdapter(EVChargerAdapter):
             return 0.0
         try:
             # Easee reports power in kW, convert to W
-            return float(state) * 1000.0
+            return float(state) * _KWH_TO_W
         except (ValueError, TypeError):
             return 0.0
 

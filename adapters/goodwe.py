@@ -23,6 +23,10 @@ from core.models import CTPlacement
 
 logger = logging.getLogger(__name__)
 
+# Safe defaults for unavailable sensors.
+_CELL_TEMP_DEFAULT_C: float = 20.0
+_SOH_DEFAULT_PCT: float = 100.0
+
 # EMS mode strings as used by the GoodWe HACS integration
 # Allowed EMS modes — "auto" intentionally excluded (B10/B14)
 _VALID_EMS_MODES = frozenset({
@@ -114,7 +118,7 @@ class GoodWeAdapter(InverterAdapter):
 
     async def get_cell_temperature(self) -> float:
         """Get battery cell temperature (°C). Returns 20.0 if unavailable."""
-        return await self._read_float(self._entities.cell_temp, default=20.0)
+        return await self._read_float(self._entities.cell_temp, default=_CELL_TEMP_DEFAULT_C)
 
     async def get_pv_power(self) -> float:
         """Get PV production (W, always >= 0)."""
@@ -148,7 +152,7 @@ class GoodWeAdapter(InverterAdapter):
 
     async def get_soh(self) -> float:
         """Get State of Health (%). Returns 100.0 if unavailable."""
-        return await self._read_float(self._entities.soh, default=100.0)
+        return await self._read_float(self._entities.soh, default=_SOH_DEFAULT_PCT)
 
     async def get_export_limit(self) -> int:
         """Get grid export limit (W)."""

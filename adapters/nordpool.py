@@ -15,15 +15,20 @@ from adapters.ha_api import HAApiClient
 
 logger = logging.getLogger(__name__)
 
+# Default price thresholds (öre/kWh).
+_DEFAULT_FALLBACK_ORE: float = 100.0
+_DEFAULT_CHEAP_ORE: float = 30.0
+_DEFAULT_EXPENSIVE_ORE: float = 80.0
+
 
 @dataclass(frozen=True)
 class NordpoolConfig:
     """Nordpool adapter config — from site.yaml."""
 
     entity: str = ""
-    fallback_ore: float = 100.0
-    cheap_ore: float = 30.0
-    expensive_ore: float = 80.0
+    fallback_ore: float = _DEFAULT_FALLBACK_ORE
+    cheap_ore: float = _DEFAULT_CHEAP_ORE
+    expensive_ore: float = _DEFAULT_EXPENSIVE_ORE
     price_unit: str = "sek"  # "sek" → multiply by 100; "ore" → use as-is
 
 
