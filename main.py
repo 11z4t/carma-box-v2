@@ -299,7 +299,7 @@ class CarmaBoxService:
         )
 
         # Solcast adapter — hourly PV forecast for DayPlan (PLAT-1659)
-        self._solcast: Optional[SolcastAdapter] = None
+        self._solcast = None
         if config.pv_forecast.entity_today:
             self._solcast = SolcastAdapter(
                 ha_api=ha_api,
