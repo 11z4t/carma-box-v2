@@ -338,9 +338,28 @@ class CommandExecutor:
     # ------------------------------------------------------------------
 
     async def _exec_set_export_limit(self, cmd: Command) -> bool:
-        """SET_EXPORT_LIMIT: no export-limit adapter registered — not yet implemented."""
-        logger.warning("SET_EXPORT_LIMIT not implemented for %s", cmd.target_id)
-        return False
+        """SET_EXPORT_LIMIT: write grid export limit via HA number entity."""
+        inverter = self._inverters.get(cmd.target_id)
+        if inverter is None:
+            logger.warning("No inverter for %s", cmd.target_id)
+            return False
+        inverter = self._inverters.get(cmd.target_id)
+        if not inverter:
+            logger.error("No inverter for export limit %s", cmd.target_id)
+            return False
+        limit_w = int(cmd.value or 0)
+        logger.info(
+            "Setting export limit → %d W on %s", limit_w, cmd.target_id,
+        )
+        # Write via HA number entity (same API as ems_power_limit)
+        entity_id = f"number.goodwe_grid_export_limit_{cmd.target_id}"
+        return await inverter._api.call_service(
+            "number", "set_value",
+            {"entity_id": entity_id, "value": limit_w},
+        )
+        except Exception as exc:
+            logger.error("Export limit write failed: %s", exc)
+            return False
 
     async def _exec_no_op(self, cmd: Command) -> bool:
         """NO_OP: pre-filtered by execute() and never reaches dispatch in normal flow.
