@@ -359,14 +359,24 @@ class StateMachine:
         )
 
     def _exit_s3(self, snap: SystemSnapshot) -> bool:
-        """Exit S3: hour >= 17."""
-        return snap.hour >= self._config.midday_end_h
+        """Exit S3: outside midday window (12-17).
+
+        Must handle midnight wrap: hour < 12 OR hour >= 17 both mean
+        we're outside the midday window and should exit.
+        """
+        cfg = self._config
+        return snap.hour >= cfg.midday_end_h or snap.hour < cfg.forenoon_end_h
 
     def _exit_s4(self, snap: SystemSnapshot) -> bool:
-        """Exit S4: hour >= 22 or SoC at evening floor."""
+        """Exit S4: outside evening window (17-22) or SoC at floor.
+
+        Must handle midnight wrap: hour < 17 OR hour >= 22 both mean
+        we're outside the evening window.
+        """
         cfg = self._config
         floor = cfg.normal_floor_pct + cfg.evening_min_soc_above_floor_pct
-        return snap.hour >= cfg.evening_end_h or snap.total_battery_soc_pct <= floor
+        outside_window = snap.hour >= cfg.evening_end_h or snap.hour < cfg.midday_end_h
+        return outside_window or snap.total_battery_soc_pct <= floor
 
     def _exit_night(self, snap: SystemSnapshot) -> bool:
         """Exit any night scenario: hour >= 6 (daytime window)."""

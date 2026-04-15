@@ -382,20 +382,51 @@ class TestManualOverride:
 class TestTransitionMatrix:
     """Only allowed transitions should happen."""
 
-    def test_s3_cannot_go_to_s1(self, sm: StateMachine) -> None:
-        """S3 MIDDAY_CHARGE cannot transition directly to S1 MORNING_DISCHARGE."""
+    def test_s3_at_morning_recovers_to_s1(self, sm: StateMachine) -> None:
+        """S3 MIDDAY_CHARGE at hour=7 → catchall recovery to S1."""
         sm.state.current = Scenario.MIDDAY_CHARGE
         snap = _snap(hour=7, pv_today=20.0, bat_soc=60.0)
         result = sm.evaluate(snap)
-        # S1 entry conditions match but transition not allowed from S3
-        assert result != Scenario.MORNING_DISCHARGE
+        # S3 at hour 7 is outside midday window → exit → catchall → S1
+        assert result == Scenario.MORNING_DISCHARGE
 
-    def test_s4_cannot_go_to_s3(self, sm: StateMachine) -> None:
-        """S4 EVENING_DISCHARGE cannot go back to S3 MIDDAY_CHARGE."""
+    def test_s4_at_midday_recovers_to_s3(self, sm: StateMachine) -> None:
+        """S4 EVENING_DISCHARGE at hour=13 → catchall recovery to S3."""
         sm.state.current = Scenario.EVENING_DISCHARGE
-        snap = _snap(hour=13)  # S3 conditions match
+        snap = _snap(hour=13)
         result = sm.evaluate(snap)
-        assert result != Scenario.MIDDAY_CHARGE
+        # S4 at hour 13 is outside evening window → exit → catchall → S3
+        assert result == Scenario.MIDDAY_CHARGE
+
+
+# ===========================================================================
+# REGRESSION: Midnight wrap exit — S3/S4 must exit at midnight
+# ===========================================================================
+
+
+class TestMidnightWrapExit:
+    """Scenario exit conditions must handle midnight correctly."""
+
+    def test_s3_exits_at_midnight(self, sm: StateMachine) -> None:
+        """S3 MIDDAY_CHARGE at hour=0 must exit (not stay stuck)."""
+        sm.state.current = Scenario.MIDDAY_CHARGE
+        snap = _snap(hour=0, pv_tomorrow=20.0)
+        result = sm.evaluate(snap)
+        assert result is not None, "S3 stuck at midnight — exit not triggered"
+
+    def test_s4_exits_at_midnight(self, sm: StateMachine) -> None:
+        """S4 EVENING_DISCHARGE at hour=0 must exit."""
+        sm.state.current = Scenario.EVENING_DISCHARGE
+        snap = _snap(hour=0, pv_tomorrow=20.0, bat_soc=60.0)
+        result = sm.evaluate(snap)
+        assert result is not None, "S4 stuck at midnight — exit not triggered"
+
+    def test_s3_stays_during_midday(self, sm: StateMachine) -> None:
+        """S3 at hour=14 (within window) should NOT exit."""
+        sm.state.current = Scenario.MIDDAY_CHARGE
+        snap = _snap(hour=14)
+        result = sm.evaluate(snap)
+        assert result is None  # Stay in S3
 
 
 # ===========================================================================
