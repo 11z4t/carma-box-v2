@@ -37,6 +37,16 @@ _STALE_DATA_AGE_S: float = 400.0
 _PRICE_NORMAL_ORE: float = 50.0
 _PRICE_LOW_ORE: float = 20.0
 _PRICE_HIGH_ORE: float = 150.0
+_MINUTES_PER_STEP: int = 30
+_MIDDAY_HOUR: int = 12
+_SOC_RATE_PCT_PER_H: float = 1.5
+_SOC_FLOOR_PCT: float = 20.0
+_SOC_CEILING_PCT: float = 95.0
+_W_TO_KW: float = 1000.0
+_PEAK_HOUR: int = 17
+_HA_UNAVAIL_HOUR: int = 14
+_LOW_PRICE_CUTOFF_HOUR: int = 6
+_HIGH_PRICE_CUTOFF_HOUR: int = 17
 
 
 def _make_engine() -> ControlEngine:
@@ -66,17 +76,21 @@ def _make_normal_day_trace() -> list:
     trace = []
     for i in range(_SIM_NORMAL_TOTAL):
         hour = (i // _SIM_SNAPSHOTS_PER_HOUR) % _SIM_NORMAL_HOURS
-        minute = (i % _SIM_SNAPSHOTS_PER_HOUR) * 30
-        soc = _SOC_NORMAL_PCT + (hour - 12) * 1.5  # Varies 40-80%
-        soc = max(20.0, min(95.0, soc))
-        price = _PRICE_LOW_ORE if hour < 6 else _PRICE_HIGH_ORE if hour > 17 else _PRICE_NORMAL_ORE
+        minute = (i % _SIM_SNAPSHOTS_PER_HOUR) * _MINUTES_PER_STEP
+        soc = _SOC_NORMAL_PCT + (hour - _MIDDAY_HOUR) * _SOC_RATE_PCT_PER_H
+        soc = max(_SOC_FLOOR_PCT, min(_SOC_CEILING_PCT, soc))
+        price = (
+            _PRICE_LOW_ORE if hour < _LOW_PRICE_CUTOFF_HOUR
+            else _PRICE_HIGH_ORE if hour > _HIGH_PRICE_CUTOFF_HOUR
+            else _PRICE_NORMAL_ORE
+        )
         snap = make_snapshot(
             hour=hour,
             minute=minute,
             batteries=[make_battery_state(soc_pct=soc)],
             grid=make_grid_state(
                 grid_power_w=_GRID_NORMAL_W,
-                weighted_avg_kw=_GRID_NORMAL_W / 1000.0,
+                weighted_avg_kw=_GRID_NORMAL_W / _W_TO_KW,
                 price_ore=price,
             ),
         )
@@ -88,11 +102,11 @@ def _make_peak_trace() -> list:
     """Build 12 snapshots with extreme grid import."""
     return [
         make_snapshot(
-            hour=17,
+            hour=_PEAK_HOUR,
             batteries=[make_battery_state(soc_pct=_SOC_PEAK_PCT)],
             grid=make_grid_state(
                 grid_power_w=_PEAK_GRID_W,
-                weighted_avg_kw=_PEAK_GRID_W / 1000.0,
+                weighted_avg_kw=_PEAK_GRID_W / _W_TO_KW,
             ),
         )
         for _ in range(_PEAK_SNAPSHOTS)
@@ -103,7 +117,7 @@ def _make_ha_unavailable_trace() -> list:
     """Build 6 snapshots for HA-unavailable simulation."""
     return [
         make_snapshot(
-            hour=14,
+            hour=_HA_UNAVAIL_HOUR,
             batteries=[make_battery_state(soc_pct=_SOC_NORMAL_PCT)],
         )
         for _ in range(_HA_UNAVAILABLE_SNAPSHOTS)
