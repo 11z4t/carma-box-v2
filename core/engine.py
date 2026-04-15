@@ -188,12 +188,12 @@ class ControlEngine:
             is_day_charge = base_mode == EMSMode.CHARGE_PV.value and not snapshot.is_night
             if is_day_charge and grid_importing:
                 base_mode = EMSMode.BATTERY_STANDBY.value
-                # EMERGENCY: Set standby IMMEDIATELY via guard commands.
-                # Cannot wait for 5-step mode change — bat would grid-import
-                # for 5 minutes during standby transition.
+                # EMERGENCY: Set standby IMMEDIATELY — bypass 5-step mode change.
+                # Execute guard commands directly in this cycle.
+                emergency_cmds: list[GuardCommand] = []
                 for bat in snapshot.batteries:
                     if bat.ems_mode.value == EMSMode.CHARGE_PV.value:
-                        guard_eval.commands.append(GuardCommand(
+                        emergency_cmds.append(GuardCommand(
                             guard_id="G_GRID_IMPORT",
                             command_type=CommandType.SET_EMS_MODE,
                             target_id=bat.battery_id,
@@ -203,6 +203,8 @@ class ControlEngine:
                                 f" daytime — standby to prevent grid charge"
                             ),
                         ))
+                if emergency_cmds:
+                    await self._executor.execute_guard_commands(emergency_cmds)
                 logger.info(
                     "Daytime charge blocked: grid importing %.0fW → standby",
                     snapshot.grid.grid_power_w,
