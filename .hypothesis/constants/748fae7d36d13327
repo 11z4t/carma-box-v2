@@ -1,0 +1,4 @@
+# file: /usr/lib/python3/dist-packages/botocore/hooks.py
+# hypothesis_version: 6.151.10
+
+['*', '.', 'NodeList', '_handlers', '_unique_id_handlers', 'children', 'chunk', 'count', 'event_name', 'first', 'handler', 'last', 'middle', 'values']

@@ -57,7 +57,7 @@ class TestCycleLog:
         entry = CycleLogEntry(
             cycle_id="abc123",
             timestamp="2026-04-12T22:00:00",
-            scenario="MIDDAY_CHARGE",
+            scenario="PV_SURPLUS_DAY",
             guard_level="ok",
             headroom_kw=1.5,
             elapsed_s=0.05,
@@ -67,7 +67,7 @@ class TestCycleLog:
         rows = _run(db.get_unsynced_rows("cycle_log"))
         assert len(rows) == 1
         assert rows[0]["cycle_id"] == "abc123"
-        assert rows[0]["scenario"] == "MIDDAY_CHARGE"
+        assert rows[0]["scenario"] == "PV_SURPLUS_DAY"
 
 
 # ===========================================================================
@@ -170,7 +170,7 @@ class TestSyncTracking:
             _run(db.write_cycle(CycleLogEntry(
                 cycle_id=f"c{i}",
                 timestamp=f"2026-04-12T22:0{i}:00",
-                scenario="MIDDAY_CHARGE",
+                scenario="PV_SURPLUS_DAY",
                 guard_level="ok",
                 headroom_kw=1.0,
                 elapsed_s=0.05,
@@ -209,7 +209,7 @@ class TestCoverageBranches:
         entry = CycleLogEntry(
             cycle_id="old_cycle",
             timestamp="2020-01-01T00:00:00",
-            scenario="MIDDAY_CHARGE",
+            scenario="PV_SURPLUS_DAY",
             guard_level="ok",
             headroom_kw=1.0,
             elapsed_s=0.05,
@@ -260,7 +260,7 @@ class TestSQLInjectionPrevention:
         # Write a row with old timestamp so it gets deleted
         _run(db.write_cycle(CycleLogEntry(
             cycle_id="old1", timestamp="2020-01-01T00:00:00",
-            scenario="MIDDAY_CHARGE", guard_level="ok",
+            scenario="PV_SURPLUS_DAY", guard_level="ok",
             headroom_kw=1.0, elapsed_s=0.05,
         )))
         deleted = _run(db.cleanup_retention(1))
@@ -303,7 +303,7 @@ class TestBatchCommit:
             _run(db.write_cycle(CycleLogEntry(
                 cycle_id=f"batch_{i}",
                 timestamp=f"2026-04-12T23:0{i}:00",
-                scenario="MIDDAY_CHARGE",
+                scenario="PV_SURPLUS_DAY",
                 guard_level="ok",
                 headroom_kw=1.0,
                 elapsed_s=0.04,
@@ -335,7 +335,7 @@ class TestSQLInjectionCleanupRetention:
         """cycle_log table is unaffected by a rejected injection attempt."""
         _run(db.write_cycle(CycleLogEntry(
             cycle_id="safe1", timestamp="2026-04-12T22:00:00",
-            scenario="MIDDAY_CHARGE", guard_level="ok",
+            scenario="PV_SURPLUS_DAY", guard_level="ok",
             headroom_kw=1.0, elapsed_s=0.05,
         )))
         with pytest.raises((ValueError, TypeError)):
@@ -359,7 +359,7 @@ class TestConcurrentWriteSafety:
             loop1.run_until_complete(db1.initialize())
             loop1.run_until_complete(db1.write_cycle(CycleLogEntry(
                 cycle_id="loop1_c1", timestamp="2026-04-12T22:00:00",
-                scenario="MIDDAY_CHARGE", guard_level="ok",
+                scenario="PV_SURPLUS_DAY", guard_level="ok",
                 headroom_kw=1.0, elapsed_s=0.05,
             )))
             loop1.run_until_complete(db1.close())

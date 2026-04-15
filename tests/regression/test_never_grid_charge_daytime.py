@@ -72,7 +72,7 @@ class TestNeverGridChargeDaytime:
     async def test_no_surplus_sets_standby(self) -> None:
         """No PV surplus → charge plan sets standby command."""
         engine, inv_mock = _make_engine()
-        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
 
         snap = make_snapshot(
             hour=_TEST_MIDDAY_HOUR,
@@ -99,7 +99,7 @@ class TestNeverGridChargeDaytime:
     async def test_pv_surplus_sets_charge_pv(self) -> None:
         """PV surplus → charge plan sets charge_pv + limit=0."""
         engine, inv_mock = _make_engine()
-        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
 
         snap = make_snapshot(
             hour=_TEST_AFTERNOON_HOUR,
@@ -125,7 +125,7 @@ class TestNeverGridChargeDaytime:
     async def test_limit_matches_pv_surplus(self) -> None:
         """charge_battery: limit = PV surplus in charge_pv. NEVER remove this test."""
         engine, _inv = _make_engine()
-        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
 
         snap = make_snapshot(
             hour=_TEST_AFTERNOON_HOUR,
@@ -146,7 +146,7 @@ class TestNeverGridChargeDaytime:
     async def test_charge_pv_absorbs_export(self) -> None:
         """PV export + bat standby → charge plan activates charge_pv."""
         engine, inv_mock = _make_engine()
-        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
 
         snap = make_snapshot(
             hour=_TEST_MIDDAY_HOUR,

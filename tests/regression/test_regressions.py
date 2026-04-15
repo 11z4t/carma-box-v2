@@ -140,7 +140,7 @@ class TestB8SocFloor:
         guard = GridGuard(GuardConfig())
         bat = make_battery_state(soc_pct=14.0)
         result = guard.evaluate(
-            batteries=[bat], current_scenario=Scenario.MIDDAY_CHARGE,
+            batteries=[bat], current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=1.0, hour=12, ha_connected=True,
         )
         g1 = [c for c in result.commands if c.guard_id == "G1"]
@@ -155,7 +155,7 @@ class TestB9EmsLimitChargePv:
         guard = GridGuard(GuardConfig())
         bat = make_battery_state(ems_mode="charge_pv", ems_power_limit_w=3000)
         result = guard.evaluate(
-            batteries=[bat], current_scenario=Scenario.MIDDAY_CHARGE,
+            batteries=[bat], current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=1.0, hour=12, ha_connected=True,
         )
         assert result.level == GuardLevel.CRITICAL, "B9: G0 must fire"

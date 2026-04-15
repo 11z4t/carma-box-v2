@@ -1,0 +1,4 @@
+# file: /home/charlie/carma-box-v2/core/consumption.py
+# hypothesis_version: 6.151.10
+
+[0.0, 0.1, 0.8, 1.0, 1.5, 2.0, 2.5, 20.0, 168, 1000, 'samples_weekday', 'samples_weekend', 'weekday', 'weekend']

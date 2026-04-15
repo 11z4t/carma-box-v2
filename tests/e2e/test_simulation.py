@@ -27,10 +27,10 @@ class TestSummerDay:
     def test_scenario_transitions_occur(self) -> None:
         """Summer day should have scenario transitions (not stuck in one)."""
         sm = StateMachine(StateMachineConfig(min_dwell_s=0))
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         sm.state.entry_time = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)  # Far past
 
-        transitions: list[Scenario] = [Scenario.MIDDAY_CHARGE]
+        transitions: list[Scenario] = [Scenario.PV_SURPLUS_DAY]
 
         # Simulate daytime hours where transitions are most likely
         for hour in range(12, 24):
@@ -66,7 +66,7 @@ class TestSummerDay:
                 pv_power_w=pv * 1000,
             )
             result = guard.evaluate(
-                batteries=[bat], current_scenario=Scenario.MIDDAY_CHARGE,
+                batteries=[bat], current_scenario=Scenario.PV_SURPLUS_DAY,
                 weighted_avg_kw=1.0, hour=hour, ha_connected=True,
             )
             g0 = [v for v in result.violations if "G0" in v]
@@ -90,10 +90,10 @@ class TestWinterDay:
     def test_conservative_winter_day(self) -> None:
         """Winter day: S3→S4 transition at 17:00."""
         sm = StateMachine(StateMachineConfig(min_dwell_s=0))
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         sm.state.entry_time = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)  # Far past
 
-        transitions: list[Scenario] = [Scenario.MIDDAY_CHARGE]
+        transitions: list[Scenario] = [Scenario.PV_SURPLUS_DAY]
 
         for hour in range(12, 23):
             snap = make_snapshot(

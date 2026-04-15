@@ -1,0 +1,4 @@
+# file: /usr/lib/python3/dist-packages/botocore/loaders.py
+# hypothesis_version: 6.151.10
+
+[', ', '.aws', '.json', '.json.gz', 'data', 'merge', 'models', 'rb', 'sdk', 'utf-8', '~']

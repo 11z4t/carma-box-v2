@@ -1,0 +1,4 @@
+# file: /usr/lib/python3/dist-packages/botocore/docs/bcdoc/style.py
+# hypothesis_version: 6.151.10
+
+['\n\n%s', '\n%s', '\n.. toctree::\n', '   :depth: %s', '  %s', '  :hidden:\n\n', '  :maxdepth: 1\n', '  :titlesonly:\n\n', ' <%s>`__', '!', '(%s)', '*', '* ', '**', ',', '-', '.', '.. contents:: ', '.. danger::', '.. note::', '.. py:attribute:: %s', '.. py:class:: %s', '.. py:method:: %s', '.. warning::', ':', '::', ';', '=', '?', '\\:', '`', '` ', '`<%s>`__', '`__', '``', 'bcdocs', 'href', 'html', 'man']

@@ -76,7 +76,7 @@ class TestChargeDischargeExclusion:
         snap = make_snapshot(hour=_TEST_HOUR, batteries=[bat])
         result = policy.evaluate(
             batteries=snap.batteries,
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=_NEUTRAL_WEIGHTED_AVG_KW,
             hour=snap.hour,
             ha_connected=True,
@@ -116,7 +116,7 @@ class TestChargeDischargeExclusion:
         snap = make_snapshot(hour=_TEST_HOUR, batteries=bats)
         result = policy.evaluate(
             batteries=snap.batteries,
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=_NEUTRAL_WEIGHTED_AVG_KW,
             hour=snap.hour,
             ha_connected=True,
@@ -159,7 +159,7 @@ class TestImportCapOnBreach:
         )
         result = policy.evaluate(
             batteries=snap.batteries,
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=snap.grid.weighted_avg_kw,
             hour=snap.hour,
             ha_connected=True,
@@ -218,7 +218,7 @@ class TestAlarmDominatesWarning:
         snap = make_snapshot(hour=_TEST_HOUR, batteries=[bat])
         result = policy.evaluate(
             batteries=snap.batteries,
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=_NEUTRAL_WEIGHTED_AVG_KW,
             hour=snap.hour,
             ha_connected=True,
@@ -256,7 +256,7 @@ class TestEveryCommandHasCause:
         snap = make_snapshot(hour=_TEST_HOUR, batteries=[bat])
         result = policy.evaluate(
             batteries=snap.batteries,
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=_NEUTRAL_WEIGHTED_AVG_KW,
             hour=snap.hour,
             ha_connected=True,
@@ -282,7 +282,7 @@ class TestEveryCommandHasCause:
         snap = make_snapshot(hour=_TEST_HOUR, batteries=[bat])
         result = policy.evaluate(
             batteries=snap.batteries,
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=_NEUTRAL_WEIGHTED_AVG_KW,
             hour=snap.hour,
             ha_connected=True,

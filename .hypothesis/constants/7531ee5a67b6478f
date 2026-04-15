@@ -1,0 +1,4 @@
+# file: /home/charlie/carma-box-v2/core/state_machine.py
+# hypothesis_version: 6.151.10
+
+[10.0, 15.0, 30.0, 60.0, 75.0, 90.0, 95.0, 200.0, 300.0, 500.0, '_entry_s1', '_entry_s2', '_entry_s3', '_entry_s4', '_entry_s5', '_entry_s6', '_entry_s7', '_entry_s8', '_exit_s1', '_exit_s2', '_exit_s3', '_exit_s4', '_exit_s5', '_exit_s6', '_exit_s7', '_exit_s8']

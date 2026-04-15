@@ -1,0 +1,4 @@
+# file: /usr/lib/python3/dist-packages/defusedxml/ElementTree.py
+# hypothesis_version: 6.151.10
+
+['ElementTree', 'ParseError', 'XML', 'XMLParse', 'XMLParser', 'XMLTreeBuilder', '_elementtree', 'fromstring', 'iterparse', 'parse', 'tostring', 'xml.etree']

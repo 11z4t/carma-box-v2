@@ -169,7 +169,7 @@ class TestScenarioTransition:
     async def test_scenario_transition_at_evening(self) -> None:
         """At 17:00, should transition from S3 to S4."""
         engine = _make_engine()
-        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
         engine._sm.state.entry_time = datetime(2026, 4, 12, 11, 0, tzinfo=timezone.utc)
 
         snap = make_snapshot(hour=17, batteries=[make_battery_state(soc_pct=60.0)])
@@ -179,12 +179,12 @@ class TestScenarioTransition:
     async def test_stays_in_scenario_when_no_exit(self) -> None:
         """At 14:00 in S3, should stay."""
         engine = _make_engine()
-        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
         engine._sm.state.entry_time = datetime(2026, 4, 12, 11, 0, tzinfo=timezone.utc)
 
         snap = make_snapshot(hour=14)
         result = await engine.run_cycle(snap)
-        assert result.scenario == Scenario.MIDDAY_CHARGE
+        assert result.scenario == Scenario.PV_SURPLUS_DAY
 
 
 # ===========================================================================
@@ -354,7 +354,7 @@ class TestPerBatteryModeChange:
         inv_mock2.get_ems_mode = AsyncMock(return_value="battery_standby")
         engine._executor._inverters["forrad"] = inv_mock2
 
-        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
         engine._sm.state.entry_time = datetime(2026, 4, 12, 11, 0, tzinfo=timezone.utc)
 
         snap = make_snapshot(
@@ -542,7 +542,7 @@ class TestDaytimeChargePlan:
     async def test_charge_plan_sets_pv_surplus_limit(self) -> None:
         """Charge plan sets limit based on PV surplus, not zero."""
         engine = _make_engine()
-        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
         engine._sm.state.entry_time = datetime(
             _TEST_ENTRY_YEAR, _TEST_ENTRY_MONTH, _TEST_ENTRY_DAY,
             _TEST_ENTRY_HOUR_MIDDAY, 0, tzinfo=timezone.utc,

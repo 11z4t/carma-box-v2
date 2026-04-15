@@ -1,0 +1,4 @@
+# file: /home/charlie/carma-box-v2/core/ev_controller.py
+# hypothesis_version: 6.151.10
+
+[-1000.0, -200.0, -1.0, 0.0, 20.0, 75.0, 120.0, 180.0, 300.0, 500.0, 1000.0, 3600.0, 230, ', ', 'EV not connected', 'Ramp cooldown active', 'Stable', 'Stop cooldown active', 'connect_trigger', 'emergency_cut', 'fix_waiting_in_fully', 'no_change', 'set_current', 'start', 'stop', 'waiting_in_fully']

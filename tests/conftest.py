@@ -190,7 +190,7 @@ def make_snapshot(**overrides: Any) -> SystemSnapshot:
         "ev": make_ev_state(),
         "grid": make_grid_state(),
         "consumers": [],
-        "current_scenario": Scenario.MIDDAY_CHARGE,
+        "current_scenario": Scenario.PV_SURPLUS_DAY,
         "hour": 12,
         "minute": 0,
     }

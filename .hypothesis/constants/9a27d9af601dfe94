@@ -1,0 +1,4 @@
+# file: /usr/lib/python3/dist-packages/boto3/docs/action.py
+# hypothesis_version: 6.151.10
+
+['Actions', 'Metric', 'Namespace', 'actions', 'actions_intro', 'breadcrumb', 'html', 'index', 'load', 'put_data', 'qualifier', 'reload', 'response', 'warning', '{} = {}.{}']

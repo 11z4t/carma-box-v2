@@ -1,0 +1,4 @@
+# file: /home/charlie/carma-box-v2/core/savings.py
+# hypothesis_version: 6.151.10
+
+[0.0, 81.25, 100, 2000, 'actual', 'actual_cost_kr', 'baseline', 'baseline_cost_kr', 'charge_from_grid_kwh', 'daily_savings', 'date', 'discharge_kr', 'discharge_offset_kwh', 'discharge_savings_kr', 'grid_charge_kr', 'grid_charge_prices', 'month', 'peak_kr', 'peak_reduction_kr', 'peak_samples', 'saved_kr', 'total_discharge_kwh', 'total_kr', 'with_carma_kr', 'without_carma_kr', 'year']

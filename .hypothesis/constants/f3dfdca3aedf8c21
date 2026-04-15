@@ -1,0 +1,4 @@
+# file: /usr/lib/python3/dist-packages/botocore/signers.py
+# hypothesis_version: 6.151.10
+
+[b'+', b'-', b'/', b'=', b'_', b'~', 900, 3600, '$key', '${filename}', '&', ',', '-presign-post', '-query', '/', '/32', ':', '?', 'AWS:EpochTime', 'AWS:SourceIp', 'Action', 'Bucket', 'Condition', 'CreateBucket', 'DBUser', 'DateGreaterThan', 'DateLessThan', 'Expires=%s', 'GET', 'IpAddress', 'Policy=%s', 'PutObject', 'Resource', 'Statement', 'addressing_style', 'auth_type', 'aws', 'before-sign.{}.{}', 'body', 'bucket', 'cache_key', 'choose-signer.{}.{}', 'conditions', 'connect', 'credentials', 'expiration', 'expires', 'fields', 'headers', 'https://', 'identity_cache', 'is_presign_request', 'key', 'method', 'presign-post', 'presign-url', 'query_string', 'rds-db', 'region', 'region_name', 'regional', 'service_name', 'signature_version', 'signing', 'signing_name', 'standard', 'starts-with', 'url', 'url_path', 'us-east-1', 'use_global_endpoint', 'utf8', 'virtual']

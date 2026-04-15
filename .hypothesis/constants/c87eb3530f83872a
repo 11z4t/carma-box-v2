@@ -1,0 +1,4 @@
+# file: /usr/lib/python3/dist-packages/botocore/serialize.py
+# hypothesis_version: 6.151.10
+
+[b'{}', '%Y-%m-%dT%H:%M:%SZ', '%s.entry', '+', ',', '.', '.{i}.{suffix}', '/', '/~', ':', ':%s', 'Action', 'Content-Type', 'POST', 'Version', 'X-Amz-Target', '^[A-Za-z0-9\\.\\-]+$', '__current__', '_serialize_type_%s', 'apiVersion', 'application/json', 'authPath', 'auth_path', 'blob', 'body', 'body_kwargs', 'ec2', 'entry', 'false', 'flattened', 'header', 'headers', 'hostLabel', 'hostPrefix', 'host_prefix', 'iso8601', 'json', 'jsonVersion', 'key', 'list', 'location', 'member', 'method', 'name', 'payload', 'prefix', 'query', 'queryName', 'query_string', 'query_string_kwargs', 'querystring', 'requestUri', 'rest-json', 'rest-xml', 'rfc822', 'serialize_to_request', 'string', 'targetPrefix', 'timestamp', 'timestampFormat', 'true', 'unixtimestamp', 'uri', 'uri_path_kwargs', 'url_path', 'utf-8', 'value', 'xmlAttribute', 'xmlNamespace', 'xmlns', '{(.*?)}', '{}.{}']

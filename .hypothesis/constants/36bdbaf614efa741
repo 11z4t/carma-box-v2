@@ -1,0 +1,4 @@
+# file: /usr/lib/python3/dist-packages/botocore/httpchecksum.py
+# hypothesis_version: 6.151.10
+
+[b'%s\r\n%s\r\n', b'0\r\n%s:%s\r\n\r\n', 1024, 4294967295, ',aws-chunked', '-', 'Content-Encoding', 'Transfer-Encoding', 'X-Amz-Trailer', 'algorithm', 'ascii', 'aws-chunked', 'big', 'body', 'checksum', 'chunked', 'conditional-md5', 'content-length', 'context', 'crc32', 'crc32c', 'header', 'headers', 'https:', 'in', 'name', 'request_algorithm', 'responseAlgorithms', 'response_algorithm', 'response_algorithms', 'sha1', 'sha256', 'trailer', 'url', 'x-amz-checksum', 'x-amz-checksum-%s']

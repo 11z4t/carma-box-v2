@@ -1,0 +1,4 @@
+# file: /home/charlie/carma-box-v2/core/health.py
+# hypothesis_version: 6.151.10
+
+[0.0, 0.99, 120, 900, 3600, 'healthy']

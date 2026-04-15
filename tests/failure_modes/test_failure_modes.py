@@ -72,7 +72,7 @@ class TestHATimeoutGracefulSkip:
         snap = make_snapshot(hour=_TEST_HOUR, batteries=[bat])
         result = policy.evaluate(
             batteries=snap.batteries,
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=_NEUTRAL_WEIGHTED_AVG_KW,
             hour=snap.hour,
             ha_connected=False,
@@ -182,7 +182,7 @@ class TestPartialEntityLoss:
         snap = make_snapshot(hour=_TEST_HOUR, batteries=[bat])
         result = policy.evaluate(
             batteries=snap.batteries,
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=_NEUTRAL_WEIGHTED_AVG_KW,
             hour=snap.hour,
             ha_connected=True,
@@ -249,7 +249,7 @@ class TestStaleDataFreeze:
         snap = make_snapshot(hour=_TEST_HOUR, batteries=[bat])
         result = policy.evaluate(
             batteries=snap.batteries,
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=_NEUTRAL_WEIGHTED_AVG_KW,
             hour=snap.hour,
             ha_connected=True,

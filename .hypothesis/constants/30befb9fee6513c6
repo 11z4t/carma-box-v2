@@ -1,0 +1,4 @@
+# file: /usr/lib/python3/dist-packages/boto3/resources/collection.py
+# hypothesis_version: 6.151.10
+
+['Manager', 'MaxItems', 'PageSize', '_collection_cls', 'all', 'filter', 'limit', 'page_size', '{}({}, {})', '{}.{}', '{}.{}.{}Collection', '{}.{}Collection']

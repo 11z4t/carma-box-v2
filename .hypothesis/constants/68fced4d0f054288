@@ -1,0 +1,4 @@
+# file: /home/charlie/carma-box-v2/health.py
+# hypothesis_version: 6.151.10
+
+[0.0, '2.0.0', 'PV_SURPLUS_DAY', 'cycle_count', 'guard_level', 'ha_connected', 'last_cycle_s', 'ok', 'scenario', 'status', 'uptime_s', 'version']

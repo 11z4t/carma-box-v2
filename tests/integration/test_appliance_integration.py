@@ -120,7 +120,7 @@ class TestTotalApplianceKwPipeline:
             ev=make_ev_state(),
             grid=make_grid_state(),
             consumers=[],
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             hour=12,
             minute=0,
             appliances=appliances,
@@ -160,7 +160,7 @@ class TestHeadroomPipeline:
         """Baseline: headroom = effective_tak - weighted_avg (day: 3.0 - 1.5 = 1.5)."""
         result = guard.evaluate(
             batteries=[make_battery_state()],
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=1.5,
             hour=12,
             ha_connected=True,
@@ -172,7 +172,7 @@ class TestHeadroomPipeline:
         """Appliance load subtracts from headroom: 1.5 - 0.92 = 0.58 kW."""
         result = guard.evaluate(
             batteries=[make_battery_state()],
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=1.5,
             hour=12,
             ha_connected=True,

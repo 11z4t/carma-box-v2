@@ -1,0 +1,4 @@
+# file: /home/charlie/carma-box-v2/core/plan_executor.py
+# hypothesis_version: 6.151.10
+
+[0.0, 1.0, 1000.0, 'CHG', 'DIS', 'EV', 'GRD', 'PLAN 06:00 — %s', 'PLAN 12:00 — %s', 'PLAN 17:00 — %s', 'PLAN 22:00 — %s', 'STB', '|']

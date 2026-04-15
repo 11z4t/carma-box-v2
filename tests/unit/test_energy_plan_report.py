@@ -98,9 +98,9 @@ class TestDataClasses:
     """Report data classes."""
 
     def test_plan_row(self) -> None:
-        row = PlanRow(hour=14, scenario="MIDDAY_CHARGE", price_ore=45.0)
+        row = PlanRow(hour=14, scenario="PV_SURPLUS_DAY", price_ore=45.0)
         assert row.hour == 14
-        assert row.scenario == "MIDDAY_CHARGE"
+        assert row.scenario == "PV_SURPLUS_DAY"
 
     def test_actual_row(self) -> None:
         row = ActualRow(hour=14, grid_kw=1.5, bat_soc=80.0)

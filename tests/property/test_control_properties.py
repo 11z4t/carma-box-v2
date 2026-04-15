@@ -69,7 +69,7 @@ def _evaluate_guard(
     )
     result = policy.evaluate(
         batteries=snap.batteries,
-        current_scenario=Scenario.MIDDAY_CHARGE,
+        current_scenario=Scenario.PV_SURPLUS_DAY,
         weighted_avg_kw=weighted_avg_kw,
         hour=snap.hour,
         ha_connected=ha_connected,

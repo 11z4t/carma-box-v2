@@ -18,10 +18,10 @@ class TestHealthStatus:
     """Health status JSON format."""
 
     def test_to_json_format(self) -> None:
-        status = HealthStatus(status="ok", scenario="MIDDAY_CHARGE", cycle_count=100)
+        status = HealthStatus(status="ok", scenario="PV_SURPLUS_DAY", cycle_count=100)
         data = json.loads(status.to_json())
         assert data["status"] == "ok"
-        assert data["scenario"] == "MIDDAY_CHARGE"
+        assert data["scenario"] == "PV_SURPLUS_DAY"
         assert data["cycle_count"] == 100
         assert "version" in data
 

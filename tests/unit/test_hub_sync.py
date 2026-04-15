@@ -66,7 +66,7 @@ class TestSyncTable:
         sync = HubSync(HubSyncConfig(site_id="test-site"), db, dry_run=True)
         _run(db.write_cycle(CycleLogEntry(
             cycle_id="c1", timestamp="2026-04-12T22:00:00",
-            scenario="MIDDAY_CHARGE", guard_level="ok",
+            scenario="PV_SURPLUS_DAY", guard_level="ok",
             headroom_kw=1.0, elapsed_s=0.05,
         )))
         count = _run(sync._sync_table("cycle_log"))
@@ -81,7 +81,7 @@ class TestSyncTable:
         sync = HubSync(HubSyncConfig(site_id="test-site"), db, dry_run=False)
         _run(db.write_cycle(CycleLogEntry(
             cycle_id="c1", timestamp="2026-04-12T22:00:00",
-            scenario="MIDDAY_CHARGE", guard_level="ok",
+            scenario="PV_SURPLUS_DAY", guard_level="ok",
             headroom_kw=1.0, elapsed_s=0.05,
         )))
         count = _run(sync._sync_table("cycle_log"))
@@ -98,7 +98,7 @@ class TestSyncAll:
         """PLAT-1353: default dry_run mode returns 0 (nothing sent to PG)."""
         _run(db.write_cycle(CycleLogEntry(
             cycle_id="c1", timestamp="2026-04-12T22:00:00",
-            scenario="MIDDAY_CHARGE", guard_level="ok",
+            scenario="PV_SURPLUS_DAY", guard_level="ok",
             headroom_kw=1.0, elapsed_s=0.05,
         )))
         results = _run(sync.sync())
@@ -111,7 +111,7 @@ class TestSyncAll:
         sync = HubSync(HubSyncConfig(site_id="test-site"), db, dry_run=False)
         _run(db.write_cycle(CycleLogEntry(
             cycle_id="c1", timestamp="2026-04-12T22:00:00",
-            scenario="MIDDAY_CHARGE", guard_level="ok",
+            scenario="PV_SURPLUS_DAY", guard_level="ok",
             headroom_kw=1.0, elapsed_s=0.05,
         )))
         results = _run(sync.sync())

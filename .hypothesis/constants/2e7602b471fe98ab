@@ -1,0 +1,4 @@
+# file: /home/charlie/carma-box-v2/adapters/easee.py
+# hypothesis_version: 6.151.10
+
+[0.0, 1000.0, 'Starting EV charging', 'Stopping EV charging', 'awaiting_start', 'charger_id', 'charging', 'completed', 'current', 'entity_id', 'none', 'on', 'ready_to_charge', 'undefined', 'unknown']

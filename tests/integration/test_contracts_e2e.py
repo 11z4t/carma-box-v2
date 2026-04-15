@@ -122,7 +122,7 @@ class TestGuardPipelineIntegration:
         )
         result = guard.evaluate(
             batteries=snap.batteries,
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=snap.grid.weighted_avg_kw,
             hour=snap.hour,
             ha_connected=True,
@@ -164,7 +164,7 @@ class TestGuardPipelineIntegration:
         )
         result = guard.evaluate(
             batteries=snap.batteries,
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=snap.grid.weighted_avg_kw,
             hour=snap.hour,
             ha_connected=True,

@@ -21,7 +21,7 @@ class HealthStatus:
     """Current health status for the endpoint."""
 
     status: str = "ok"
-    scenario: str = "MIDDAY_CHARGE"
+    scenario: str = "PV_SURPLUS_DAY"
     uptime_s: float = 0.0
     cycle_count: int = 0
     last_cycle_s: float = 0.0

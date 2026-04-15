@@ -1,0 +1,4 @@
+# file: /home/charlie/carma-box-v2/core/ellevio.py
+# hypothesis_version: 6.151.10
+
+[0.0, 0.5, 1.0, 3.0, 81.25, 100.0, '%Y-%m-%d', ', ', 'hours_total', 'hours_under_target', 'last_hourly_kw', 'month', 'top_peaks', 'year']

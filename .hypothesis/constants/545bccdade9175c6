@@ -1,0 +1,4 @@
+# file: /home/charlie/.local/bin/pytest
+# hypothesis_version: 6.151.10
+
+['.exe', '__main__']

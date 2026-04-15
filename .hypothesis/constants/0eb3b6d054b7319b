@@ -1,0 +1,4 @@
+# file: /usr/lib/python3/dist-packages/boto3/docs/method.py
+# hypothesis_version: 6.151.10
+
+['[]', 'return', '{}.{}']

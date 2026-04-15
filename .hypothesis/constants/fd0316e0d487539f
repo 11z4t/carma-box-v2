@@ -1,0 +1,4 @@
+# file: /usr/lib/python3/dist-packages/boto3/docs/subresource.py
+# hypothesis_version: 6.151.10
+
+['Sub-resources', 'breadcrumb', 'example', 'html', 'index', 'input', 'method-intro', 'params', 'qualifier', 'return', 'sub-resources', 'subresources_intro', '{} = {}.{}({})']

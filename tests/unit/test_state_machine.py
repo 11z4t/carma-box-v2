@@ -141,7 +141,7 @@ class TestS2ForenoonPvEv:
 
 
 # ===========================================================================
-# S3: MIDDAY_CHARGE
+# S3: PV_SURPLUS_DAY
 # ===========================================================================
 
 
@@ -152,10 +152,10 @@ class TestS3MiddayCharge:
         sm.state.current = Scenario.FORENOON_PV_EV
         snap = _snap(hour=12)
         result = sm.evaluate(snap)
-        assert result == Scenario.MIDDAY_CHARGE
+        assert result == Scenario.PV_SURPLUS_DAY
 
     def test_exit_at_17(self, sm: StateMachine) -> None:
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         snap = _snap(hour=17)
         result = sm.evaluate(snap)
         assert result is not None  # Should exit
@@ -170,13 +170,13 @@ class TestS4EveningDischarge:
     """S4 entry: 17-22, SoC > floor + 10%."""
 
     def test_entry_conditions_met(self, sm: StateMachine) -> None:
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         snap = _snap(hour=17, bat_soc=60.0)
         result = sm.evaluate(snap)
         assert result == Scenario.EVENING_DISCHARGE
 
     def test_low_soc_blocks_entry(self, sm: StateMachine) -> None:
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         snap = _snap(hour=17, bat_soc=20.0)  # Below floor+10%
         result = sm.evaluate(snap)
         assert result != Scenario.EVENING_DISCHARGE
@@ -268,7 +268,7 @@ class TestS8PvSurplus:
     """S8: bat full, PV producing, exporting."""
 
     def test_entry_conditions_met(self, sm: StateMachine) -> None:
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         snap = _snap(
             hour=13, bat_soc=96.0,
             pv_total_w=3000.0, grid_power_w=-500.0,
@@ -277,7 +277,7 @@ class TestS8PvSurplus:
         assert result == Scenario.PV_SURPLUS
 
     def test_bat_not_full_blocks(self, sm: StateMachine) -> None:
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         snap = _snap(
             hour=13, bat_soc=80.0,
             pv_total_w=3000.0, grid_power_w=-500.0,
@@ -286,7 +286,7 @@ class TestS8PvSurplus:
         assert result != Scenario.PV_SURPLUS
 
     def test_no_export_blocks(self, sm: StateMachine) -> None:
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         snap = _snap(
             hour=13, bat_soc=96.0,
             pv_total_w=3000.0, grid_power_w=100.0,  # Importing
@@ -325,7 +325,7 @@ class TestDwellTime:
     def test_dwell_blocks_transition(self) -> None:
         """Within dwell time → no transition allowed."""
         sm = StateMachine(StateMachineConfig(min_dwell_s=300.0))
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         sm.state.entry_time = datetime.now(tz=timezone.utc)  # Just entered
 
         snap = _snap(hour=17)  # Would trigger S4 exit
@@ -337,7 +337,7 @@ class TestDwellTime:
         import time
 
         sm = StateMachine(StateMachineConfig(min_dwell_s=300.0))
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         sm.state.entry_time = datetime.now(tz=timezone.utc) - timedelta(seconds=600)
         # Back-date monotonic stamp to simulate 600 s of dwell (H7)
         sm.state._entry_monotonic = time.monotonic() - 600.0
@@ -356,7 +356,7 @@ class TestManualOverride:
     """Manual override forces scenario."""
 
     def test_override_forces_transition(self, sm: StateMachine) -> None:
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         sm.set_manual_override(Scenario.EVENING_DISCHARGE)
         snap = _snap(hour=12)  # Would normally stay in S3
         result = sm.evaluate(snap)
@@ -365,14 +365,14 @@ class TestManualOverride:
     def test_clear_override_returns_to_auto(self, sm: StateMachine) -> None:
         sm.set_manual_override(Scenario.EVENING_DISCHARGE)
         sm.set_manual_override(None)  # Clear
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         snap = _snap(hour=12)
         result = sm.evaluate(snap)
         assert result is None  # Stay in S3 (auto)
 
     def test_override_same_scenario_no_transition(self, sm: StateMachine) -> None:
-        sm.state.current = Scenario.MIDDAY_CHARGE
-        sm.set_manual_override(Scenario.MIDDAY_CHARGE)
+        sm.state.current = Scenario.PV_SURPLUS_DAY
+        sm.set_manual_override(Scenario.PV_SURPLUS_DAY)
         snap = _snap(hour=12)
         result = sm.evaluate(snap)
         assert result is None  # Already in target
@@ -387,8 +387,8 @@ class TestTransitionMatrix:
     """Only allowed transitions should happen."""
 
     def test_s3_at_morning_recovers_to_s1(self, sm: StateMachine) -> None:
-        """S3 MIDDAY_CHARGE at hour=7 → catchall recovery to S1."""
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        """S3 PV_SURPLUS_DAY at hour=7 → catchall recovery to S1."""
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         snap = _snap(hour=7, pv_today=20.0, bat_soc=60.0)
         result = sm.evaluate(snap)
         # S3 at hour 7 is outside midday window → exit → catchall → S1
@@ -400,7 +400,7 @@ class TestTransitionMatrix:
         snap = _snap(hour=13)
         result = sm.evaluate(snap)
         # S4 at hour 13 is outside evening window → exit → catchall → S3
-        assert result == Scenario.MIDDAY_CHARGE
+        assert result == Scenario.PV_SURPLUS_DAY
 
 
 # ===========================================================================
@@ -412,8 +412,8 @@ class TestMidnightWrapExit:
     """Scenario exit conditions must handle midnight correctly."""
 
     def test_s3_exits_at_midnight(self, sm: StateMachine) -> None:
-        """S3 MIDDAY_CHARGE at hour=0 must exit (not stay stuck)."""
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        """S3 PV_SURPLUS_DAY at hour=0 must exit (not stay stuck)."""
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         snap = _snap(hour=_MIDNIGHT_HOUR, pv_tomorrow=20.0)
         result = sm.evaluate(snap)
         assert result is not None, "S3 stuck at midnight — exit not triggered"
@@ -427,7 +427,7 @@ class TestMidnightWrapExit:
 
     def test_s3_stays_during_midday(self, sm: StateMachine) -> None:
         """S3 at hour=14 (within window) should NOT exit."""
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         snap = _snap(hour=_S3_MIDDAY_SANITY_HOUR)
         result = sm.evaluate(snap)
         assert result is None  # Stay in S3
@@ -442,10 +442,10 @@ class TestTransitionTo:
     """Test the transition_to method."""
 
     def test_updates_state(self, sm: StateMachine) -> None:
-        sm.state.current = Scenario.MIDDAY_CHARGE
+        sm.state.current = Scenario.PV_SURPLUS_DAY
         sm.transition_to(Scenario.EVENING_DISCHARGE)
         assert sm.state.current == Scenario.EVENING_DISCHARGE
-        assert sm.state.previous == Scenario.MIDDAY_CHARGE
+        assert sm.state.previous == Scenario.PV_SURPLUS_DAY
 
 
 # ===========================================================================

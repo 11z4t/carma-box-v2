@@ -156,7 +156,7 @@ class TestSystemSnapshot:
         """SystemSnapshot should be creatable."""
         snap = make_snapshot()
         assert snap.hour == 12
-        assert snap.current_scenario == Scenario.MIDDAY_CHARGE
+        assert snap.current_scenario == Scenario.PV_SURPLUS_DAY
 
     def test_total_battery_soc_single(self) -> None:
         """With one battery, total SoC equals that battery's SoC."""
@@ -227,7 +227,7 @@ class TestCycleDecision:
         """Decision with no commands should report has_commands=False."""
         decision = CycleDecision(
             timestamp=datetime.now(tz=timezone.utc),
-            scenario=Scenario.MIDDAY_CHARGE,
+            scenario=Scenario.PV_SURPLUS_DAY,
         )
         assert not decision.has_commands
 
@@ -235,7 +235,7 @@ class TestCycleDecision:
         """Decision with only NO_OP commands should report has_commands=False."""
         decision = CycleDecision(
             timestamp=datetime.now(tz=timezone.utc),
-            scenario=Scenario.MIDDAY_CHARGE,
+            scenario=Scenario.PV_SURPLUS_DAY,
             commands=[
                 Command(
                     command_type=CommandType.NO_OP,
@@ -267,7 +267,7 @@ class TestCycleDecision:
         """CycleDecision should be frozen."""
         decision = CycleDecision(
             timestamp=datetime.now(tz=timezone.utc),
-            scenario=Scenario.MIDDAY_CHARGE,
+            scenario=Scenario.PV_SURPLUS_DAY,
         )
         with pytest.raises(AttributeError):
             decision.scenario = Scenario.PV_SURPLUS  # type: ignore[misc]
@@ -338,17 +338,17 @@ class TestScenarioState:
 
     def test_create(self) -> None:
         state = ScenarioState(
-            current=Scenario.MIDDAY_CHARGE,
+            current=Scenario.PV_SURPLUS_DAY,
             entry_time=datetime.now(tz=timezone.utc),
         )
-        assert state.current == Scenario.MIDDAY_CHARGE
+        assert state.current == Scenario.PV_SURPLUS_DAY
         assert state.previous is None
         assert not state.in_transition
 
     def test_mutable(self) -> None:
         """ScenarioState is NOT frozen — it's updated by state machine."""
         state = ScenarioState(
-            current=Scenario.MIDDAY_CHARGE,
+            current=Scenario.PV_SURPLUS_DAY,
             entry_time=datetime.now(tz=timezone.utc),
         )
         state.current = Scenario.EVENING_DISCHARGE
@@ -359,7 +359,7 @@ class TestScenarioState:
         import time
 
         state = ScenarioState(
-            current=Scenario.MIDDAY_CHARGE,
+            current=Scenario.PV_SURPLUS_DAY,
             entry_time=datetime.now(tz=timezone.utc),
         )
         # Back-date the monotonic stamp to simulate 120 seconds of dwell
@@ -368,7 +368,7 @@ class TestScenarioState:
 
     def test_transition_tracking(self) -> None:
         state = ScenarioState(
-            current=Scenario.MIDDAY_CHARGE,
+            current=Scenario.PV_SURPLUS_DAY,
             entry_time=datetime.now(tz=timezone.utc),
             in_transition=True,
             transition_target=Scenario.EVENING_DISCHARGE,
@@ -482,8 +482,8 @@ class TestJsonSerialization:
         """Enums should serialize as their string values."""
         import json
 
-        result = json.dumps(Scenario.MIDDAY_CHARGE, cls=ModelEncoder)
-        assert json.loads(result) == "MIDDAY_CHARGE"
+        result = json.dumps(Scenario.PV_SURPLUS_DAY, cls=ModelEncoder)
+        assert json.loads(result) == "PV_SURPLUS_DAY"
 
     def test_datetime_serialized_as_iso(self) -> None:
         """Datetimes should serialize as ISO format strings."""

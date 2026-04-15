@@ -1,0 +1,4 @@
+# file: /home/charlie/carma-box-v2/storage/session_tracker.py
+# hypothesis_version: 6.151.10
+
+[0.0, 0.2, 0.8, 30.0, 3600.0, '%Y-%m-%d', 'charge_pv', 'discharge_pv', 'export_ac', 'import_ac', 'start_ev_charging', 'stop_ev_charging']

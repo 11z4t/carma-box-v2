@@ -564,7 +564,7 @@ class TestDashboardWriteBack:
             cycle_id="test-1",
             timestamp=snap.timestamp,
             elapsed_s=0.1,
-            scenario=Scenario.MIDDAY_CHARGE,
+            scenario=Scenario.PV_SURPLUS_DAY,
             guard=GuardEvaluation(
                 level=GuardLevel.OK, commands=[],
             ),

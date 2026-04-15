@@ -1,0 +1,4 @@
+# file: /home/charlie/carma-box-v2/config/schema.py
+# hypothesis_version: 6.151.10
+
+[-180.0, -90.0, -30.0, -20.0, 0.0, 0.1, 0.5, 0.85, 0.9, 0.92, 1.0, 1.05, 1.1, 2.0, 2.5, 3.0, 4.0, 5.0, 10.0, 15.0, 17.25, 20.0, 25.0, 50.0, 60.0, 70.0, 75.0, 81.25, 90.0, 100.0, 120.0, 180.0, 200.0, 1000.0, 10000.0, 100, 120, 168, 180, 200, 230, 247, 253, 255, 300, 365, 500, 600, 900, 1000, 1024, 2000, 3600, 5000, 5432, 8412, 8899, 10000, 50000, 65535, 10485760, 104857600, '#energy', '/health', 'CARMA_HA_TOKEN', 'CARMA_PG_PASS', 'CARMA_PG_USER', 'CARMA_SLACK_WEBHOOK', 'CRITICAL', 'DEBUG', 'ERROR', 'EllevioConfig', 'Europe/Stockholm', 'HA base URL', 'INFO', 'Inverter IP address', 'PV_SURPLUS_DAY', 'WARNING', 'after', 'alarm_freeze', 'battery_standby', 'before', 'climate', 'ct_placement', 'easee', 'energy', 'fast_charging_off', 'goodwe_et', 'level', 'max_amps', 'nordpool', 'on_off', 'peak_shaving', 'r', 'solcast', 'tempest', 'type', 'utf-8', 'variable', 'zero_ems_power_limit']

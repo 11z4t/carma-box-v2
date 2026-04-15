@@ -1,0 +1,4 @@
+# file: /usr/lib/python3/dist-packages/botocore/retries/standard.py
+# hypothesis_version: 6.151.10
+
+[200, 300, 500, 502, 503, 504, 'Code', 'Error', 'RequestLimitExceeded', 'RequestThrottled', 'RequestTimeout', 'ResponseMetadata', 'SlowDown', 'THROTTLING_ERROR', 'TRANSIENT_ERROR', 'ThrottledException', 'Throttling', 'ThrottlingException', 'attempts', 'caught_exception', 'code', 'context', 'error', 'max', 'needs-retry.%s', 'operation', 'request_dict', 'response', 'retries', 'retry-config-%s', 'retry_quota_capacity', 'retryable', 'throttling']

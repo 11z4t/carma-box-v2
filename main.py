@@ -723,7 +723,7 @@ class CarmaBoxService:
                 consumers=await self._collect_consumers(),
                 current_scenario=(
                     self._engine.current_scenario
-                    if self._engine else Scenario.MIDDAY_CHARGE
+                    if self._engine else Scenario.PV_SURPLUS_DAY
                 ),
                 hour=now.hour,
                 minute=now.minute,

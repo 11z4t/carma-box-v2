@@ -80,7 +80,7 @@ class TestChargeSoCBalance:
     async def test_lower_soc_gets_charge_higher_standby(self) -> None:
         """Kontor 30% < Forrad 60% → Kontor charge_pv, Forrad standby."""
         engine = _make_engine()
-        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
         engine._sm.state.entry_time = datetime(
             _ENTRY_YEAR, _ENTRY_MONTH, _ENTRY_DAY,
             _CHARGE_HOUR, 0, tzinfo=timezone.utc,
@@ -133,7 +133,7 @@ class TestChargeSoCBalance:
     async def test_balanced_soc_both_charge(self) -> None:
         """Kontor 50% ≈ Forrad 51% → both get charge_pv."""
         engine = _make_engine()
-        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
         engine._sm.state.entry_time = datetime(
             _ENTRY_YEAR, _ENTRY_MONTH, _ENTRY_DAY,
             _CHARGE_HOUR, 0, tzinfo=timezone.utc,
@@ -239,7 +239,7 @@ class TestClearPendingPreventsOverride:
         await engine.run_cycle(snap_night)
 
         # Cycle 2: Branch A (day) — should clear pending + set charge_pv
-        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
         snap_day = make_snapshot(
             hour=_CHARGE_HOUR,
             batteries=[make_battery_state(
@@ -278,7 +278,7 @@ class TestExportLimitKontor:
     async def test_charge_sets_charge_battery_mode(self) -> None:
         """Kontor with PV surplus → charge_battery mode."""
         engine = _make_engine()
-        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
 
         snap = make_snapshot(
             hour=_CHARGE_HOUR,
@@ -303,7 +303,7 @@ class TestExportLimitKontor:
     async def test_standby_restores_export_limit(self) -> None:
         """Kontor standby → export_limit restored to default."""
         engine = _make_engine()
-        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
 
         snap = make_snapshot(
             hour=_CHARGE_HOUR,

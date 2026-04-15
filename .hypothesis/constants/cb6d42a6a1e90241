@@ -1,0 +1,4 @@
+# file: /home/charlie/carma-box-v2/adapters/goodwe.py
+# hypothesis_version: 6.151.10
+
+[0.0, 20.0, 100.0, 'attributes', 'battery_standby', 'charge_pv', 'conserve', 'discharge_pv', 'entity_id', 'export_ac', 'import_ac', 'on', 'option', 'state', 'unavailable', 'unit_of_measurement', 'unknown', 'value']

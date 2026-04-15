@@ -96,7 +96,7 @@ class ControlEngine:
     _SCENARIO_MODES: dict[Scenario, _ScenarioMode] = {
         Scenario.MORNING_DISCHARGE: _ScenarioMode(EMSMode.DISCHARGE_PV),
         Scenario.FORENOON_PV_EV: _ScenarioMode(EMSMode.CHARGE_PV, ems_power_limit=0),
-        Scenario.MIDDAY_CHARGE: _ScenarioMode(EMSMode.CHARGE_PV),
+        Scenario.PV_SURPLUS_DAY: _ScenarioMode(EMSMode.CHARGE_PV),
         Scenario.EVENING_DISCHARGE: _ScenarioMode(EMSMode.DISCHARGE_PV),
         Scenario.NIGHT_HIGH_PV: _ScenarioMode(EMSMode.DISCHARGE_PV),
         Scenario.NIGHT_LOW_PV: _ScenarioMode(EMSMode.BATTERY_STANDBY),

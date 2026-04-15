@@ -15,7 +15,7 @@ class TestDecisionRecord:
             cycle_id="abc123",
             timestamp="2026-04-14T01:00:00+00:00",
             elapsed_ms=42,
-            scenario="MIDDAY_CHARGE",
+            scenario="PV_SURPLUS_DAY",
             guard_level="ok",
             guard_commands=[],
             balance_total_w=3000,
@@ -27,7 +27,7 @@ class TestDecisionRecord:
         d = json.loads(j)
         assert d["cycle_id"] == "abc123"
         assert d["elapsed_ms"] == 42
-        assert d["scenario"] == "MIDDAY_CHARGE"
+        assert d["scenario"] == "PV_SURPLUS_DAY"
 
 
 class TestDecisionLog:
@@ -38,7 +38,7 @@ class TestDecisionLog:
             cycle_id="c1",
             timestamp=datetime.now(tz=timezone.utc),
             elapsed_s=0.03,
-            scenario=Scenario.MIDDAY_CHARGE,
+            scenario=Scenario.PV_SURPLUS_DAY,
         )
         assert log.cycle_count == 1
 
@@ -80,7 +80,7 @@ class TestDecisionLog:
             cycle_id="c4",
             timestamp=datetime.now(tz=timezone.utc),
             elapsed_s=0.01,
-            scenario=Scenario.MIDDAY_CHARGE,
+            scenario=Scenario.PV_SURPLUS_DAY,
         )
         assert r.cycle_id == "c4"
 
@@ -90,7 +90,7 @@ class TestDecisionLog:
             cycle_id="c5",
             timestamp=datetime.now(tz=timezone.utc),
             elapsed_s=0.1,
-            scenario=Scenario.MIDDAY_CHARGE,
+            scenario=Scenario.PV_SURPLUS_DAY,
             error="inverter timeout",
         )
         assert r.error == "inverter timeout"

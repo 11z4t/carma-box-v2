@@ -1,0 +1,4 @@
+# file: /usr/lib/python3/dist-packages/botocore/docs/client.py
+# hypothesis_version: 6.151.10
+
+['.', '...', ':py:class:`%s`', 'Accelerate', 'Client', 'Client Exceptions', 'Code', 'Error', 'Example', 'Exceptions', 'ForcePathStyle', 'Message', 'Structure', 'Syntax', 'UseArnRegion', 'breadcrumb', 'client', 'configuration guide', 'exceptions', 'html', 'intro', 'print(e.response)', 'qualifier', 'response', 'response = client.%s', 's3', 's3control', 'string', 'structure', 'syntax', 'try:', 'user guide']

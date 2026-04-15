@@ -1,0 +1,4 @@
+# file: /home/charlie/carma-box-v2/core/engine.py
+# hypothesis_version: 6.151.10
+
+[0.0, 0.05, 2.0, 100.0, 1000.0, 5000.0, 5000, 'BALANCE', 'Cycle %s error: %s', 'PV CHARGE PLAN: %s', 'PV_CHARGE_PLAN', 'ems_power_limit', 'mode', 'none']

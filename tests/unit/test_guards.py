@@ -41,7 +41,7 @@ def guard(config: GuardConfig) -> GridGuard:
 def _eval(
     guard: GridGuard,
     batteries: list[BatteryState] | None = None,
-    scenario: Scenario = Scenario.MIDDAY_CHARGE,
+    scenario: Scenario = Scenario.PV_SURPLUS_DAY,
     weighted_avg_kw: float = 0.5,
     hour: int = 12,
     ha_connected: bool = True,

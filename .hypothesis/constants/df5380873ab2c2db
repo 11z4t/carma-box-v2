@@ -1,0 +1,4 @@
+# file: /usr/lib/python3/dist-packages/botocore/paginate.py
+# hypothesis_version: 6.151.10
+
+['MaxItems', 'NextToken', 'None', 'PageSize', 'PaginationConfig', 'StartingToken', '___', 'boto_encoded_keys', 'boto_truncate_amount', 'input_token', 'limit_key', 'more_results', 'non_aggregate_keys', 'output_token', 'pagination', 'result_key', 'string', 'utf-8']

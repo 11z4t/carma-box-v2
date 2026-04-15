@@ -32,7 +32,7 @@ def _eval_guard(
     soc: float = 50.0,
     weighted_avg_kw: float = 1.0,
     hour: int = 14,
-    scenario: Scenario = Scenario.MIDDAY_CHARGE,
+    scenario: Scenario = Scenario.PV_SURPLUS_DAY,
     ha_connected: bool = True,
     data_age_s: float = 0.0,
     ems_mode: str = "battery_standby",

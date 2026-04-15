@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 class StateMachineConfig:
     """State machine thresholds — all from site.yaml."""
 
-    start_scenario: Scenario = Scenario.MIDDAY_CHARGE  # Initial scenario at startup
+    start_scenario: Scenario = Scenario.PV_SURPLUS_DAY  # Initial scenario at startup
     min_dwell_s: float = 300.0          # 5 min minimum in any scenario
     pv_high_threshold_kwh: float = 15.0  # High PV forecast threshold
     pv_medium_threshold_kwh: float = 10.0  # Medium PV forecast threshold
@@ -62,12 +62,12 @@ class StateMachineConfig:
 # Allowed transitions: FROM -> set of TO scenarios
 _TRANSITION_MATRIX: dict[Scenario, set[Scenario]] = {
     Scenario.MORNING_DISCHARGE: {
-        Scenario.FORENOON_PV_EV, Scenario.MIDDAY_CHARGE, Scenario.PV_SURPLUS,
+        Scenario.FORENOON_PV_EV, Scenario.PV_SURPLUS_DAY, Scenario.PV_SURPLUS,
     },
     Scenario.FORENOON_PV_EV: {
-        Scenario.MIDDAY_CHARGE, Scenario.PV_SURPLUS,
+        Scenario.PV_SURPLUS_DAY, Scenario.PV_SURPLUS,
     },
-    Scenario.MIDDAY_CHARGE: {
+    Scenario.PV_SURPLUS_DAY: {
         Scenario.EVENING_DISCHARGE, Scenario.PV_SURPLUS,
     },
     Scenario.EVENING_DISCHARGE: {
@@ -83,7 +83,7 @@ _TRANSITION_MATRIX: dict[Scenario, set[Scenario]] = {
         Scenario.MORNING_DISCHARGE,
     },
     Scenario.PV_SURPLUS: {
-        Scenario.FORENOON_PV_EV, Scenario.MIDDAY_CHARGE, Scenario.EVENING_DISCHARGE,
+        Scenario.FORENOON_PV_EV, Scenario.PV_SURPLUS_DAY, Scenario.EVENING_DISCHARGE,
     },
 }
 
@@ -91,7 +91,7 @@ _TRANSITION_MATRIX: dict[Scenario, set[Scenario]] = {
 _SCENARIO_PRIORITY = [
     Scenario.MORNING_DISCHARGE,    # S1
     Scenario.FORENOON_PV_EV,       # S2
-    Scenario.MIDDAY_CHARGE,        # S3
+    Scenario.PV_SURPLUS_DAY,        # S3
     Scenario.EVENING_DISCHARGE,    # S4
     Scenario.NIGHT_HIGH_PV,        # S5
     Scenario.NIGHT_LOW_PV,         # S6
@@ -178,7 +178,7 @@ class StateMachine:
 
         # M1: Catchall recovery — exit triggered but no allowed target is valid.
         # This handles stuck states where the transition matrix has no valid exit
-        # (e.g., MIDDAY_CHARGE at midnight: matrix only allows EVENING_DISCHARGE
+        # (e.g., PV_SURPLUS_DAY at midnight: matrix only allows EVENING_DISCHARGE
         # and PV_SURPLUS, neither of which is valid at hour=0).
         # Force the correct scenario for the current time, bypassing the matrix.
         for scenario in _SCENARIO_PRIORITY:
@@ -235,7 +235,7 @@ class StateMachine:
     _ENTRY_METHODS: dict[Scenario, str] = {
         Scenario.MORNING_DISCHARGE: "_entry_s1",
         Scenario.FORENOON_PV_EV: "_entry_s2",
-        Scenario.MIDDAY_CHARGE: "_entry_s3",
+        Scenario.PV_SURPLUS_DAY: "_entry_s3",
         Scenario.EVENING_DISCHARGE: "_entry_s4",
         Scenario.NIGHT_HIGH_PV: "_entry_s5",
         Scenario.NIGHT_LOW_PV: "_entry_s6",
@@ -271,7 +271,7 @@ class StateMachine:
         )
 
     def _entry_s3(self, snap: SystemSnapshot) -> bool:
-        """S3 MIDDAY_CHARGE: 12-17, or ANY time if SoC critically low.
+        """S3 PV_SURPLUS_DAY: 12-17, or ANY time if SoC critically low.
 
         When batteries are near floor, charge_pv is the safe fallback
         regardless of time — PV will charge if available, and standby
@@ -336,7 +336,7 @@ class StateMachine:
     _EXIT_METHODS: dict[Scenario, str] = {
         Scenario.MORNING_DISCHARGE: "_exit_s1",
         Scenario.FORENOON_PV_EV: "_exit_s2",
-        Scenario.MIDDAY_CHARGE: "_exit_s3",
+        Scenario.PV_SURPLUS_DAY: "_exit_s3",
         Scenario.EVENING_DISCHARGE: "_exit_s4",
         Scenario.NIGHT_HIGH_PV: "_exit_s5",
         Scenario.NIGHT_LOW_PV: "_exit_s6",

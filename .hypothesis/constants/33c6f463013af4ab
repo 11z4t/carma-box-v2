@@ -1,0 +1,4 @@
+# file: /home/charlie/carma-box-v2/core/decision_log.py
+# hypothesis_version: 6.151.10
+
+[1000, ',', '1.0', ':', 'active_guard_level', 'commands_sent', 'commands_suppressed', 'cycle_id', 'guard_reason', 'ok', 'plan_used', 'scenario', 'schema_version', 'timestamp']

@@ -107,7 +107,7 @@ def _make_snapshot(hour: int, bat_soc: float = _SOC_NOMINAL_PCT) -> SystemSnapsh
         ev=ev,
         grid=grid,
         consumers=[],
-        current_scenario=Scenario.MIDDAY_CHARGE,
+        current_scenario=Scenario.PV_SURPLUS_DAY,
     )
 
 

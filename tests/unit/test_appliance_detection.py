@@ -133,7 +133,7 @@ class TestHeadroomReducedByApplianceLoad:
 
         result_no_appliances = guard.evaluate(
             batteries=[bat],
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=weighted_avg_kw,
             hour=12,
             ha_connected=True,
@@ -141,7 +141,7 @@ class TestHeadroomReducedByApplianceLoad:
         )
         result_with_appliances = guard.evaluate(
             batteries=[bat],
-            current_scenario=Scenario.MIDDAY_CHARGE,
+            current_scenario=Scenario.PV_SURPLUS_DAY,
             weighted_avg_kw=weighted_avg_kw,
             hour=12,
             ha_connected=True,

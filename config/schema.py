@@ -460,7 +460,7 @@ class ControlConfig(BaseModel):
     mode_change_set_wait_s: int = Field(default=60, ge=5, le=300)
     mode_change_verify_wait_s: int = Field(default=30, ge=5, le=300)
     start_scenario: str = Field(
-        default="MIDDAY_CHARGE",
+        default="PV_SURPLUS_DAY",
         description="Scenario to enter at startup before first evaluation cycle.",
     )
     deadband: DeadbandConfig = Field(default_factory=DeadbandConfig)

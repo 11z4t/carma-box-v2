@@ -68,7 +68,7 @@ class Scenario(Enum):
 
     MORNING_DISCHARGE = "MORNING_DISCHARGE"      # S1
     FORENOON_PV_EV = "FORENOON_PV_EV"            # S2
-    MIDDAY_CHARGE = "MIDDAY_CHARGE"              # S3
+    PV_SURPLUS_DAY = "PV_SURPLUS_DAY"              # S3
     EVENING_DISCHARGE = "EVENING_DISCHARGE"      # S4
     NIGHT_HIGH_PV = "NIGHT_HIGH_PV"              # S5
     NIGHT_LOW_PV = "NIGHT_LOW_PV"                # S6
