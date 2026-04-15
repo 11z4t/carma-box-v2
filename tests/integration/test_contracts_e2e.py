@@ -29,6 +29,22 @@ from core.planner import Planner, PlannerConfig
 from core.state_machine import StateMachine, StateMachineConfig
 from tests.conftest import make_battery_state, make_snapshot, make_grid_state
 
+# Named test constants
+_CONFIG_PATH = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+_TEST_HOUR: int = 14
+_TEST_MINUTE: int = 5
+_SOC_NOMINAL_PCT: float = 60.0
+_SOC_HIGH_PCT: float = 70.0
+_WA_NOMINAL_KW: float = 1.5
+_WA_HIGH_KW: float = 1.8
+_WA_LOW_KW: float = 1.2
+_TEST_GRID_W: float = 1500.0
+_ZERO_WAIT_S: float = 0.0
+_PLAN_HOURS: tuple[int, ...] = (6, 12, 17, 22)
+_TEST_YEAR: int = 2026
+_TEST_MONTH: int = 4
+_TEST_DAY: int = 15
+
 
 _CONFIG_PATH = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
 
@@ -100,9 +116,9 @@ class TestGuardPipelineIntegration:
         """GridGuard.evaluate() with realistic snapshot returns coherent result."""
         guard = GridGuard(GuardConfig())
         snap = make_snapshot(
-            hour=14,
-            batteries=[make_battery_state(soc_pct=60.0)],
-            grid=make_grid_state(weighted_avg_kw=1.5),
+            hour=_TEST_HOUR,
+            batteries=[make_battery_state(soc_pct=_SOC_NOMINAL_PCT)],
+            grid=make_grid_state(weighted_avg_kw=_WA_NOMINAL_KW),
         )
         result = guard.evaluate(
             batteries=snap.batteries,
@@ -121,9 +137,12 @@ class TestGuardPipelineIntegration:
     def test_ellevio_tracker_updates_correctly(self) -> None:
         """EllevioTracker tracks weighted hourly averages."""
         tracker = EllevioTracker(EllevioConfig())
-        ts = datetime(2026, 4, 15, 14, 5, 0, tzinfo=timezone.utc)
-        tracker.update(1.5, ts)
-        tracker.update(1.8, ts.replace(minute=10))
+        ts = datetime(
+            _TEST_YEAR, _TEST_MONTH, _TEST_DAY,
+            _TEST_HOUR, _TEST_MINUTE, 0, tzinfo=timezone.utc,
+        )
+        tracker.update(_WA_NOMINAL_KW, ts)
+        tracker.update(_WA_HIGH_KW, ts.replace(minute=10))
         # Should have a current weighted average
         avg = tracker.current_weighted_avg_kw
         assert avg > 0.0
@@ -132,12 +151,15 @@ class TestGuardPipelineIntegration:
         """Guard uses weighted_avg from Ellevio-like data without crash."""
         guard = GridGuard(GuardConfig())
         tracker = EllevioTracker(EllevioConfig())
-        ts = datetime(2026, 4, 15, 14, 5, 0, tzinfo=timezone.utc)
-        tracker.update(1.2, ts)
+        ts = datetime(
+            _TEST_YEAR, _TEST_MONTH, _TEST_DAY,
+            _TEST_HOUR, _TEST_MINUTE, 0, tzinfo=timezone.utc,
+        )
+        tracker.update(_WA_LOW_KW, ts)
 
         snap = make_snapshot(
-            hour=14,
-            batteries=[make_battery_state(soc_pct=70.0)],
+            hour=_TEST_HOUR,
+            batteries=[make_battery_state(soc_pct=_SOC_HIGH_PCT)],
             grid=make_grid_state(weighted_avg_kw=tracker.current_weighted_avg_kw),
         )
         result = guard.evaluate(
@@ -163,10 +185,11 @@ class TestE2ERunCycle:
     async def test_run_cycle_no_exception(self) -> None:
         """Full run_cycle completes without exception."""
         guard = GridGuard(GuardConfig())
-        sm = StateMachine(StateMachineConfig(min_dwell_s=0))
+        sm = StateMachine(StateMachineConfig(min_dwell_s=_ZERO_WAIT_S))
         balancer = BatteryBalancer()
         mode_mgr = ModeChangeManager(ModeChangeConfig(
-            clear_wait_s=0, standby_wait_s=0, set_wait_s=0, verify_wait_s=0,
+            clear_wait_s=_ZERO_WAIT_S, standby_wait_s=_ZERO_WAIT_S,
+                set_wait_s=_ZERO_WAIT_S, verify_wait_s=_ZERO_WAIT_S,
         ))
         inv_mock = AsyncMock()
         inv_mock.set_ems_mode = AsyncMock(return_value=True)
@@ -182,9 +205,9 @@ class TestE2ERunCycle:
         engine = ControlEngine(guard, sm, balancer, mode_mgr, executor)
 
         snap = make_snapshot(
-            hour=14,
-            batteries=[make_battery_state(soc_pct=60.0)],
-            grid=make_grid_state(grid_power_w=1500.0, weighted_avg_kw=1.2),
+            hour=_TEST_HOUR,
+            batteries=[make_battery_state(soc_pct=_SOC_NOMINAL_PCT)],
+            grid=make_grid_state(grid_power_w=_TEST_GRID_W, weighted_avg_kw=_WA_LOW_KW),
         )
         result = await engine.run_cycle(snap)
 
@@ -206,10 +229,10 @@ class TestE2ERunCycle:
             guard_policy=guard_policy,
         )
 
-        for hour in (6, 12, 17, 22):
+        for hour in _PLAN_HOURS:
             snap = make_snapshot(
                 hour=hour,
-                batteries=[make_battery_state(soc_pct=60.0)],
+                batteries=[make_battery_state(soc_pct=_SOC_NOMINAL_PCT)],
             )
             # Should not raise
             await executor.generate(snap)

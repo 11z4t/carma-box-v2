@@ -38,8 +38,33 @@ from core.planner import EveningPlan, NightPlan, Planner, PlannerConfig
 
 _CONFIG_PATH = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
 
+# Named test constants
+_NIGHT_PLAN_HOUR: int = 22
+_EVENING_PLAN_HOUR: int = 17
+_MORNING_PLAN_HOUR: int = 6
+_NON_PLAN_HOUR: int = 10
+_SOC_NOMINAL_PCT: float = 60.0
+_SOC_EV_PCT: float = 50.0
+_TEST_PV_W: float = 3000.0
+_TEST_GRID_W: float = 500.0
+_TEST_LOAD_W: float = 1000.0
+_TEST_PRICE_ORE: float = 45.0
+_TEST_WEIGHTED_AVG_KW: float = 1.2
+_TEST_PEAK_KW: float = 1.5
+_TEST_TAK_KW: float = 2.0
+_TEST_PV_TODAY_KWH: float = 20.0
+_TEST_PV_TOMORROW_KWH: float = 25.0
+_TEST_BAT_CAP_KWH: float = 15.0
+_TEST_HOUR_AFTER_MIDNIGHT: int = 23
+_MIDNIGHT_HOUR: int = 0
+_TEST_HOUR_EARLY_1: int = 1
+_TEST_HOUR_EARLY_2: int = 2
+_TEST_PRICE_MID_ORE: float = 50.0
+_TEST_PRICE_CHEAP_ORE: float = 30.0
+_TEST_PRICE_EXP_ORE: float = 80.0
 
-def _make_snapshot(hour: int, bat_soc: float = 60.0) -> SystemSnapshot:
+
+def _make_snapshot(hour: int, bat_soc: float = _SOC_NOMINAL_PCT) -> SystemSnapshot:
     """Build a minimal SystemSnapshot for a given hour."""
     bat = BatteryState(
         battery_id="kontor",
@@ -58,7 +83,7 @@ def _make_snapshot(hour: int, bat_soc: float = 60.0) -> SystemSnapshot:
     )
     ev = EVState(
         connected=True,
-        soc_pct=50.0,
+        soc_pct=_SOC_EV_PCT,
         charging=False,
         power_w=0.0,
         current_a=0.0,
@@ -120,28 +145,28 @@ class TestGuardBlocking:
     async def test_alarm_blocks_plan(self) -> None:
         """ALARM level should prevent plan generation."""
         executor, guard = _make_executor(GuardLevel.ALARM)
-        snap = _make_snapshot(hour=22)
+        snap = _make_snapshot(hour=_NIGHT_PLAN_HOUR)
         await executor.generate(snap)
         assert executor.active_night_plan is None
 
     async def test_freeze_blocks_plan(self) -> None:
         """FREEZE level should prevent plan generation."""
         executor, guard = _make_executor(GuardLevel.FREEZE)
-        snap = _make_snapshot(hour=22)
+        snap = _make_snapshot(hour=_NIGHT_PLAN_HOUR)
         await executor.generate(snap)
         assert executor.active_night_plan is None
 
     async def test_ok_allows_plan(self) -> None:
         """OK level should allow plan generation."""
         executor, guard = _make_executor(GuardLevel.OK)
-        snap = _make_snapshot(hour=22)
+        snap = _make_snapshot(hour=_NIGHT_PLAN_HOUR)
         await executor.generate(snap)
         assert executor.active_night_plan is not None
 
     async def test_warning_allows_plan(self) -> None:
         """WARNING level should allow plan generation."""
         executor, guard = _make_executor(GuardLevel.WARNING)
-        snap = _make_snapshot(hour=17)
+        snap = _make_snapshot(hour=_EVENING_PLAN_HOUR)
         await executor.generate(snap)
         assert executor.active_evening_plan is not None
 
@@ -158,7 +183,7 @@ class TestNormalCycle:
     async def test_night_plan_at_22(self) -> None:
         """Hour 22 should generate and store a NightPlan."""
         executor, _ = _make_executor()
-        snap = _make_snapshot(hour=22)
+        snap = _make_snapshot(hour=_NIGHT_PLAN_HOUR)
         await executor.generate(snap)
         plan = executor.active_night_plan
         assert isinstance(plan, NightPlan)
@@ -167,7 +192,7 @@ class TestNormalCycle:
     async def test_evening_plan_at_17(self) -> None:
         """Hour 17 should generate and store an EveningPlan."""
         executor, _ = _make_executor()
-        snap = _make_snapshot(hour=17)
+        snap = _make_snapshot(hour=_EVENING_PLAN_HOUR)
         await executor.generate(snap)
         plan = executor.active_evening_plan
         assert isinstance(plan, EveningPlan)
@@ -176,7 +201,7 @@ class TestNormalCycle:
     async def test_morning_no_plan_stored(self) -> None:
         """Hour 6 logs snapshot but doesn't create night/evening plan."""
         executor, _ = _make_executor()
-        snap = _make_snapshot(hour=6)
+        snap = _make_snapshot(hour=_MORNING_PLAN_HOUR)
         await executor.generate(snap)
         assert executor.active_night_plan is None
         assert executor.active_evening_plan is None
@@ -184,7 +209,7 @@ class TestNormalCycle:
     async def test_non_plan_hour_noop(self) -> None:
         """Hour 10 is not a plan hour — no plan generated."""
         executor, _ = _make_executor()
-        snap = _make_snapshot(hour=10)
+        snap = _make_snapshot(hour=_NON_PLAN_HOUR)
         await executor.generate(snap)
         assert executor.active_night_plan is None
         assert executor.active_evening_plan is None
@@ -201,16 +226,16 @@ class TestGenerate48h:
     def test_returns_two_strings(self) -> None:
         """Should return (today_plan, tomorrow_plan) tuple."""
         executor, _ = _make_executor()
-        snap = _make_snapshot(hour=22)
-        today, tomorrow = executor.generate_48h(snap, current_hour=22)
+        snap = _make_snapshot(hour=_NIGHT_PLAN_HOUR)
+        today, tomorrow = executor.generate_48h(snap, current_hour=_NIGHT_PLAN_HOUR)
         assert isinstance(today, str)
         assert isinstance(tomorrow, str)
 
     def test_entries_have_correct_format(self) -> None:
         """Each entry should be HH:ACTION:SoC%."""
         executor, _ = _make_executor()
-        snap = _make_snapshot(hour=22)
-        today, tomorrow = executor.generate_48h(snap, current_hour=22)
+        snap = _make_snapshot(hour=_NIGHT_PLAN_HOUR)
+        today, tomorrow = executor.generate_48h(snap, current_hour=_NIGHT_PLAN_HOUR)
 
         for plan_str in (today, tomorrow):
             if not plan_str:
@@ -229,8 +254,8 @@ class TestGenerate48h:
     def test_covers_48_hours(self) -> None:
         """Combined entries should cover 48 hours."""
         executor, _ = _make_executor()
-        snap = _make_snapshot(hour=22)
-        today, tomorrow = executor.generate_48h(snap, current_hour=22)
+        snap = _make_snapshot(hour=_NIGHT_PLAN_HOUR)
+        today, tomorrow = executor.generate_48h(snap, current_hour=_NIGHT_PLAN_HOUR)
         today_count = len(today.split("|")) if today else 0
         tomorrow_count = len(tomorrow.split("|")) if tomorrow else 0
         assert today_count + tomorrow_count == 48
@@ -248,7 +273,7 @@ class TestExceptionHandling:
     async def test_value_error_logged_with_exc_info(self) -> None:
         """ValueError should be caught and logged with exc_info=True."""
         executor, _ = _make_executor()
-        snap = _make_snapshot(hour=22)
+        snap = _make_snapshot(hour=_NIGHT_PLAN_HOUR)
 
         # Force ValueError in planner
         with patch.object(
@@ -265,7 +290,7 @@ class TestExceptionHandling:
     async def test_key_error_logged_with_exc_info(self) -> None:
         """KeyError should be caught and logged with exc_info=True."""
         executor, _ = _make_executor()
-        snap = _make_snapshot(hour=17)
+        snap = _make_snapshot(hour=_EVENING_PLAN_HOUR)
 
         with patch.object(
             executor._planner,
@@ -283,7 +308,7 @@ class TestExceptionHandling:
         import asyncio
 
         executor, _ = _make_executor()
-        snap = _make_snapshot(hour=22)
+        snap = _make_snapshot(hour=_NIGHT_PLAN_HOUR)
 
         with patch.object(
             executor._planner,
@@ -309,7 +334,7 @@ class TestFreezeSkipsPlan:
     async def test_engine_skips_plan_on_freeze(self) -> None:
         """FREEZE guard → planner NOT called."""
         executor, _ = _make_executor(GuardLevel.FREEZE)
-        snap = _make_snapshot(hour=22)
+        snap = _make_snapshot(hour=_NIGHT_PLAN_HOUR)
 
         with patch.object(
             executor._planner, "generate_night_plan",
@@ -320,7 +345,7 @@ class TestFreezeSkipsPlan:
     async def test_engine_logs_skip_reason(self) -> None:
         """C8: Skip reason logged with guard level and violations."""
         executor, _ = _make_executor(GuardLevel.FREEZE)
-        snap = _make_snapshot(hour=22)
+        snap = _make_snapshot(hour=_NIGHT_PLAN_HOUR)
 
         with patch("core.plan_executor.logger") as mock_logger:
             await executor.generate(snap)
@@ -338,12 +363,18 @@ class TestPlannerFallbackPrice:
         from core.planner import Planner
 
         planner = Planner()
-        hours = [22, 23, 0, 1, 2]
-        prices = {22: 50.0, 0: 30.0, 2: 80.0}  # 23 and 1 missing
+        hours = [
+            _NIGHT_PLAN_HOUR, _TEST_HOUR_AFTER_MIDNIGHT,
+            _MIDNIGHT_HOUR, _TEST_HOUR_EARLY_1, _TEST_HOUR_EARLY_2,
+        ]
+        prices = {
+            _NIGHT_PLAN_HOUR: _TEST_PRICE_MID_ORE,
+            _MIDNIGHT_HOUR: _TEST_PRICE_CHEAP_ORE,
+            _TEST_HOUR_EARLY_2: _TEST_PRICE_EXP_ORE,
+        }  # _TEST_HOUR_AFTER_MIDNIGHT and _TEST_HOUR_EARLY_1 missing
         result = planner._sort_by_cheapest(hours, prices)
-        # 0(30) < 22(50) < 2(80) < 23(999) < 1(999)
-        assert result[0] == 0
-        assert result[1] == 22
-        assert result[2] == 2
-        # 23 and 1 should be at the end (sentinel price)
-        assert set(result[3:]) == {23, 1}
+        # Cheapest first, missing hours last (sentinel price)
+        assert result[0] == _MIDNIGHT_HOUR
+        assert result[1] == _NIGHT_PLAN_HOUR
+        assert result[2] == _TEST_HOUR_EARLY_2
+        assert set(result[3:]) == {_TEST_HOUR_AFTER_MIDNIGHT, _TEST_HOUR_EARLY_1}
