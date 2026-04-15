@@ -199,6 +199,10 @@ class ControlEngine:
                 # ----- BRANCH A: Daytime PV surplus charging -----
                 # SOLE OWNER of mode + ems_power_limit + export_limit.
                 # No balancer, no mode_enforce, no mode_manager limits.
+                # Clear pending mode_manager requests to prevent Branch B
+                # leftovers from overriding charge plan (PLAT-1616).
+                for bat in snapshot.batteries:
+                    self._mode_manager.clear_pending(bat.battery_id)
                 result.execution = await self._compute_charge_plan(snapshot)
 
             else:
@@ -439,6 +443,16 @@ class ControlEngine:
                     rule_id="PV_CHARGE_PLAN",
                     reason="charge_pv: limit=0 (PLAT-1613 absolute rule)",
                 ))
+                # Kontor (local_load): set export_limit=0 to prevent
+                # PV export while bat should be absorbing (PLAT-1617).
+                if bat.ct_placement == CTPlacement.LOCAL_LOAD:
+                    cmds.append(Command(
+                        command_type=CommandType.SET_EXPORT_LIMIT,
+                        target_id=bat.battery_id,
+                        value=_CHARGE_PV_EMS_LIMIT_W,
+                        rule_id="PV_CHARGE_PLAN",
+                        reason="Kontor export_limit=0 during charge",
+                    ))
             else:
                 # No surplus or SoC balancing blocked → standby
                 if bat.ems_mode.value != EMSMode.BATTERY_STANDBY.value:

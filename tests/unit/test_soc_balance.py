@@ -32,6 +32,12 @@ _SOC_HIGH_PCT: float = 60.0
 _SOC_BALANCED_A_PCT: float = 50.0
 _SOC_BALANCED_B_PCT: float = 51.0
 _PV_EXPORT_W: float = -2000.0
+_PV_SURPLUS_W: float = 2000.0
+_LOAD_W: float = 500.0
+_CAP_KONTOR_KWH: float = 15.0
+_CAP_FORRAD_KWH: float = 5.0
+_GRID_DISCHARGE_W: float = 2000.0
+_MIN_ALLOCATIONS: int = 1
 _DISCHARGE_HOUR: int = 18
 _CHARGE_HOUR: int = 14
 _ENTRY_YEAR: int = 2026
@@ -87,7 +93,7 @@ class TestChargeSoCBalance:
                     battery_id="kontor", soc_pct=_SOC_LOW_PCT,
                     ems_mode="battery_standby",
                     ct_placement=CTPlacement.LOCAL_LOAD,
-                    pv_power_w=2000.0, load_power_w=500.0,
+                    pv_power_w=_PV_SURPLUS_W, load_power_w=_LOAD_W,
                 ),
                 make_battery_state(
                     battery_id="forrad", soc_pct=_SOC_HIGH_PCT,
@@ -131,7 +137,7 @@ class TestChargeSoCBalance:
                     battery_id="kontor", soc_pct=_SOC_BALANCED_A_PCT,
                     ems_mode="battery_standby",
                     ct_placement=CTPlacement.LOCAL_LOAD,
-                    pv_power_w=2000.0, load_power_w=500.0,
+                    pv_power_w=_PV_SURPLUS_W, load_power_w=_LOAD_W,
                 ),
                 make_battery_state(
                     battery_id="forrad", soc_pct=_SOC_BALANCED_B_PCT,
@@ -178,19 +184,19 @@ class TestDischargeSoCBalance:
             batteries=[
                 make_battery_state(
                     battery_id="kontor", soc_pct=_SOC_HIGH_PCT,
-                    cap_kwh=15.0,
+                    cap_kwh=_CAP_KONTOR_KWH,
                     ct_placement=CTPlacement.LOCAL_LOAD,
                 ),
                 make_battery_state(
                     battery_id="forrad", soc_pct=_SOC_HIGH_PCT,
-                    cap_kwh=5.0,
+                    cap_kwh=_CAP_FORRAD_KWH,
                     ct_placement=CTPlacement.HOUSE_GRID,
                 ),
             ],
-            grid=make_grid_state(grid_power_w=2000.0),
+            grid=make_grid_state(grid_power_w=_GRID_DISCHARGE_W),
         )
         result = await engine.run_cycle(snap)
 
         # Balancer should allocate — check result has balance
         assert result.balance is not None
-        assert len(result.balance.allocations) >= 1
+        assert len(result.balance.allocations) >= _MIN_ALLOCATIONS

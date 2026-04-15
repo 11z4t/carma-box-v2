@@ -110,6 +110,18 @@ class ModeChangeManager:
         self._config = config or ModeChangeConfig()
         self._requests: dict[str, ModeChangeRequest] = {}
 
+    def clear_pending(self, battery_id: str) -> None:
+        """Clear any pending mode change for a battery.
+
+        Used by Branch A (charge plan) to prevent Branch B's
+        pending requests from overriding charge plan decisions.
+        """
+        if battery_id in self._requests:
+            logger.info(
+                "Clearing pending mode change for %s", battery_id,
+            )
+            del self._requests[battery_id]
+
     def request_change(
         self,
         battery_id: str,
