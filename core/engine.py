@@ -122,6 +122,9 @@ class ControlEngine:
         self._last_ev_charging: Optional[bool] = None
         self._cycle_count = 0
         self._last_plan_time = 0.0
+        # PV charge plan: track mode per battery for dwell hysteresis
+        self._charge_plan_mode: dict[str, str] = {}
+        self._charge_plan_dwell: dict[str, int] = {}  # cycles in current mode
 
     async def run_cycle(
         self,
@@ -337,7 +340,7 @@ class ControlEngine:
 
     _SOC_BALANCE_THRESHOLD_PCT: float = 2.0  # SoC diff below this = balanced
     _GRID_HYSTERESIS_W: float = 100.0  # Accept <100W import/export
-    _PV_SURPLUS_MARGIN_W: int = 100  # Undersize limit by 100W to avoid grid import
+    _MIN_MODE_DWELL_CYCLES: int = 2  # Stay in mode at least 2 cycles (60s)
 
     async def _compute_charge_plan(
         self, snapshot: SystemSnapshot,
@@ -384,15 +387,39 @@ class ControlEngine:
                 # Block higher SoC bat from charging
                 bat_has_surplus[higher_id] = False
 
-        # Apply mode per battery
+        # Apply mode per battery with dwell hysteresis
         cmds: list[Command] = []
         for bat in snapshot.batteries:
-            should_charge = (
+            desired_charge = (
                 bat_has_surplus.get(bat.battery_id, False)
                 and bat.soc_pct < MAX_SOC_PCT
             )
+            desired_mode = (
+                EMSMode.CHARGE_PV.value if desired_charge
+                else EMSMode.BATTERY_STANDBY.value
+            )
 
-            if should_charge:
+            # Dwell hysteresis: don't flip mode until we've been in
+            # current mode for _MIN_MODE_DWELL_CYCLES (prevents oscillation)
+            prev_mode = self._charge_plan_mode.get(bat.battery_id)
+            if prev_mode == desired_mode:
+                self._charge_plan_dwell[bat.battery_id] = (
+                    self._charge_plan_dwell.get(bat.battery_id, 0) + 1
+                )
+            elif prev_mode is not None:
+                dwell = self._charge_plan_dwell.get(bat.battery_id, 0)
+                if dwell < self._MIN_MODE_DWELL_CYCLES:
+                    # Not enough dwell — stay in previous mode
+                    desired_mode = prev_mode
+                    desired_charge = desired_mode == EMSMode.CHARGE_PV.value
+                    self._charge_plan_dwell[bat.battery_id] = dwell + 1
+                else:
+                    # Dwell met — allow transition
+                    self._charge_plan_dwell[bat.battery_id] = 0
+
+            self._charge_plan_mode[bat.battery_id] = desired_mode
+
+            if desired_charge:
                 # charge_pv + limit=0 (ABSOLUTE: never limit>0)
                 if bat.ems_mode.value != EMSMode.CHARGE_PV.value:
                     cmds.append(Command(

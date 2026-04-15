@@ -34,6 +34,9 @@ _DAYTIME_HOURS: list[int] = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
 _NIGHT_HOUR: int = 23
 _TEST_MIDDAY_HOUR: int = 12
 _TEST_AFTERNOON_HOUR: int = 14
+_ZERO_PV_W: float = 0.0
+_MIN_COMMANDS: int = 1
+_EXPECTED_EMS_LIMIT_W: int = 0  # PLAT-1613 absolute rule
 
 
 def _make_engine() -> tuple[ControlEngine, AsyncMock]:
@@ -77,7 +80,7 @@ class TestNeverGridChargeDaytime:
                 soc_pct=_SOC_PARTIAL_PCT,
                 ems_mode="charge_pv",
                 ct_placement="local_load",
-                pv_power_w=0.0,
+                pv_power_w=_ZERO_PV_W,
                 load_power_w=_GRID_IMPORT_W,
             )],
             grid=make_grid_state(grid_power_w=_GRID_IMPORT_W),
@@ -90,7 +93,7 @@ class TestNeverGridChargeDaytime:
             e for e in result.execution.audit_entries
             if e.command_type == "set_ems_mode"
         ]
-        assert len(mode_entries) >= 1, "Expected standby command"
+        assert len(mode_entries) >= _MIN_COMMANDS, "Expected standby command"
         assert mode_entries[0].value == "battery_standby"
 
     async def test_pv_surplus_sets_charge_pv(self) -> None:
@@ -116,7 +119,7 @@ class TestNeverGridChargeDaytime:
             e for e in result.execution.audit_entries
             if e.command_type == "set_ems_mode"
         ]
-        assert len(mode_entries) >= 1, "Expected charge_pv command"
+        assert len(mode_entries) >= _MIN_COMMANDS, "Expected charge_pv command"
         assert mode_entries[0].value == "charge_pv"
 
     async def test_limit_always_zero_in_charge_pv(self) -> None:
@@ -136,7 +139,7 @@ class TestNeverGridChargeDaytime:
         if result.execution:
             for entry in result.execution.audit_entries:
                 if entry.command_type == "set_ems_power_limit":
-                    assert int(entry.value) == 0, (
+                    assert int(entry.value) == _EXPECTED_EMS_LIMIT_W, (
                         f"PLAT-1613 VIOLATION: charge_pv limit={entry.value},"
                         f" MUST be 0"
                     )
@@ -164,5 +167,5 @@ class TestNeverGridChargeDaytime:
             e for e in result.execution.audit_entries
             if e.command_type == "set_ems_mode"
         ]
-        assert len(mode_entries) >= 1, "Expected charge_pv command"
+        assert len(mode_entries) >= _MIN_COMMANDS, "Expected charge_pv command"
         assert mode_entries[0].value == "charge_pv"
