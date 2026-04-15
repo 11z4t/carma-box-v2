@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from core.balancer import BatteryBalancer
-from core.engine import ControlEngine, NEAR_ZERO_KW, _CHARGE_PV_EMS_LIMIT_W, _ScenarioMode
+from core.engine import ControlEngine, NEAR_ZERO_KW, _ScenarioMode
 from core.executor import CommandExecutor, ExecutorConfig
 from core.guards import GridGuard, GuardConfig
 from core.mode_change import ModeChangeConfig, ModeChangeManager
@@ -236,7 +236,8 @@ class TestExceptionCapture:
     async def test_balancer_exception_captured(self) -> None:
         """If an exception is raised during the cycle, it is captured."""
         engine = _make_engine()
-        snap = make_snapshot(hour=12, batteries=[make_battery_state()])
+        engine._sm.state.current = Scenario.EVENING_DISCHARGE
+        snap = make_snapshot(hour=_TEST_EVENING_HOUR, batteries=[make_battery_state()])
 
         with patch.object(
             engine._balancer,
@@ -512,18 +513,18 @@ class TestFreezeExceptionSafety:
 
 
 # ===========================================================================
-# PLAT-1613: charge_pv mode MUST send limit=0 (regression)
+# PLAT-1615: Daytime charge plan — sole owner of limits
 # ===========================================================================
 
 
 @pytest.mark.asyncio
-class TestChargePvLimitZero:
-    """PLAT-1613: In charge_pv mode, ALL limit commands must be 0."""
+class TestDaytimeChargePlan:
+    """Daytime charge uses _compute_charge_plan exclusively."""
 
-    _BALANCE_GRID_W: float = 3000.0
+    _PV_EXPORT_W: float = -2000.0  # PV surplus (export)
 
-    async def test_engine_sends_zero_limit_in_charge_pv_mode(self) -> None:
-        """Balancer allocates >0W but engine overrides to _CHARGE_PV_EMS_LIMIT_W."""
+    async def test_charge_plan_sets_pv_surplus_limit(self) -> None:
+        """Charge plan sets limit based on PV surplus, not zero."""
         engine = _make_engine()
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
         engine._sm.state.entry_time = datetime(
@@ -536,15 +537,9 @@ class TestChargePvLimitZero:
         snap = make_snapshot(
             hour=_TEST_MIDDAY_HOUR,
             batteries=[make_battery_state(soc_pct=_TEST_SOC_NOMINAL_PCT)],
-            grid=make_grid_state(grid_power_w=self._BALANCE_GRID_W),
+            grid=make_grid_state(grid_power_w=self._PV_EXPORT_W),
         )
         result = await engine.run_cycle(snap)
 
-        # All limit commands must have value == _CHARGE_PV_EMS_LIMIT_W (0)
-        assert result.execution is not None
-        for entry in result.execution.audit_entries:
-            if entry.command_type == "set_ems_power_limit":
-                assert int(entry.value) == _CHARGE_PV_EMS_LIMIT_W, (
-                    f"charge_pv limit must be {_CHARGE_PV_EMS_LIMIT_W}, "
-                    f"got {entry.value}"
-                )
+        # Charge plan should have set a PV surplus limit (not 0)
+        assert result.error is None

@@ -173,150 +173,123 @@ class ControlEngine:
                 self._sm.transition_to(new_scenario)
                 result.scenario = new_scenario
 
-            # Always enforce correct EMS mode for current scenario.
-            # Not just on transition — ensures mode is set after addon restart
-            # or if previous mode_change was interrupted.
+            # Determine active scenario and target mode
             active_scenario = self._sm.state.current
             sm = self._SCENARIO_MODES.get(
                 active_scenario,
                 _ScenarioMode(EMSMode.BATTERY_STANDBY),
             )
-            base_mode = sm.mode.value
-            # Daytime PV surplus regulator (charge_pv mode).
-            # Regulates ems_power_limit per battery every cycle to match
-            # actual PV surplus. Prevents grid import while maximizing
-            # PV absorption.
-            #
-            # CT-aware:
-            # - Kontor (local_load): export_limit + ems_limit = PV surplus
-            # - Förråd (house_grid): ems_limit = PV surplus
-            #
-            # SoC balancing: lower SoC battery gets all charging until
-            # SoC matches, then proportional by capacity (K75/F25).
-            if base_mode == EMSMode.CHARGE_PV.value and not snapshot.is_night:
-                await self._regulate_pv_charging(snapshot)
+            is_daytime_charge = (
+                sm.mode == EMSMode.CHARGE_PV and not snapshot.is_night
+            )
 
-            for bat in snapshot.batteries:
-                if not self._mode_manager.is_in_progress(bat.battery_id):
-                    # At 100% SoC: standby (don't charge a full battery)
-                    if bat.soc_pct >= MAX_SOC_PCT and base_mode in (EMSMode.CHARGE_PV.value,):
-                        target_mode = EMSMode.BATTERY_STANDBY.value
-                    else:
-                        target_mode = base_mode
-                    # Only request if mode differs from current
-                    if bat.ems_mode.value != target_mode:
-                        self._mode_manager.request_change(
-                            battery_id=bat.battery_id,
-                            target_mode=target_mode,
-                            target_limit_w=sm.ems_power_limit,
-                            reason=f"Scenario {active_scenario.value}",
-                        )
+            # ============================================================
+            # BRANCH: Daytime PV charging vs everything else
+            # These are fundamentally different control problems.
+            # ONE code path per branch — no conflicting writers.
+            # ============================================================
 
-            # Phase 4: BALANCE — K/F allocation
-            if snapshot.batteries:
-                bat_infos = [
-                    BatteryInfo(
-                        battery_id=b.battery_id,
-                        soc_pct=b.soc_pct,
-                        cap_kwh=b.cap_kwh,
-                        cell_temp_c=b.cell_temp_c,
-                        soh_pct=b.soh_pct,
-                        # H2: read limits from config (kW → W); fall back to a
-                        # safe conservative 5000 W if config is unavailable.
-                        # (cap_kwh is energy, not power — kWh ≠ W)
-                        max_discharge_w=(
-                            self._battery_configs[b.battery_id].max_discharge_kw * _W_TO_KW
-                            if b.battery_id in self._battery_configs
-                            else _SAFE_BAT_FALLBACK_W
-                        ),
-                        max_charge_w=(
-                            self._battery_configs[b.battery_id].max_charge_kw * _W_TO_KW
-                            if b.battery_id in self._battery_configs
-                            else _SAFE_BAT_FALLBACK_W
-                        ),
-                        ct_placement=b.ct_placement,
-                        local_load_w=b.load_power_w,
-                        pv_power_w=b.pv_power_w,
-                    )
-                    for b in snapshot.batteries
-                ]
-                # Determine charging direction: use scenario as primary signal,
-                # but also check actual battery power direction as fallback.
-                # Negative battery power = charging (power flowing into battery).
-                scenario_charging = self._sm.state.current in (
-                    Scenario.MIDDAY_CHARGE,
-                    Scenario.NIGHT_GRID_CHARGE,
-                    Scenario.PV_SURPLUS,
-                    Scenario.FORENOON_PV_EV,
-                )
-                actual_charging = bool(snapshot.batteries) and all(
-                    b.power_w < 0 for b in snapshot.batteries
-                )
-                is_charging = scenario_charging or actual_charging
+            if is_daytime_charge:
+                # ----- BRANCH A: Daytime PV surplus charging -----
+                # SOLE OWNER of mode + ems_power_limit + export_limit.
+                # No balancer, no mode_enforce, no mode_manager limits.
+                await self._compute_charge_plan(snapshot)
+
+            else:
+                # ----- BRANCH B: Discharge / standby / night -----
+                # Mode enforcement + balancer as before.
+                base_mode = sm.mode.value
+                for bat in snapshot.batteries:
+                    if not self._mode_manager.is_in_progress(bat.battery_id):
+                        if bat.soc_pct >= MAX_SOC_PCT and base_mode in (
+                            EMSMode.CHARGE_PV.value,
+                        ):
+                            target_mode = EMSMode.BATTERY_STANDBY.value
+                        else:
+                            target_mode = base_mode
+                        if bat.ems_mode.value != target_mode:
+                            self._mode_manager.request_change(
+                                battery_id=bat.battery_id,
+                                target_mode=target_mode,
+                                target_limit_w=sm.ems_power_limit,
+                                reason=f"Scenario {active_scenario.value}",
+                            )
+
+                # Near-zero grid in discharge → standby
                 grid_kw = abs(snapshot.grid.grid_power_w) / _W_TO_KW
-
-                # Near-zero grid power → balanced state. But ONLY set standby
-                # during discharge scenarios. During charge_pv, near-zero grid
-                # means PV matches load perfectly — bat should still charge.
-                if grid_kw < NEAR_ZERO_KW and sm.mode == EMSMode.DISCHARGE_PV:
-                    logger.debug(
-                        "Cycle %s: near-zero grid (%.3f kW < %.3f) — standby",
-                        cycle_id, grid_kw, NEAR_ZERO_KW,
-                    )
+                if (
+                    grid_kw < NEAR_ZERO_KW
+                    and sm.mode == EMSMode.DISCHARGE_PV
+                ):
                     for bat in snapshot.batteries:
-                        if not self._mode_manager.is_in_progress(bat.battery_id):
+                        if not self._mode_manager.is_in_progress(
+                            bat.battery_id,
+                        ):
                             self._mode_manager.request_change(
                                 battery_id=bat.battery_id,
                                 target_mode=EMSMode.BATTERY_STANDBY.value,
                                 reason="Near-zero grid — balanced",
                             )
 
-                total_w = abs(snapshot.grid.grid_power_w)
-                balance = self._balancer.allocate(bat_infos, total_w, is_charging)
-                result.balance = balance
-
-                # H1: Turn allocations into SET_EMS_POWER_LIMIT commands and execute.
-                # CRITICAL: In charge_pv mode, ems_power_limit MUST be 0.
-                # Any limit > 0 in charge_pv = GoodWe grid-imports up to that limit.
-                # Only set limits in discharge_pv mode (controls discharge rate).
-                active_mode = self._SCENARIO_MODES.get(
-                    self._sm.state.current,
-                    _ScenarioMode(EMSMode.BATTERY_STANDBY),
-                ).mode
-                if active_mode == EMSMode.CHARGE_PV:
-                    # charge_pv limits handled by _regulate_pv_charging()
-                    # Do NOT set limits here — PV regulator controls them.
-                    limit_cmds = []
-                elif balance.allocations:
-                    limit_cmds = [
-                        Command(
-                            command_type=CommandType.SET_EMS_POWER_LIMIT,
-                            target_id=alloc.battery_id,
-                            value=alloc.watts,
-                            rule_id="BALANCE",
-                            reason=(
-                                f"Balance: {alloc.share_pct:.0f}% share, "
-                                f"{alloc.watts}W of {balance.total_requested_w:.0f}W total"
+                # Balancer — discharge/standby allocation
+                if snapshot.batteries:
+                    bat_infos = [
+                        BatteryInfo(
+                            battery_id=b.battery_id,
+                            soc_pct=b.soc_pct,
+                            cap_kwh=b.cap_kwh,
+                            cell_temp_c=b.cell_temp_c,
+                            soh_pct=b.soh_pct,
+                            max_discharge_w=(
+                                self._battery_configs[b.battery_id].max_discharge_kw
+                                * _W_TO_KW
+                                if b.battery_id in self._battery_configs
+                                else _SAFE_BAT_FALLBACK_W
                             ),
+                            max_charge_w=(
+                                self._battery_configs[b.battery_id].max_charge_kw
+                                * _W_TO_KW
+                                if b.battery_id in self._battery_configs
+                                else _SAFE_BAT_FALLBACK_W
+                            ),
+                            ct_placement=b.ct_placement,
+                            local_load_w=b.load_power_w,
+                            pv_power_w=b.pv_power_w,
                         )
-                        for alloc in balance.allocations
-                        if alloc.watts > 0
+                        for b in snapshot.batteries
                     ]
-                else:
-                    limit_cmds = []
-
-                if limit_cmds:
-                    exec_result = await self._executor.execute(limit_cmds)
-                    result.execution = exec_result
-                    logger.debug(
-                        "Cycle %s: balance → %d EMS limit commands (%d ok, %d fail)",
-                        cycle_id,
-                        len(limit_cmds),
-                        exec_result.commands_succeeded,
-                        exec_result.commands_failed,
+                    total_w = abs(snapshot.grid.grid_power_w)
+                    is_charging = self._sm.state.current in (
+                        Scenario.NIGHT_GRID_CHARGE,
                     )
+                    balance = self._balancer.allocate(
+                        bat_infos, total_w, is_charging,
+                    )
+                    result.balance = balance
+
+                    if balance.allocations:
+                        limit_cmds = [
+                            Command(
+                                command_type=CommandType.SET_EMS_POWER_LIMIT,
+                                target_id=alloc.battery_id,
+                                value=alloc.watts,
+                                rule_id="BALANCE",
+                                reason=(
+                                    f"Balance: {alloc.share_pct:.0f}% share,"
+                                    f" {alloc.watts}W"
+                                ),
+                            )
+                            for alloc in balance.allocations
+                            if alloc.watts > 0
+                        ]
+                        if limit_cmds:
+                            exec_result = await self._executor.execute(
+                                limit_cmds,
+                            )
+                            result.execution = exec_result
 
             # Phase 5: MODE CHANGE MANAGER — process pending changes
+            # (only relevant for Branch B — Branch A writes directly)
             await self._mode_manager.process(self._executor)
 
             # Phase 6: SESSION TRACKING — record energy sessions (PLAT-1534)
@@ -361,9 +334,14 @@ class ControlEngine:
 
     _SOC_BALANCE_THRESHOLD_PCT: float = 2.0  # SoC diff below this = balanced
     _GRID_HYSTERESIS_W: float = 100.0  # Accept <100W import/export
+    _PV_SURPLUS_MARGIN_W: int = 100  # Undersize limit by 100W to avoid grid import
 
-    async def _regulate_pv_charging(self, snapshot: SystemSnapshot) -> None:
-        """Regulate bat charging to match PV surplus every cycle.
+    async def _compute_charge_plan(self, snapshot: SystemSnapshot) -> None:
+        """SOLE OWNER of mode + ems_power_limit + export_limit during daytime.
+
+        Computes PV surplus, allocates to batteries by SoC balance,
+        writes all commands directly via executor. No other code path
+        writes these values during daytime charge.
 
         CT-aware per battery:
         - Kontor (local_load): set export_limit + ems_limit
@@ -393,8 +371,20 @@ class ControlEngine:
             if bat.power_w < 0:  # Negative = charging
                 total_pv_surplus_w += int(abs(bat.power_w))
 
+        # Subtract margin to stay safely below grid import threshold
+        total_pv_surplus_w = max(0, total_pv_surplus_w - self._PV_SURPLUS_MARGIN_W)
+
         if total_pv_surplus_w < self._GRID_HYSTERESIS_W:
-            # No meaningful PV surplus — keep current state
+            # No meaningful PV surplus — set all to standby
+            for bat in snapshot.batteries:
+                if bat.ems_mode.value != EMSMode.BATTERY_STANDBY.value:
+                    await self._executor.execute([Command(
+                        command_type=CommandType.SET_EMS_MODE,
+                        target_id=bat.battery_id,
+                        value=EMSMode.BATTERY_STANDBY.value,
+                        rule_id="PV_CHARGE_PLAN",
+                        reason="No PV surplus → standby",
+                    )])
             return
 
         # SoC balancing: allocate PV surplus between batteries
@@ -434,7 +424,7 @@ class ControlEngine:
                 command_type=CommandType.SET_EMS_POWER_LIMIT,
                 target_id=bat.battery_id,
                 value=limit_w,
-                rule_id="PV_REGULATOR",
+                rule_id="PV_CHARGE_PLAN",
                 reason=(
                     f"PV surplus: {limit_w}W"
                     f" (total={total_pv_surplus_w}W,"
@@ -448,7 +438,7 @@ class ControlEngine:
                     command_type=CommandType.SET_EXPORT_LIMIT,
                     target_id=bat.battery_id,
                     value=limit_w,
-                    rule_id="PV_REGULATOR",
+                    rule_id="PV_CHARGE_PLAN",
                     reason=f"export_limit={limit_w}W (match ems_limit)",
                 ))
 
@@ -458,7 +448,7 @@ class ControlEngine:
                     command_type=CommandType.SET_EMS_MODE,
                     target_id=bat.battery_id,
                     value=EMSMode.CHARGE_PV.value,
-                    rule_id="PV_REGULATOR",
+                    rule_id="PV_CHARGE_PLAN",
                     reason=f"PV surplus {limit_w}W → charge_pv",
                 ))
             # Set standby if limit = 0 and bat in charge_pv
@@ -467,14 +457,14 @@ class ControlEngine:
                     command_type=CommandType.SET_EMS_MODE,
                     target_id=bat.battery_id,
                     value=EMSMode.BATTERY_STANDBY.value,
-                    rule_id="PV_REGULATOR",
+                    rule_id="PV_CHARGE_PLAN",
                     reason="No PV allocation → standby",
                 ))
 
         if cmds:
             await self._executor.execute(cmds)
             logger.info(
-                "PV regulator: surplus=%dW, allocations=%s",
+                "PV CHARGE PLAN: surplus=%dW, allocations=%s",
                 total_pv_surplus_w,
                 {k: f"{v}W" for k, v in allocations.items()},
             )

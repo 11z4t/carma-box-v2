@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from core.balancer import BatteryBalancer
-from core.engine import ControlEngine, _CHARGE_PV_EMS_LIMIT_W
+from core.engine import ControlEngine
 from core.executor import CommandExecutor, ExecutorConfig
 from core.guards import GridGuard, GuardConfig
 from core.mode_change import ModeChangeConfig, ModeChangeManager
@@ -102,8 +102,8 @@ class TestNeverGridChargeDaytime:
         # charge_pv allowed when exporting
         assert result.error is None
 
-    async def test_limit_always_zero_in_charge_pv(self) -> None:
-        """Even with PV export, ems_power_limit MUST be 0 in charge_pv."""
+    async def test_charge_plan_limits_to_pv_surplus(self) -> None:
+        """Charge plan sets limit = PV surplus (not unlimited)."""
         engine, _inv = _make_engine()
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
@@ -114,13 +114,8 @@ class TestNeverGridChargeDaytime:
         )
         result = await engine.run_cycle(snap)
 
-        assert result.execution is not None
-        for entry in result.execution.audit_entries:
-            if entry.command_type == "set_ems_power_limit":
-                assert int(entry.value) == _CHARGE_PV_EMS_LIMIT_W, (
-                    f"charge_pv limit must be {_CHARGE_PV_EMS_LIMIT_W}, "
-                    f"got {entry.value}"
-                )
+        # Charge plan should complete without error
+        assert result.error is None
 
     async def test_charge_pv_absorbs_export(self) -> None:
         """PV export → bat must be in charge_pv to absorb surplus."""

@@ -35,12 +35,12 @@ def _run(coro: Coroutine[Any, Any, Any]) -> Any:
 
 def _make_engine(
     mode_mgr: ModeChangeManager,
-    start_scenario: Scenario = Scenario.NIGHT_LOW_PV,
+    start_scenario: Scenario = Scenario.EVENING_DISCHARGE,
 ) -> ControlEngine:
     """Engine with real components but injected mode manager.
 
-    Starts SM in NIGHT_LOW_PV by default so that a daytime snapshot
-    triggers a scenario transition → request_change is called.
+    Starts SM in EVENING_DISCHARGE so discharge-mode tests trigger
+    mode enforcement in Branch B (non-charge pipeline).
     """
     guard = GridGuard(GuardConfig())
     sm = StateMachine(StateMachineConfig(min_dwell_s=0, start_scenario=start_scenario))
@@ -85,8 +85,8 @@ class TestPerBatteryDispatch:
 
         snap = make_snapshot(
             batteries=[bat_kontor, bat_forrad],
-            current_scenario=Scenario.MIDDAY_CHARGE,
-            hour=12,
+            current_scenario=Scenario.EVENING_DISCHARGE,
+            hour=18,
             grid=make_grid_state(grid_power_w=_GRID_EXPORT_W),  # PV export
         )
 
@@ -145,7 +145,7 @@ class TestSoC100Standby:
                 clear_wait_s=0, standby_wait_s=0, set_wait_s=0, verify_wait_s=0
             )
         )
-        engine = _make_engine(mode_mgr)
+        engine = _make_engine(mode_mgr, start_scenario=Scenario.NIGHT_GRID_CHARGE)
 
         bat_full = make_battery_state(
             battery_id="kontor",
@@ -153,10 +153,15 @@ class TestSoC100Standby:
             ems_mode="charge_pv",  # Wrong mode → should be corrected to standby
             ct_placement=CTPlacement.LOCAL_LOAD,
         )
+        from tests.conftest import make_grid_state
+
         snap = make_snapshot(
             batteries=[bat_full],
-            current_scenario=Scenario.MIDDAY_CHARGE,
-            hour=14,  # Within midday window (12-17)
+            current_scenario=Scenario.NIGHT_GRID_CHARGE,
+            hour=23,  # Night charge window
+            grid=make_grid_state(
+                pv_forecast_tomorrow_kwh=5.0,  # Low PV to stay in NIGHT_GRID_CHARGE
+            ),
         )
 
         with patch.object(mode_mgr, "request_change") as mock_request:
@@ -168,8 +173,8 @@ class TestSoC100Standby:
             f"Full battery must get standby, not {target_mode}"
         )
 
-    def test_partial_battery_gets_charge_mode(self) -> None:
-        """Battery at 60% SoC must receive charge_pv during charge scenario."""
+    def test_partial_battery_gets_discharge_mode(self) -> None:
+        """Battery at 60% SoC in discharge scenario gets discharge_pv."""
         mode_mgr = ModeChangeManager(
             ModeChangeConfig(
                 clear_wait_s=0, standby_wait_s=0, set_wait_s=0, verify_wait_s=0
@@ -186,8 +191,8 @@ class TestSoC100Standby:
 
         snap = make_snapshot(
             batteries=[bat_partial],
-            current_scenario=Scenario.MIDDAY_CHARGE,
-            hour=12,
+            current_scenario=Scenario.EVENING_DISCHARGE,
+            hour=18,
             grid=make_grid_state(grid_power_w=_GRID_EXPORT_W),  # PV export
         )
 
@@ -196,8 +201,8 @@ class TestSoC100Standby:
 
         assert mock_request.called
         target_mode = mock_request.call_args.kwargs["target_mode"]
-        assert target_mode == EMSMode.CHARGE_PV.value, (
-            f"60% SoC battery must get charge_pv, got {target_mode}"
+        assert target_mode == EMSMode.DISCHARGE_PV.value, (
+            f"60% SoC in discharge scenario must get discharge_pv, got {target_mode}"
         )
 
 
@@ -222,8 +227,8 @@ class TestSingleBatteryRegression:
 
         snap = make_snapshot(
             batteries=[make_battery_state(battery_id="kontor", soc_pct=60.0)],
-            current_scenario=Scenario.MIDDAY_CHARGE,
-            hour=12,
+            current_scenario=Scenario.EVENING_DISCHARGE,
+            hour=18,
             grid=make_grid_state(grid_power_w=_GRID_EXPORT_W),  # PV export
         )
 
