@@ -395,11 +395,26 @@ class TestHealthHandlers:
         """F1d: Port 8412 is NOT a naked literal in main.py."""
         source = Path(__file__).resolve().parents[2] / "main.py"
         text = source.read_text()
-        # 8412 should only appear in comments or not at all
         for i, line in enumerate(text.splitlines(), 1):
             stripped = line.strip()
             if "8412" in stripped and not stripped.startswith("#"):
                 assert False, f"Naked 8412 at main.py:{i}: {stripped}"
+
+
+class TestNoNaked1000InMain:
+    """PLAT-1609: No naked 1000 literals in main.py."""
+
+    def test_no_naked_1000(self) -> None:
+        import re
+
+        source = (Path(__file__).resolve().parents[2] / "main.py").read_text()
+        for i, line in enumerate(source.splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            has_1000 = re.search(r'\b1000\b', stripped)
+            if has_1000 and '_W_TO_KW' not in stripped and '_MS_PER_S' not in stripped:
+                assert False, f"Naked 1000 at main.py:{i}: {stripped}"
 
 
 # ===========================================================================

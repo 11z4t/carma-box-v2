@@ -59,6 +59,10 @@ __version__ = "2.0.0"
 
 logger = logging.getLogger("carma_box")
 
+# Conversion constants — no naked numeric literals in business logic.
+_W_TO_KW: float = 1000.0
+_MS_PER_S: int = 1000
+
 
 def setup_logging(config: CarmaConfig) -> None:
     """Configure logging from site.yaml settings.
@@ -252,7 +256,7 @@ class CarmaBoxService:
         # Surplus dispatch from consumer configs
         surplus_cfg = config.surplus
         self._surplus_dispatch = SurplusDispatch(SurplusDispatchConfig(
-            stop_threshold_w=surplus_cfg.stop_threshold_kw * 1000,
+            stop_threshold_w=surplus_cfg.stop_threshold_kw * _W_TO_KW,
             start_delay_s=surplus_cfg.start_delay_s,
             max_switches_per_window=surplus_cfg.max_switches_per_window,
             switch_window_s=surplus_cfg.switch_window_min * 60,
@@ -403,7 +407,7 @@ class CarmaBoxService:
 
         # Phase 1.5: ELLEVIO TRACKING — update weighted hourly average
         if self._ellevio:
-            grid_kw = snapshot.grid.grid_power_w / 1000.0
+            grid_kw = snapshot.grid.grid_power_w / _W_TO_KW
             self._ellevio.update(grid_kw, snapshot.timestamp)
 
         # Phase 1.6: MANUAL OVERRIDE — read HA helpers, set on state machine
@@ -457,7 +461,7 @@ class CarmaBoxService:
             "[%s] Cycle %d complete in %.0fms (scenario=%s, guard=%s)",
             cycle_result.cycle_id,
             self._cycle_count,
-            cycle_result.elapsed_s * 1000,
+            cycle_result.elapsed_s * _MS_PER_S,
             cycle_result.scenario.value,
             cycle_result.guard.level.value if cycle_result.guard else "n/a",
         )
@@ -669,7 +673,7 @@ class CarmaBoxService:
                 soc_pct=ev_soc,
                 connected=ev_connected,
                 charging=ev_status.lower() == "charging",
-                power_w=_ev_float(ev_ents.power) * 1000,  # kW → W
+                power_w=_ev_float(ev_ents.power) * _W_TO_KW,  # kW → W
                 current_a=_ev_float(ev_ents.current),
                 charger_status=ev_status,
                 reason_for_no_current=ev_batch.get(
@@ -764,7 +768,7 @@ class CarmaBoxService:
                 and snapshot.total_battery_soc_pct < self._config.night_plan.grid_charge_max_soc_pct
             ):
                 # Set charge mode with grid charge rate
-                rate_w = int(plan.bat_charge_rate_kw * 1000)
+                rate_w = int(plan.bat_charge_rate_kw * _W_TO_KW)
                 if rate_w > 0 and self._engine:
                     for bat in snapshot.batteries:
                         if not self._engine._mode_manager.is_in_progress(bat.battery_id):
@@ -790,8 +794,8 @@ class CarmaBoxService:
 
         ev = snapshot.ev
         headroom_w = (
-            snapshot.grid.dynamic_tak_kw * 1000
-            - snapshot.grid.weighted_avg_kw * 1000
+            snapshot.grid.dynamic_tak_kw * _W_TO_KW
+            - snapshot.grid.weighted_avg_kw * _W_TO_KW
         )
 
         # PV surplus = negative grid = export
@@ -1157,7 +1161,7 @@ class CarmaBoxService:
 
         # Export limit — open during PV, close at evening
         # Uses surplus PV min threshold + night start hour from config
-        pv_min_w = self._config.surplus.start_threshold_kw * 1000
+        pv_min_w = self._config.surplus.start_threshold_kw * _W_TO_KW
         evening_hour = self._config.grid.ellevio.night_start_hour
         pv_producing = snapshot.grid.pv_total_w > pv_min_w
         for bat_cfg in self._config.batteries:
@@ -1168,7 +1172,7 @@ class CarmaBoxService:
                 await self._ha_api.call_service(
                     self._entity_domain(export_entity), "set_value",
                     {"entity_id": export_entity,
-                     "value": int(bat_cfg.max_discharge_kw * 1000)},
+                     "value": int(bat_cfg.max_discharge_kw * _W_TO_KW)},
                 )
             elif snapshot.hour >= evening_hour or not pv_producing:
                 await self._ha_api.call_service(
