@@ -21,6 +21,10 @@ from core.guards import GuardCommand
 from core.mode_change import ModeChangeManager, ModeChangeConfig
 from core.models import Command, CommandType
 
+# Domain constants used in tests — avoids naked literals (magic numbers)
+_EXPORT_LIMIT_DISABLED_W: int = 0  # SET_EXPORT_LIMIT: disabled = 0 W export cap
+_EMS_POWER_LIMIT_ZERO_W: int = 0   # SET_EMS_POWER_LIMIT: guard clamp / grid import blocked (B9)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -157,12 +161,12 @@ class TestGuardEmergency:
             guard_id="G0",
             command_type=CommandType.SET_EMS_POWER_LIMIT,
             target_id="kontor",
-            value=0,
+            value=_EMS_POWER_LIMIT_ZERO_W,
             reason="G0: zero limit",
         )
         result = await executor.execute_guard_commands([gcmd])
         assert result.commands_succeeded == 1
-        inverters["kontor"].set_ems_power_limit.assert_awaited_with(0)
+        inverters["kontor"].set_ems_power_limit.assert_awaited_with(_EMS_POWER_LIMIT_ZERO_W)
 
 
 # ===========================================================================
@@ -258,7 +262,7 @@ class TestAuditTrail:
         cmd = Command(
             command_type=CommandType.SET_EMS_POWER_LIMIT,
             target_id="kontor",
-            value=0,
+            value=_EMS_POWER_LIMIT_ZERO_W,
         )
         result = await executor.execute([cmd])
         assert result.commands_failed == 1
@@ -482,7 +486,7 @@ class TestMissingAdapterErrors:
         cmd = Command(
             command_type=CommandType.SET_EMS_POWER_LIMIT,
             target_id="nonexistent",
-            value=0,
+            value=_EMS_POWER_LIMIT_ZERO_W,
         )
         result = await executor.execute([cmd])
         assert result.commands_failed == 1
@@ -534,7 +538,7 @@ class TestCoverageBranches:
         cmd = Command(
             command_type=CommandType.SET_EMS_POWER_LIMIT,
             target_id="kontor",
-            value=0,
+            value=_EMS_POWER_LIMIT_ZERO_W,
         )
         result = await exec_.execute([cmd])
         assert result.all_succeeded is False
@@ -547,12 +551,12 @@ class TestCoverageBranches:
             guard_id="G0",
             command_type=CommandType.SET_EMS_POWER_LIMIT,
             target_id="kontor",
-            value=0,
+            value=_EMS_POWER_LIMIT_ZERO_W,
             reason="G0: zero limit",
         )
         result = await executor.execute_guard_commands([gcmd])
         assert result.commands_succeeded == 1
-        inverters["kontor"].set_ems_power_limit.assert_awaited_with(0)
+        inverters["kontor"].set_ems_power_limit.assert_awaited_with(_EMS_POWER_LIMIT_ZERO_W)
 
     async def test_no_op_dispatch_returns_true(
         self, executor: CommandExecutor
@@ -597,7 +601,7 @@ class TestCoverageBranches:
             guard_id="G0",
             command_type=CommandType.SET_EMS_POWER_LIMIT,
             target_id="kontor",
-            value=0,
+            value=_EMS_POWER_LIMIT_ZERO_W,
             reason="G0: zero limit",
         )
         result = await exec_.execute_guard_commands([gcmd])
@@ -611,7 +615,7 @@ class TestCoverageBranches:
         cmd = Command(
             command_type=CommandType.SET_EMS_POWER_LIMIT,
             target_id="kontor",
-            value=0,
+            value=_EMS_POWER_LIMIT_ZERO_W,
         )
         result = await exec_.execute([cmd])
         assert result.commands_failed == 1
@@ -743,7 +747,7 @@ class TestDispatchTableAsync:
         cmd = Command(
             command_type=CommandType.SET_EXPORT_LIMIT,
             target_id="inverter_kontor",
-            value=0,
+            value=_EXPORT_LIMIT_DISABLED_W,
         )
         result = await executor.execute([cmd])
         assert result.commands_failed == 1
