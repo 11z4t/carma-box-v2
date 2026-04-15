@@ -46,6 +46,10 @@ NEAR_ZERO_KW: float = 0.05
 # Watts-to-kilowatts conversion factor.
 _W_TO_KW: float = 1000.0
 
+# GoodWe firmware: charge_pv with limit>0 means grid-import is allowed.
+# MUST be 0 for PV-only charging. See PLAT-1613 RCA.
+_CHARGE_PV_EMS_LIMIT_W: int = 0
+
 # Safe conservative fallback for max charge/discharge power (W)
 # when battery config is unavailable.
 _SAFE_BAT_FALLBACK_W: float = 5000.0
@@ -270,7 +274,7 @@ class ControlEngine:
                         Command(
                             command_type=CommandType.SET_EMS_POWER_LIMIT,
                             target_id=alloc.battery_id,
-                            value=0,
+                            value=_CHARGE_PV_EMS_LIMIT_W,
                             rule_id="CHARGE_PV_ZERO",
                             reason="charge_pv: limit must be 0 (PV-only, no grid import)",
                         )
