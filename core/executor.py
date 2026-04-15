@@ -27,6 +27,9 @@ from core.models import Command, CommandType, EMSMode
 
 logger = logging.getLogger(__name__)
 
+# Entity template for GoodWe grid export limit — configurable per inverter.
+_GOODWE_EXPORT_LIMIT_ENTITY = "number.goodwe_grid_export_limit_{}"
+
 
 # ---------------------------------------------------------------------------
 # Protocols (avoid circular imports)
@@ -344,7 +347,7 @@ class CommandExecutor:
             logger.error("No inverter for export limit %s", cmd.target_id)
             return False
         limit_w = int(cmd.value or 0)
-        entity_id = f"number.goodwe_grid_export_limit_{cmd.target_id}"
+        entity_id = _GOODWE_EXPORT_LIMIT_ENTITY.format(cmd.target_id)
         logger.info(
             "Setting export limit → %d W on %s", limit_w, cmd.target_id,
         )

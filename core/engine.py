@@ -196,7 +196,7 @@ class ControlEngine:
                 # ----- BRANCH A: Daytime PV surplus charging -----
                 # SOLE OWNER of mode + ems_power_limit + export_limit.
                 # No balancer, no mode_enforce, no mode_manager limits.
-                await self._compute_charge_plan(snapshot)
+                result.execution = await self._compute_charge_plan(snapshot)
 
             else:
                 # ----- BRANCH B: Discharge / standby / night -----
@@ -339,7 +339,9 @@ class ControlEngine:
     _GRID_HYSTERESIS_W: float = 100.0  # Accept <100W import/export
     _PV_SURPLUS_MARGIN_W: int = 100  # Undersize limit by 100W to avoid grid import
 
-    async def _compute_charge_plan(self, snapshot: SystemSnapshot) -> None:
+    async def _compute_charge_plan(
+        self, snapshot: SystemSnapshot,
+    ) -> Optional[ExecutionResult]:
         """SOLE OWNER of mode + ems_power_limit during daytime charge.
 
         Steers PV absorption via MODE SWITCHING only:
@@ -357,7 +359,7 @@ class ControlEngine:
         - house_grid (Förråd): surplus = grid_power < 0 (export)
         """
         if not snapshot.batteries:
-            return
+            return None
 
         # Determine PV surplus per battery (CT-aware)
         bat_has_surplus: dict[str, bool] = {}
@@ -425,7 +427,7 @@ class ControlEngine:
                     ))
 
         if cmds:
-            await self._executor.execute(cmds)
+            exec_result = await self._executor.execute(cmds)
             logger.info(
                 "PV CHARGE PLAN: %s",
                 {
@@ -438,6 +440,8 @@ class ControlEngine:
                     for bat in snapshot.batteries
                 },
             )
+            return exec_result
+        return None
 
     @property
     def cycle_count(self) -> int:

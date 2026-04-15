@@ -66,9 +66,9 @@ def _make_engine() -> tuple[ControlEngine, AsyncMock]:
 class TestNeverGridChargeDaytime:
     """ABSOLUTE RULE: No grid charging of bat or EV during daytime."""
 
-    async def test_charge_pv_stays_active_to_absorb_pv(self) -> None:
-        """charge_pv with limit=0 stays active — bat absorbs all PV surplus."""
-        engine, _inv = _make_engine()
+    async def test_no_surplus_sets_standby(self) -> None:
+        """No PV surplus → charge plan sets standby command."""
+        engine, inv_mock = _make_engine()
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
         snap = make_snapshot(
@@ -76,17 +76,26 @@ class TestNeverGridChargeDaytime:
             batteries=[make_battery_state(
                 soc_pct=_SOC_PARTIAL_PCT,
                 ems_mode="charge_pv",
+                ct_placement="local_load",
+                pv_power_w=0.0,
+                load_power_w=_GRID_IMPORT_W,
             )],
             grid=make_grid_state(grid_power_w=_GRID_IMPORT_W),
         )
         result = await engine.run_cycle(snap)
 
-        # charge_pv with limit=0 is safe — GoodWe only charges from PV
-        assert result.error is None
+        # Charge plan should set standby when no PV surplus
+        assert result.execution is not None
+        mode_entries = [
+            e for e in result.execution.audit_entries
+            if e.command_type == "set_ems_mode"
+        ]
+        assert len(mode_entries) >= 1, "Expected standby command"
+        assert mode_entries[0].value == "battery_standby"
 
-    async def test_pv_export_allows_charge_pv(self) -> None:
-        """PV surplus (export) + daytime → charge_pv is allowed."""
-        engine, _inv = _make_engine()
+    async def test_pv_surplus_sets_charge_pv(self) -> None:
+        """PV surplus → charge plan sets charge_pv + limit=0."""
+        engine, inv_mock = _make_engine()
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
         snap = make_snapshot(
@@ -94,13 +103,21 @@ class TestNeverGridChargeDaytime:
             batteries=[make_battery_state(
                 soc_pct=_SOC_PARTIAL_PCT,
                 ems_mode="battery_standby",
+                ct_placement="house_grid",
+                grid_power_w=_GRID_EXPORT_W,
             )],
             grid=make_grid_state(grid_power_w=_GRID_EXPORT_W),
         )
         result = await engine.run_cycle(snap)
 
-        # charge_pv allowed when exporting
-        assert result.error is None
+        # Charge plan should set charge_pv when PV surplus
+        assert result.execution is not None
+        mode_entries = [
+            e for e in result.execution.audit_entries
+            if e.command_type == "set_ems_mode"
+        ]
+        assert len(mode_entries) >= 1, "Expected charge_pv command"
+        assert mode_entries[0].value == "charge_pv"
 
     async def test_limit_always_zero_in_charge_pv(self) -> None:
         """PLAT-1613 ABSOLUTE: ems_power_limit=0 in charge_pv. NEVER remove this test."""
@@ -125,8 +142,8 @@ class TestNeverGridChargeDaytime:
                     )
 
     async def test_charge_pv_absorbs_export(self) -> None:
-        """PV export → bat must be in charge_pv to absorb surplus."""
-        engine, _inv = _make_engine()
+        """PV export + bat standby → charge plan activates charge_pv."""
+        engine, inv_mock = _make_engine()
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
         snap = make_snapshot(
@@ -134,10 +151,18 @@ class TestNeverGridChargeDaytime:
             batteries=[make_battery_state(
                 soc_pct=_SOC_PARTIAL_PCT,
                 ems_mode="battery_standby",
+                ct_placement="house_grid",
+                grid_power_w=_GRID_EXPORT_W,
             )],
             grid=make_grid_state(grid_power_w=_GRID_EXPORT_W),
         )
         result = await engine.run_cycle(snap)
 
-        # bat should transition to charge_pv to absorb PV surplus
-        assert result.error is None
+        # Charge plan should activate charge_pv to absorb export
+        assert result.execution is not None
+        mode_entries = [
+            e for e in result.execution.audit_entries
+            if e.command_type == "set_ems_mode"
+        ]
+        assert len(mode_entries) >= 1, "Expected charge_pv command"
+        assert mode_entries[0].value == "charge_pv"
