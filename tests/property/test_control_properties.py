@@ -36,16 +36,24 @@ _SOC_MIN_NORMAL: float = 20.0
 _SOC_MAX_NORMAL: float = 95.0
 _SOC_MIDRANGE: float = 60.0
 _ZERO_GRID_W: float = 0.0
+_ZERO_KW: float = 0.0
+_ZERO_DATA_AGE_S: float = 0.0
+_MIDDAY_HOUR: int = 12
+_SOC_FULL_MIN: float = 0.0
+_SOC_FULL_MAX: float = 100.0
+_BATTERY_CAP_KWH: float = 15.0
+_PV_FORECAST_KWH: float = 10.0
+_W_TO_KW: float = 1000.0
 _HYPOTHESIS_MAX_EXAMPLES: int = 100
 
 
 def _evaluate_guard(
     grid_w: float = _ZERO_GRID_W,
-    weighted_avg_kw: float = 0.0,
-    hour: int = 12,
+    weighted_avg_kw: float = _ZERO_KW,
+    hour: int = _MIDDAY_HOUR,
     soc_pct: float = _SOC_MIDRANGE,
     ha_connected: bool = True,
-    data_age_s: float = 0.0,
+    data_age_s: float = _ZERO_DATA_AGE_S,
 ) -> GuardLevel:
     """Evaluate guard with given parameters, return level."""
     guard = GridGuard(GuardConfig())
@@ -122,7 +130,7 @@ class TestEvAmpsNeverExceedMax:
     @settings(max_examples=_HYPOTHESIS_MAX_EXAMPLES, deadline=None)
     @given(
         soc=st.floats(
-            min_value=0.0, max_value=100.0, allow_nan=False,
+            min_value=_SOC_FULL_MIN, max_value=_SOC_FULL_MAX, allow_nan=False,
         ),
     )
     def test_ev_amps_never_exceed_max(self, soc: float) -> None:
@@ -131,10 +139,10 @@ class TestEvAmpsNeverExceedMax:
         planner = Planner(PlannerConfig())
         plan = planner.generate_night_plan(
             bat_soc_pct=soc,
-            bat_cap_kwh=15.0,
+            bat_cap_kwh=_BATTERY_CAP_KWH,
             ev_connected=True,
             ev_soc_pct=soc,
-            pv_tomorrow_kwh=10.0,
+            pv_tomorrow_kwh=_PV_FORECAST_KWH,
             prices_by_hour={},
         )
         assert plan.ev_amps <= _MAX_EV_AMPS
@@ -159,7 +167,7 @@ class TestGuardFreezeOnExtremeGrid:
     def test_guard_freeze_on_extreme_grid(self, grid_w: float) -> None:
         level = _evaluate_guard(
             grid_w=grid_w,
-            weighted_avg_kw=grid_w / 1000.0,
+            weighted_avg_kw=grid_w / _W_TO_KW,
         )
         assert level != GuardLevel.OK, (
             f"Expected guard >= WARNING at {grid_w}W, got OK"
