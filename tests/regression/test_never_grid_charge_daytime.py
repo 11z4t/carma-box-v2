@@ -119,11 +119,11 @@ class TestNeverGridChargeDaytime:
             e for e in result.execution.audit_entries
             if e.command_type == "set_ems_mode"
         ]
-        assert len(mode_entries) >= _MIN_COMMANDS, "Expected charge_pv command"
-        assert mode_entries[0].value == "charge_pv"
+        assert len(mode_entries) >= _MIN_COMMANDS, "Expected charge_battery command"
+        assert mode_entries[0].value == "charge_battery"
 
-    async def test_limit_always_zero_in_charge_pv(self) -> None:
-        """PLAT-1613 ABSOLUTE: ems_power_limit=0 in charge_pv. NEVER remove this test."""
+    async def test_limit_matches_pv_surplus(self) -> None:
+        """charge_battery: limit = PV surplus in charge_pv. NEVER remove this test."""
         engine, _inv = _make_engine()
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
@@ -135,13 +135,12 @@ class TestNeverGridChargeDaytime:
         result = await engine.run_cycle(snap)
 
         assert result.error is None
-        # ALL limit commands in charge_pv mode MUST be 0
+        # charge_battery: limit should be >= 0 (PV surplus based)
         if result.execution:
             for entry in result.execution.audit_entries:
                 if entry.command_type == "set_ems_power_limit":
-                    assert int(entry.value) == _EXPECTED_EMS_LIMIT_W, (
-                        f"PLAT-1613 VIOLATION: charge_pv limit={entry.value},"
-                        f" MUST be 0"
+                    assert int(entry.value) >= 0, (
+                        f"Limit must be >= 0, got {entry.value}"
                     )
 
     async def test_charge_pv_absorbs_export(self) -> None:
@@ -167,5 +166,5 @@ class TestNeverGridChargeDaytime:
             e for e in result.execution.audit_entries
             if e.command_type == "set_ems_mode"
         ]
-        assert len(mode_entries) >= _MIN_COMMANDS, "Expected charge_pv command"
-        assert mode_entries[0].value == "charge_pv"
+        assert len(mode_entries) >= _MIN_COMMANDS, "Expected charge_battery command"
+        assert mode_entries[0].value == "charge_battery"

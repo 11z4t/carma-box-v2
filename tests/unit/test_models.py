@@ -49,6 +49,8 @@ class TestEMSMode:
             "import_ac",
             "export_ac",
             "conserve",
+            "charge_battery",
+            "discharge_battery",
             "auto",
         }
         actual = {m.value for m in EMSMode}
@@ -544,7 +546,8 @@ class TestEMSModeEnum:
     def test_all_modes_exist(self) -> None:
         """All expected EMS modes must be defined."""
         expected = {"charge_pv", "discharge_pv", "battery_standby",
-                    "import_ac", "export_ac", "conserve", "auto"}
+                    "import_ac", "export_ac", "conserve",
+                    "charge_battery", "discharge_battery", "auto"}
         assert {m.value for m in EMSMode} == expected
 
     def test_auto_mode_is_forbidden_sentinel(self) -> None:

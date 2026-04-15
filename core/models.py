@@ -35,6 +35,8 @@ class EMSMode(Enum):
     IMPORT_AC = "import_ac"
     EXPORT_AC = "export_ac"
     CONSERVE = "conserve"
+    CHARGE_BATTERY = "charge_battery"  # PV priority, limit respected
+    DISCHARGE_BATTERY = "discharge_battery"
     AUTO = "auto"  # FORBIDDEN — guard G0 will correct
 
 

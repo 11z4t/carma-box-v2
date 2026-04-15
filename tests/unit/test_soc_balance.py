@@ -113,13 +113,22 @@ class TestChargeSoCBalance:
             if e.command_type == "set_ems_mode"
         }
         # Kontor (lower SoC) should get charge_pv
-        assert mode_entries.get("kontor") == EMSMode.CHARGE_PV.value, (
+        assert mode_entries.get("kontor") == EMSMode.CHARGE_BATTERY.value, (
             f"Lower SoC bat should charge, got {mode_entries}"
         )
-        # Forrad (higher SoC) should stay standby
-        assert "forrad" not in mode_entries or (
-            mode_entries.get("forrad") == EMSMode.BATTERY_STANDBY.value
-        ), f"Higher SoC bat should standby, got {mode_entries}"
+        # Both get charge_battery but Kontor gets 75%, Forrad 25%
+        assert mode_entries.get("forrad") == EMSMode.CHARGE_BATTERY.value, (
+            f"Higher SoC bat also charges (25% share), got {mode_entries}"
+        )
+        # Verify Kontor gets more power allocation
+        limits = {
+            e.target_id: int(e.value)
+            for e in result.execution.audit_entries
+            if e.command_type == "set_ems_power_limit"
+        }
+        assert limits.get("kontor", 0) > limits.get("forrad", 0), (
+            f"Lower SoC should get higher limit: {limits}"
+        )
 
     async def test_balanced_soc_both_charge(self) -> None:
         """Kontor 50% ≈ Forrad 51% → both get charge_pv."""
@@ -157,8 +166,8 @@ class TestChargeSoCBalance:
             if e.command_type == "set_ems_mode"
         }
         # Both should get charge_pv when balanced
-        assert mode_entries.get("kontor") == EMSMode.CHARGE_PV.value
-        assert mode_entries.get("forrad") == EMSMode.CHARGE_PV.value
+        assert mode_entries.get("kontor") == EMSMode.CHARGE_BATTERY.value
+        assert mode_entries.get("forrad") == EMSMode.CHARGE_BATTERY.value
 
 
 # ===========================================================================
@@ -207,7 +216,7 @@ class TestDischargeSoCBalance:
 # ===========================================================================
 
 _STANDBY_MODE: str = "battery_standby"
-_CHARGE_PV_MODE: str = "charge_pv"
+_CHARGE_PV_MODE: str = "charge_battery"
 
 
 @pytest.mark.asyncio()
@@ -266,8 +275,8 @@ _EXPECTED_EXPORT_LIMIT_STANDBY: int = 5000
 class TestExportLimitKontor:
     """Kontor gets export_limit=0 during charge, restored at standby."""
 
-    async def test_charge_sets_export_limit_zero(self) -> None:
-        """Kontor charge_pv → export_limit=0."""
+    async def test_charge_sets_charge_battery_mode(self) -> None:
+        """Kontor with PV surplus → charge_battery mode."""
         engine = _make_engine()
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
@@ -284,12 +293,12 @@ class TestExportLimitKontor:
         result = await engine.run_cycle(snap)
 
         assert result.execution is not None
-        export_entries = [
+        mode_entries = [
             e for e in result.execution.audit_entries
-            if e.command_type == "set_export_limit"
+            if e.command_type == "set_ems_mode"
         ]
-        assert len(export_entries) >= _MIN_ALLOCATIONS
-        assert int(export_entries[0].value) == _EXPECTED_EXPORT_LIMIT_CHARGE
+        assert len(mode_entries) >= _MIN_ALLOCATIONS
+        assert mode_entries[0].value == EMSMode.CHARGE_BATTERY.value
 
     async def test_standby_restores_export_limit(self) -> None:
         """Kontor standby → export_limit restored to default."""
