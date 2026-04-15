@@ -1205,6 +1205,30 @@ class CarmaBoxService:
                 {"entity_id": pv_high_tomorrow_entity},
         )
 
+        # DayPlan sensor — write current day plan (PLAT-1627)
+        if hasattr(self, '_current_day_plan') and self._current_day_plan is not None:
+            plan = self._current_day_plan
+            current_slot = plan.get_slot(snapshot.hour)
+            plan_state = "active" if current_slot else "no_slot"
+            plan_attrs: dict[str, object] = {
+                "friendly_name": "CARMA Box Day Plan",
+                "slots": plan.to_dict()["slots"],
+                "can_discharge_fm": plan.can_discharge_fm,
+                "total_expected_export_kwh": round(
+                    plan.total_expected_export_kwh, 2,
+                ),
+                "bat_target_soc_pct": plan.bat_target_soc_pct,
+                "ev_target_soc_pct": plan.ev_target_soc_pct,
+                "created_at": plan.to_dict()["created_at"],
+            }
+            if current_slot:
+                plan_attrs["current_hour"] = current_slot.to_dict()
+            await self._ha_api.set_state(
+                "sensor.carma_box_day_plan",
+                plan_state,
+                plan_attrs,
+            )
+
         # Ellevio sensor — write peak tracking data
         if self._ellevio:
             ellevio_attrs: dict[str, object] = {
