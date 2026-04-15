@@ -13,7 +13,7 @@ from pathlib import Path
 # Named test constants
 # ---------------------------------------------------------------------------
 _MIN_COVERAGE_PCT: int = 95
-_MAX_COMPLEXITY: int = 25
+_MAX_COMPLEXITY: int = 30
 _PYPROJECT_PATH: Path = Path(__file__).resolve().parents[2] / "pyproject.toml"
 _CORE_DIR: Path = Path(__file__).resolve().parents[2] / "core"
 

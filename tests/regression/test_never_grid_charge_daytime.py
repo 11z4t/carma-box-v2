@@ -21,7 +21,7 @@ from core.engine import ControlEngine, _CHARGE_PV_EMS_LIMIT_W
 from core.executor import CommandExecutor, ExecutorConfig
 from core.guards import GridGuard, GuardConfig
 from core.mode_change import ModeChangeConfig, ModeChangeManager
-from core.models import EMSMode, Scenario
+from core.models import Scenario
 from core.state_machine import StateMachine, StateMachineConfig
 from tests.conftest import make_battery_state, make_grid_state, make_snapshot
 

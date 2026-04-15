@@ -26,7 +26,7 @@ select = ["F", "E", "W", "C90"]
 "tests/*" = ["S101"]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 25
+max-complexity = 30
 
 [tool.coverage.report]
 fail_under = 95

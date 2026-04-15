@@ -28,6 +28,7 @@ from core.guards import GridGuard, GuardCommand, GuardEvaluation, GuardLevel
 from core.mode_change import ModeChangeManager
 from core.models import (
     MAX_SOC_PCT,
+    CTPlacement,
     Command,
     CommandType,
     EMSMode,
@@ -181,22 +182,45 @@ class ControlEngine:
                 _ScenarioMode(EMSMode.BATTERY_STANDBY),
             )
             base_mode = sm.mode.value
-            # Daytime charge_pv: per-battery PV-only guard.
-            # Each inverter has its own CT. If THAT inverter imports grid,
-            # its PV doesn't cover load → standby to prevent grid charge.
-            # Only charge bat when the specific inverter has PV surplus.
+            # Daytime charge_pv: CT-aware PV-only guard.
+            # - local_load CT (Kontor): PV surplus = pv_power > load_power
+            # - house_grid CT (Förråd): PV surplus = grid_power < 0 (export)
+            # If no PV surplus on that inverter → standby to prevent grid charge.
+            # If PV surplus → charge_pv to absorb it.
             if base_mode == EMSMode.CHARGE_PV.value and not snapshot.is_night:
                 pv_only_cmds: list[GuardCommand] = []
                 for bat in snapshot.batteries:
-                    if bat.grid_power_w > 0 and bat.ems_mode.value == EMSMode.CHARGE_PV.value:
+                    has_pv_surplus: bool
+                    if bat.ct_placement == CTPlacement.LOCAL_LOAD:
+                        # Kontor: PV surplus when PV > local load
+                        has_pv_surplus = bat.pv_power_w > bat.load_power_w
+                    else:
+                        # Förråd (house_grid): PV surplus when exporting
+                        has_pv_surplus = bat.grid_power_w < 0
+
+                    if not has_pv_surplus and bat.ems_mode.value == EMSMode.CHARGE_PV.value:
                         pv_only_cmds.append(GuardCommand(
                             guard_id="G_PV_ONLY",
                             command_type=CommandType.SET_EMS_MODE,
                             target_id=bat.battery_id,
                             value=EMSMode.BATTERY_STANDBY.value,
                             reason=(
-                                f"PV-only: {bat.battery_id} grid={bat.grid_power_w:.0f}W"
-                                f" (import) → standby"
+                                f"PV-only: {bat.battery_id} no surplus"
+                                f" (pv={bat.pv_power_w:.0f}W,"
+                                f" grid={bat.grid_power_w:.0f}W) → standby"
+                            ),
+                        ))
+                    elif has_pv_surplus and bat.ems_mode.value == EMSMode.BATTERY_STANDBY.value:
+                        # PV surplus available but bat idle → switch to charge_pv
+                        pv_only_cmds.append(GuardCommand(
+                            guard_id="G_PV_ONLY",
+                            command_type=CommandType.SET_EMS_MODE,
+                            target_id=bat.battery_id,
+                            value=EMSMode.CHARGE_PV.value,
+                            reason=(
+                                f"PV surplus: {bat.battery_id}"
+                                f" (pv={bat.pv_power_w:.0f}W,"
+                                f" grid={bat.grid_power_w:.0f}W) → charge_pv"
                             ),
                         ))
                 if pv_only_cmds:
