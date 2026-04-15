@@ -284,19 +284,9 @@ class ControlEngine:
                     _ScenarioMode(EMSMode.BATTERY_STANDBY),
                 ).mode
                 if active_mode == EMSMode.CHARGE_PV:
-                    # ABSOLUTE RULE: charge_pv + limit>0 = GoodWe grid-imports.
-                    # Limit MUST be 0. PV-only mode selection handled by
-                    # G_PV_ONLY guard (standby ↔ charge_pv per battery).
-                    limit_cmds = [
-                        Command(
-                            command_type=CommandType.SET_EMS_POWER_LIMIT,
-                            target_id=alloc.battery_id,
-                            value=_CHARGE_PV_EMS_LIMIT_W,
-                            rule_id="CHARGE_PV_ZERO",
-                            reason="charge_pv: limit=0 (GoodWe firmware rule)",
-                        )
-                        for alloc in balance.allocations
-                    ]
+                    # charge_pv limits handled by _regulate_pv_charging()
+                    # Do NOT set limits here — PV regulator controls them.
+                    limit_cmds = []
                 elif balance.allocations:
                     limit_cmds = [
                         Command(
