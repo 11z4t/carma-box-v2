@@ -351,6 +351,8 @@ class ControlEngine:
 
     _SOC_BALANCE_THRESHOLD_PCT: float = 2.0  # SoC diff below this = balanced
     _GRID_HYSTERESIS_W: float = 100.0  # Accept <100W import/export
+    _SOC_BALANCE_LOWER_RATIO: float = 0.75  # Lower SoC bat gets 75%
+    _SOC_BALANCE_HIGHER_RATIO: float = 0.25  # Higher SoC bat gets 25%
     _MIN_MODE_DWELL_CYCLES: int = 2  # Stay in mode at least 2 cycles (60s)
 
     async def _compute_charge_plan(
@@ -429,8 +431,8 @@ class ControlEngine:
                 )
                 higher_id = ids[1] if lower_id == ids[0] else ids[0]
                 # 75% to lower, 25% to higher
-                allocations[lower_id] = int(available_surplus_w * 0.75)
-                allocations[higher_id] = int(available_surplus_w * 0.25)
+                allocations[lower_id] = int(available_surplus_w * self._SOC_BALANCE_LOWER_RATIO)
+                allocations[higher_id] = int(available_surplus_w * self._SOC_BALANCE_HIGHER_RATIO)
             else:
                 # Balanced — proportional by capacity
                 for bid in ids:
