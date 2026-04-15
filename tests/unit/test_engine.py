@@ -391,6 +391,16 @@ class TestNoNaked1000InEngineModels:
             if re.search(r'[*/]\s*1000\.0', line) and '_W_TO_KW' not in line:
                 assert False, f"Naked 1000.0 at engine.py:{i}: {line.strip()}"
 
+    def test_no_naked_5000_in_engine(self) -> None:
+        from pathlib import Path
+        import re
+
+        source = (Path(__file__).resolve().parents[2] / "core" / "engine.py").read_text()
+        for i, line in enumerate(source.splitlines(), 1):
+            if re.search(r'\b5000\b', line) and '_SAFE_BAT_FALLBACK_W' not in line:
+                if not line.strip().startswith("#"):
+                    assert False, f"Naked 5000 at engine.py:{i}: {line.strip()}"
+
     def test_no_naked_1000_in_models(self) -> None:
         from pathlib import Path
         import re

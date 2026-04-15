@@ -46,6 +46,10 @@ NEAR_ZERO_KW: float = 0.05
 # Watts-to-kilowatts conversion factor.
 _W_TO_KW: float = 1000.0
 
+# Safe conservative fallback for max charge/discharge power (W)
+# when battery config is unavailable.
+_SAFE_BAT_FALLBACK_W: float = 5000.0
+
 
 @dataclass
 class CycleResult:
@@ -201,12 +205,12 @@ class ControlEngine:
                         max_discharge_w=(
                             self._battery_configs[b.battery_id].max_discharge_kw * _W_TO_KW
                             if b.battery_id in self._battery_configs
-                            else 5000.0
+                            else _SAFE_BAT_FALLBACK_W
                         ),
                         max_charge_w=(
                             self._battery_configs[b.battery_id].max_charge_kw * _W_TO_KW
                             if b.battery_id in self._battery_configs
-                            else 5000.0
+                            else _SAFE_BAT_FALLBACK_W
                         ),
                         ct_placement=b.ct_placement,
                         local_load_w=b.load_power_w,
