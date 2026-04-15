@@ -62,6 +62,10 @@ logger = logging.getLogger("carma_box")
 # Conversion constants — no naked numeric literals in business logic.
 _W_TO_KW: float = 1000.0
 _MS_PER_S: int = 1000
+_PCT_TO_RATIO: float = 100.0
+_PV_REPLAN_FALLBACK_THRESHOLD: float = 0.20
+_DYNAMIC_TAK_DEFAULT_KW: float = 3.0
+_PRICE_DEFAULT_ORE: float = 100.0
 
 
 def setup_logging(config: CarmaConfig) -> None:
@@ -374,7 +378,7 @@ class CarmaBoxService:
             delta_pct = abs(pv_tomorrow - self._last_pv_tomorrow) / self._last_pv_tomorrow
             replan_threshold = (
                 self._planner._config.pv_replan_threshold
-                if self._planner else 0.2
+                if self._planner else _PV_REPLAN_FALLBACK_THRESHOLD
             )
             if delta_pct > replan_threshold:
                 pv_changed = True
@@ -625,7 +629,8 @@ class CarmaBoxService:
                         )
 
                 floor = cfg.guards.g1_soc_floor.floor_pct  # From site.yaml
-                avail = max(0.0, (soc - floor) / 100.0 * bat_cfg.cap_kwh * bat_cfg.efficiency)
+                soc_ratio = (soc - floor) / _PCT_TO_RATIO
+                avail = max(0.0, soc_ratio * bat_cfg.cap_kwh * bat_cfg.efficiency)
 
                 batteries.append(BatteryState(
                     battery_id=bat_cfg.id,
@@ -708,9 +713,9 @@ class CarmaBoxService:
                 grid_power_w=batteries[0].grid_power_w if batteries else 0.0,
                 weighted_avg_kw=_grid_float(grid_ents.entity_weighted_avg),
                 current_peak_kw=_grid_float(grid_ents.entity_current_peak),
-                dynamic_tak_kw=_grid_float(grid_ents.entity_dynamic_tak, 3.0),
+                dynamic_tak_kw=_grid_float(grid_ents.entity_dynamic_tak, _DYNAMIC_TAK_DEFAULT_KW),
                 pv_total_w=pv_total,
-                price_ore=_grid_float(cfg.pricing.entity, 100.0) * 100,
+                price_ore=_grid_float(cfg.pricing.entity, _PRICE_DEFAULT_ORE) * _PCT_TO_RATIO,
                 pv_forecast_today_kwh=_grid_float(cfg.pv_forecast.entity_today),
                 pv_forecast_tomorrow_kwh=_grid_float(cfg.pv_forecast.entity_tomorrow),
             )
