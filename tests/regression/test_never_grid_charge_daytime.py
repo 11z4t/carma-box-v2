@@ -36,7 +36,8 @@ _TEST_MIDDAY_HOUR: int = 12
 _TEST_AFTERNOON_HOUR: int = 14
 
 
-def _make_engine() -> ControlEngine:
+def _make_engine() -> tuple[ControlEngine, AsyncMock]:
+    """Returns (engine, inv_mock) — inv_mock for asserting direct calls."""
     guard = GridGuard(GuardConfig())
     sm = StateMachine(StateMachineConfig(min_dwell_s=_ZERO_WAIT_S))
     balancer = BatteryBalancer()
@@ -51,13 +52,14 @@ def _make_engine() -> ControlEngine:
     inv_mock.get_fast_charging = AsyncMock(return_value=False)
     inv_mock.get_ems_mode = AsyncMock(return_value="battery_standby")
 
-    return ControlEngine(
+    engine = ControlEngine(
         guard, sm, balancer, mode_mgr,
         CommandExecutor(
             inverters={"kontor": inv_mock},
             config=ExecutorConfig(mode_change_cooldown_s=_ZERO_WAIT_S),
         ),
     )
+    return engine, inv_mock
 
 
 @pytest.mark.asyncio()
@@ -66,7 +68,7 @@ class TestNeverGridChargeDaytime:
 
     async def test_grid_import_forces_bat_standby(self) -> None:
         """Grid importing + daytime → bat MUST be standby, not charge_pv."""
-        engine = _make_engine()
+        engine, _inv = _make_engine()
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
         snap = make_snapshot(
@@ -89,7 +91,7 @@ class TestNeverGridChargeDaytime:
 
     async def test_pv_export_allows_charge_pv(self) -> None:
         """PV surplus (export) + daytime → charge_pv is allowed."""
-        engine = _make_engine()
+        engine, _inv = _make_engine()
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
         snap = make_snapshot(
@@ -108,7 +110,7 @@ class TestNeverGridChargeDaytime:
     async def test_all_daytime_hours_block_grid_charge(self) -> None:
         """Every daytime hour (6-21) blocks charge_pv during grid import."""
         for hour in _DAYTIME_HOURS:
-            engine = _make_engine()
+            engine, _inv = _make_engine()
             engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
             snap = make_snapshot(
@@ -131,7 +133,7 @@ class TestNeverGridChargeDaytime:
 
     async def test_limit_always_zero_in_charge_pv(self) -> None:
         """Even with PV export, ems_power_limit MUST be 0 in charge_pv."""
-        engine = _make_engine()
+        engine, _inv = _make_engine()
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
         snap = make_snapshot(
@@ -148,3 +150,36 @@ class TestNeverGridChargeDaytime:
                     f"charge_pv limit must be {_CHARGE_PV_EMS_LIMIT_W}, "
                     f"got {entry.value}"
                 )
+
+    async def test_emergency_standby_calls_inverter_directly(self) -> None:
+        """Grid import + charge_pv → inverter set_ems_mode called IN SAME CYCLE."""
+        engine, inv_mock = _make_engine()
+        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+
+        inv_mock.set_ems_mode.reset_mock()
+
+        snap = make_snapshot(
+            hour=_TEST_MIDDAY_HOUR,
+            batteries=[make_battery_state(
+                soc_pct=_SOC_PARTIAL_PCT,
+                ems_mode="charge_pv",
+            )],
+            grid=make_grid_state(grid_power_w=_GRID_IMPORT_W),
+        )
+        await engine.run_cycle(snap)
+
+        # Inverter must have been called with battery_standby DIRECTLY
+        # (not via mode_manager 5-step which takes 5 minutes)
+        inv_mock.set_ems_mode.assert_called()
+        call_args = [
+            c.args if c.args else (c.kwargs.get("mode"),)
+            for c in inv_mock.set_ems_mode.call_args_list
+        ]
+        standby_calls = [
+            a for a in call_args
+            if EMSMode.BATTERY_STANDBY.value in str(a)
+        ]
+        assert len(standby_calls) >= 1, (
+            "Emergency standby must call set_ems_mode(battery_standby) "
+            "directly in same cycle"
+        )
