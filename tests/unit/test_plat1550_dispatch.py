@@ -22,6 +22,8 @@ from core.models import CTPlacement, EMSMode, Scenario
 from core.state_machine import StateMachine, StateMachineConfig
 from tests.conftest import make_battery_state, make_snapshot
 
+_GRID_EXPORT_W: float = -2000.0  # PV surplus (negative = export)
+
 
 def _run(coro: Coroutine[Any, Any, Any]) -> Any:
     loop = asyncio.new_event_loop()
@@ -85,7 +87,7 @@ class TestPerBatteryDispatch:
             batteries=[bat_kontor, bat_forrad],
             current_scenario=Scenario.MIDDAY_CHARGE,
             hour=12,
-            grid=make_grid_state(grid_power_w=-2000.0),  # PV export
+            grid=make_grid_state(grid_power_w=_GRID_EXPORT_W),  # PV export
         )
 
         with patch.object(mode_mgr, "request_change") as mock_request:
@@ -186,7 +188,7 @@ class TestSoC100Standby:
             batteries=[bat_partial],
             current_scenario=Scenario.MIDDAY_CHARGE,
             hour=12,
-            grid=make_grid_state(grid_power_w=-2000.0),  # PV export
+            grid=make_grid_state(grid_power_w=_GRID_EXPORT_W),  # PV export
         )
 
         with patch.object(mode_mgr, "request_change") as mock_request:
@@ -222,7 +224,7 @@ class TestSingleBatteryRegression:
             batteries=[make_battery_state(battery_id="kontor", soc_pct=60.0)],
             current_scenario=Scenario.MIDDAY_CHARGE,
             hour=12,
-            grid=make_grid_state(grid_power_w=-2000.0),  # PV export
+            grid=make_grid_state(grid_power_w=_GRID_EXPORT_W),  # PV export
         )
 
         with patch.object(mode_mgr, "request_change") as mock_request:

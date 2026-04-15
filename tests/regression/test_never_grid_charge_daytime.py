@@ -32,6 +32,8 @@ _SOC_PARTIAL_PCT: float = 60.0         # Mid-range SoC
 _ZERO_WAIT_S: float = 0.0
 _DAYTIME_HOURS: list[int] = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
 _NIGHT_HOUR: int = 23
+_TEST_MIDDAY_HOUR: int = 12
+_TEST_AFTERNOON_HOUR: int = 14
 
 
 def _make_engine() -> ControlEngine:
@@ -68,7 +70,7 @@ class TestNeverGridChargeDaytime:
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
         snap = make_snapshot(
-            hour=12,
+            hour=_TEST_MIDDAY_HOUR,
             batteries=[make_battery_state(
                 soc_pct=_SOC_PARTIAL_PCT,
                 ems_mode="charge_pv",
@@ -91,7 +93,7 @@ class TestNeverGridChargeDaytime:
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
         snap = make_snapshot(
-            hour=14,
+            hour=_TEST_AFTERNOON_HOUR,
             batteries=[make_battery_state(
                 soc_pct=_SOC_PARTIAL_PCT,
                 ems_mode="battery_standby",
@@ -133,7 +135,7 @@ class TestNeverGridChargeDaytime:
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
         snap = make_snapshot(
-            hour=14,
+            hour=_TEST_AFTERNOON_HOUR,
             batteries=[make_battery_state(soc_pct=_SOC_PARTIAL_PCT)],
             grid=make_grid_state(grid_power_w=_GRID_EXPORT_W),
         )
