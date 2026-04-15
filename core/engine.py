@@ -218,10 +218,14 @@ class ControlEngine:
                         else:
                             target_mode = base_mode
                         if bat.ems_mode.value != target_mode:
+                            # PLAT-1619: charge_pv limit must be 0 even at night
+                            limit_w = sm.ems_power_limit
+                            if target_mode == EMSMode.CHARGE_PV.value:
+                                limit_w = _CHARGE_PV_EMS_LIMIT_W
                             self._mode_manager.request_change(
                                 battery_id=bat.battery_id,
                                 target_mode=target_mode,
-                                target_limit_w=sm.ems_power_limit,
+                                target_limit_w=limit_w,
                                 reason=f"Scenario {active_scenario.value}",
                             )
 
