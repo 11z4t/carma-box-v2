@@ -51,6 +51,9 @@ _NEUTRAL_WEIGHTED_AVG_KW: float = 1.0     # No G3 trigger
 _NEUTRAL_SPOT_PRICE_ORE: float = 50.0     # No ExportGuard trigger
 _PV_NONE_KW: float = 0.0                  # No PV production
 _PV_FORECAST_ZERO_KWH: float = 0.0        # No forecast available
+_TEST_EMS_POWER_LIMIT_W: int = 3_000      # Test fixture EMS power limit
+_NIGHT_PLAN_HOUR: int = 22                 # Night plan generation hour
+_TEST_EV_CURRENT_A: int = 10              # Test fixture EV current
 
 
 # ===========================================================================
@@ -104,7 +107,7 @@ class TestInverterWriteFailure:
             Command(
                 command_type=CommandType.SET_EMS_POWER_LIMIT,
                 target_id="kontor",
-                value=3000,
+                value=_TEST_EMS_POWER_LIMIT_W,
                 rule_id="TEST",
                 reason="test write failure",
             ),
@@ -150,7 +153,7 @@ class TestForecastUnavailable:
         )
 
         snap = make_snapshot(
-            hour=22,
+            hour=_NIGHT_PLAN_HOUR,
             batteries=[make_battery_state(soc_pct=_SOC_NOMINAL_PCT)],
             grid=make_grid_state(
                 pv_forecast_today_kwh=_PV_FORECAST_ZERO_KWH,
@@ -191,7 +194,9 @@ class TestPartialEntityLoss:
             ],
         )
 
-        assert result.level.value != "ok" or len(result.violations) >= 0
+        assert result.level != GuardLevel.OK, (
+            f"Expected guard level raised on stale entities, got {result.level.value}"
+        )
 
 
 # ===========================================================================
@@ -218,7 +223,7 @@ class TestEVRejection:
             Command(
                 command_type=CommandType.SET_EV_CURRENT,
                 target_id="ev",
-                value=10,
+                value=_TEST_EV_CURRENT_A,
                 rule_id="TEST",
                 reason="test EV rejection",
             ),
