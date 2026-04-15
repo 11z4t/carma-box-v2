@@ -768,7 +768,8 @@ class TestGenerateDayPlan:
         cfg = load_config(config_path)
         return CarmaBoxService(cfg)
 
-    def test_returns_day_plan_with_valid_snapshot(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_returns_day_plan_with_valid_snapshot(self) -> None:
         """_generate_day_plan returns DayPlan with correct number of slots."""
         from core.day_plan import DayPlan
         from tests.conftest import make_snapshot, make_grid_state
@@ -779,12 +780,13 @@ class TestGenerateDayPlan:
             minute=0,
             grid=make_grid_state(pv_forecast_today_kwh=25.0),
         )
-        plan = service._generate_day_plan(snap)
+        plan = await service._generate_day_plan(snap)
         assert plan is not None
         assert isinstance(plan, DayPlan)
         assert len(plan.slots) == _DAY_PLAN_WINDOW_HOURS
 
-    def test_returns_none_on_error(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_returns_none_on_error(self) -> None:
         """_generate_day_plan returns None when generation fails."""
         from unittest.mock import patch
         from tests.conftest import make_snapshot
@@ -795,5 +797,5 @@ class TestGenerateDayPlan:
             "main.generate_day_plan",
             side_effect=ValueError("test error"),
         ):
-            plan = service._generate_day_plan(snap)
+            plan = await service._generate_day_plan(snap)
         assert plan is None

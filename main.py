@@ -28,7 +28,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 from adapters.easee import EaseeAdapter
+from adapters.solcast import SolcastAdapter
 from adapters.goodwe import GoodWeAdapter
+from adapters.shelly import ShellyAdapter
 from adapters.ha_api import HAApiClient
 from config.schema import CarmaConfig, load_config
 from core.balancer import BalancerConfig, BatteryBalancer
@@ -166,6 +168,7 @@ class CarmaBoxService:
             self._planner: Optional[Planner] = None
             self._ellevio: Optional[EllevioTracker] = None
             self._ev_controller: Optional[EVController] = None
+            self._solcast: Optional[SolcastAdapter] = None
             self._consumer_configs = config.consumers
             # Dry-run: create PlanExecutor with minimal deps for generate_48h
             _dry_planner = Planner(PlannerConfig())
@@ -241,6 +244,24 @@ class CarmaBoxService:
                 config.ev_charger.charger_id,
             )
 
+        # Dispatchable consumers — ShellyAdapter per consumer in config
+        from core.executor import LoadPort
+        consumers: dict[str, LoadPort] = {}
+        for consumer_cfg in config.consumers:
+            if consumer_cfg.entity_switch:
+                consumers[consumer_cfg.id] = ShellyAdapter(
+                    ha_api=ha_api,
+                    consumer_id=consumer_cfg.id,
+                    entity_switch=consumer_cfg.entity_switch,
+                    entity_power=consumer_cfg.entity_power,
+                    load_type_str=consumer_cfg.type,
+                )
+        if consumers:
+            logger.info(
+                "ShellyAdapters wired: %s",
+                ", ".join(consumers.keys()),
+            )
+
         executor = CommandExecutor(
             inverters=dict(inverters),
             mode_manager=mode_mgr,
@@ -249,6 +270,7 @@ class CarmaBoxService:
             ),
             ha_api=ha_api,
             ev_charger=ev_adapter,
+            consumers=consumers,
         )
 
         # Slack notifier
@@ -275,6 +297,16 @@ class CarmaBoxService:
             config=config,
             guard_policy=guard_policy,
         )
+
+        # Solcast adapter — hourly PV forecast for DayPlan (PLAT-1659)
+        self._solcast: Optional[SolcastAdapter] = None
+        if config.pv_forecast.entity_today:
+            self._solcast = SolcastAdapter(
+                ha_api=ha_api,
+                entity_today=config.pv_forecast.entity_today,
+                entity_tomorrow=config.pv_forecast.entity_tomorrow,
+            )
+            logger.info("SolcastAdapter wired: %s", config.pv_forecast.entity_today)
 
         # Ellevio peak tracker
         self._ellevio = EllevioTracker(EllevioConfig(
@@ -465,7 +497,7 @@ class CarmaBoxService:
 
             # Generate DayPlan for dashboard sensor (PLAT-1627)
             try:
-                self._current_day_plan = self._generate_day_plan(snapshot)
+                self._current_day_plan = await self._generate_day_plan(snapshot)
             except Exception as exc:
                 logger.warning("DayPlan generation skipped: %s", exc)
 
@@ -605,7 +637,7 @@ class CarmaBoxService:
         if task.exception():
             logger.error("Health server failed: %s", task.exception())
 
-    def _generate_day_plan(self, snapshot: SystemSnapshot) -> Optional[DayPlan]:
+    async def _generate_day_plan(self, snapshot: SystemSnapshot) -> Optional[DayPlan]:
         """Generate DayPlan from current state + Solcast forecast.
 
         PLAT-1627: Creates DayPlan for dashboard sensor and Excel report.
@@ -637,8 +669,13 @@ class CarmaBoxService:
             efficiency=cfg.ev.efficiency,
             connected=snapshot.ev.connected,
         )
-        # Build hourly PV forecast from GridState (Solcast attributes)
-        pv_hourly = getattr(snapshot.grid, "pv_forecast_hourly", {}) or {}
+        # Build hourly PV forecast from Solcast adapter (PLAT-1659)
+        pv_hourly: dict[int, HourlyForecast] = {}
+        if self._solcast:
+            try:
+                pv_hourly = await self._solcast.get_hourly_forecast(snapshot.hour)
+            except Exception as exc:
+                logger.debug("Solcast hourly fetch skipped: %s", exc)
         if not pv_hourly:
             # Fallback: flat distribution of daily total
             total = snapshot.grid.pv_forecast_today_kwh
