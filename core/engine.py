@@ -314,32 +314,19 @@ class ControlEngine:
                     _ScenarioMode(EMSMode.BATTERY_STANDBY),
                 ).mode
                 if active_mode == EMSMode.CHARGE_PV:
-                    # Set limit = PV surplus per battery. GoodWe charges bat
-                    # up to limit — setting limit = PV surplus ensures bat
-                    # only charges from PV, never grid.
-                    bat_by_id = {b.battery_id: b for b in snapshot.batteries}
-                    limit_cmds = []
-                    for alloc in balance.allocations:
-                        bat_state = bat_by_id.get(alloc.battery_id)
-                        if bat_state is None:
-                            continue
-                        if bat_state.ct_placement == CTPlacement.LOCAL_LOAD:
-                            pv_surplus_w = max(
-                                0, int(bat_state.pv_power_w - bat_state.load_power_w),
-                            )
-                        else:
-                            # house_grid: surplus = -grid_power (export)
-                            pv_surplus_w = max(0, int(-bat_state.grid_power_w))
-                        limit_cmds.append(Command(
+                    # ABSOLUTE RULE: charge_pv + limit>0 = GoodWe grid-imports.
+                    # Limit MUST be 0. PV-only mode selection handled by
+                    # G_PV_ONLY guard (standby ↔ charge_pv per battery).
+                    limit_cmds = [
+                        Command(
                             command_type=CommandType.SET_EMS_POWER_LIMIT,
                             target_id=alloc.battery_id,
-                            value=pv_surplus_w,
-                            rule_id="PV_SURPLUS_LIMIT",
-                            reason=(
-                                f"charge_pv: limit={pv_surplus_w}W"
-                                f" (PV surplus, no grid import)"
-                            ),
-                        ))
+                            value=_CHARGE_PV_EMS_LIMIT_W,
+                            rule_id="CHARGE_PV_ZERO",
+                            reason="charge_pv: limit=0 (GoodWe firmware rule)",
+                        )
+                        for alloc in balance.allocations
+                    ]
                 elif balance.allocations:
                     limit_cmds = [
                         Command(
