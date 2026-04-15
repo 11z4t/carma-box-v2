@@ -1,4 +1,0 @@
-# file: /home/charlie/carma-box-v2/storage/local_db.py
-# hypothesis_version: 6.151.10
-
-[0.0, 1000, 'VACUUM', 'audit_log', 'battery_session', 'charge', 'cycle_log', 'discharge', 'ev_session', 'event_log', 'grid', 'mixed', 'pv', 'pv_daily_summary', 'state']

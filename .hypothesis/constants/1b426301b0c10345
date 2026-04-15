@@ -1,4 +1,0 @@
-# file: /usr/lib/python3/dist-packages/botocore/__init__.py
-# hypothesis_version: 6.151.10
-
-['(.)([A-Z][a-z]+)', '([a-z0-9])([A-Z])', '-', '1.34.46', 'ExecutePartiQLBatch', '[A-Z]{2,}s$', '\\1', '\\2', '_', 'boolean', 'botocore', 'double', 'float', 'integer', 'string', 'timestamp']

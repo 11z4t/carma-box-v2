@@ -1,4 +1,0 @@
-# file: /home/charlie/carma-box-v2/core/report.py
-# hypothesis_version: 6.151.10
-
-[0.0, 80.0, 100.0, 100, 'avg_daily_cycles', 'days_tracked', 'discharge_savings_kr', 'ev_nights_charged', 'ev_target_hit_pct', 'ev_total_kwh', 'month', 'peak_actual_kw', 'peak_baseline_kw', 'peak_reduction_pct', 'peak_savings_kr', 'safety_guard_blocks', 'total_discharge_kwh', 'total_savings_kr', 'year']

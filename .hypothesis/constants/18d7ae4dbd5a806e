@@ -1,4 +1,0 @@
-# file: /home/charlie/carma-box-v2/adapters/nordpool.py
-# hypothesis_version: 6.151.10
-
-[30.0, 80.0, 100.0, 'attributes', 'sek', 'today', 'tomorrow', 'tomorrow_valid']

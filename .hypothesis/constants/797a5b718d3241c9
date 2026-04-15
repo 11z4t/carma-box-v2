@@ -1,4 +1,0 @@
-# file: /home/charlie/carma-box-v2/core/models.py
-# hypothesis_version: 6.151.10
-
-[0.0, 10.0, 50.0, 75.0, 100.0, 1000.0, 'EVENING_DISCHARGE', 'FORENOON_PV_EV', 'MORNING_DISCHARGE', 'NIGHT_GRID_CHARGE', 'NIGHT_HIGH_PV', 'NIGHT_LOW_PV', 'PV_SURPLUS', 'PV_SURPLUS_DAY', '__dataclass_fields__', 'auto', 'battery_standby', 'breach', 'charge_battery', 'charge_pv', 'climate_set_mode', 'climate_set_temp', 'conserve', 'critical', 'discharge_battery', 'discharge_pv', 'export_ac', 'freeze', 'house_grid', 'import_ac', 'local_load', 'no_op', 'ok', 'set_ems_mode', 'set_ems_power_limit', 'set_ev_current', 'set_export_limit', 'set_fast_charging', 'start_ev_charging', 'stop_ev_charging', 'turn_off_consumer', 'turn_on_consumer', 'warning']

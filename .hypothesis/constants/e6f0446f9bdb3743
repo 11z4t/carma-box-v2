@@ -1,4 +1,0 @@
-# file: /usr/lib/python3/dist-packages/botocore/docs/waiter.py
-# hypothesis_version: 6.151.10
-
-['.', 'Delay', 'MaxAttempts', 'WaiterConfig', 'Waiters', 'breadcrumb', 'html', 'integer', 'structure', 'user guide', 'wait', 'waiter', 'waiter.wait']

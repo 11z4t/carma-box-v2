@@ -1,4 +1,0 @@
-# file: /usr/lib/python3/dist-packages/botocore/docs/params.py
-# hypothesis_version: 6.151.10
-
-['%s', '(%s) --', ', ', '- ', ':param %s: ', '[REQUIRED]', '``%s``', 'end-list', 'end-map', 'end-param', 'end-param-type', 'end-structure', 'idempotencyToken', 'is-required', 'is_tagged_union', 'key', 'param-documentation', 'param-name', 'param-type', 'request-params', 'response-params', 'shape']

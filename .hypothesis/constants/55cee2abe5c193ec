@@ -1,4 +1,0 @@
-# file: /home/charlie/carma-box-v2/adapters/ha_api.py
-# hypothesis_version: 6.151.10
-
-[0.0, 25.0, 200, 255, '.', '/', '/api/states', 'Authorization', 'Content-Type', 'Entity %s is %s', 'GET', 'HTTP %s for %s', 'POST', 'application/json', 'attributes', 'batch_cache_ttl_s', 'entity_id', 'input_text', 'input_text_max_len', 'message', 'set_value', 'state', 'unavailable', 'unknown', 'value']

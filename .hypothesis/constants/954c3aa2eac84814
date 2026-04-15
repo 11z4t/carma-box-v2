@@ -1,4 +1,0 @@
-# file: /home/charlie/carma-box-v2/core/fallback.py
-# hypothesis_version: 6.151.10
-
-[50.0, '(no detail)', 'FALLBACK %s → %s: %s', 'config_error', 'executor_error', 'freeze', 'guard_error', 'ha_disconnected', 'hold_current', 'invalid_soc', 'refuse_start', 'retry_next', 'scenario_error', 'stale_data', 'standby_all', 'use_default', 'use_last_known']

@@ -1,4 +1,0 @@
-# file: /usr/lib/python3/dist-packages/botocore/docs/sharedexample.py
-# hypothesis_version: 6.151.10
-
-['# ', '%s,', "'%s': ", '(', ')', ',', ', ', '.%s', '...', '=', 'Examples', 'Expected Output:', 'ResponseMetadata', '[', '[%s]', '],', '^\\.', 'comments', 'datetime(%s),', 'description', 'dict-value', 'ending-brace', 'ending-bracket', 'ending-parenthesis', 'id', 'input', 'input-close', 'list-section', 'map', 'output', 'output-close', 'param-values', 'parameters', 'print(response)', 'shared-examples', 'structure', 'timestamp', '{', '}']

@@ -1,4 +1,0 @@
-# file: /usr/lib/python3/dist-packages/botocore/docs/bcdoc/docstringparser.py
-# hypothesis_version: 6.151.10
-
-['a', 'b', 'code', 'end_%s', 'end_a', 'i', 'li', 'note', 'p', 'span', 'start_%s', 'ul']

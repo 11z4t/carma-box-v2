@@ -1,4 +1,0 @@
-# file: /home/charlie/carma-box-v2/reports/energy_plan.py
-# hypothesis_version: 6.151.10
-
-[0.0, 'Bat SoC %', 'EV SoC %', 'Energiplan', 'Grid kW', 'PV Prognos kWh', 'PV kW', 'PV kWh', 'Pris öre', 'Prognos', 'Report generated: %s', 'Sanduddsvagen 60', 'Scenario', 'Timme', 'Utfall']

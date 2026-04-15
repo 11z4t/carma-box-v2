@@ -1,4 +1,0 @@
-# file: /usr/lib/python3/dist-packages/botocore/useragent.py
-# hypothesis_version: 6.151.10
-
-["!$%&'*+-.^_`|~", '#', '-', 'AWS_EXECUTION_ENV', 'Botocore', 'Unknown', '_supplied_user_agent', 'android', 'app', 'arch', 'awscrt', 'cfg', 'darwin', 'endpoint-discovery', 'exec-env', 'ios', 'lang', 'linux', 'macos', 'md', 'mode', 'os', 'other', 'pyimpl', 'python', 'retry-mode', 'tvos', 'ua/2.0', 'watchos', 'windows']

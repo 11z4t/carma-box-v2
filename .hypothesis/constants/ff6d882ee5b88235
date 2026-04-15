@@ -1,4 +1,0 @@
-# file: /home/charlie/carma-box-v2/notifications/slack.py
-# hypothesis_version: 6.151.10
-
-[0.0, 200, '#energy', 'CARMA_SLACK_WEBHOOK', 'Content-Type', 'application/json', 'breach', 'communication_lost', 'critical', 'daily_summary', 'ellevio_breach', 'ev_start_stop', 'guard_trigger', 'info', 'scenario_transition', 'text', 'warning', 'ℹ️', '⚠️', '🔴', '🚨']

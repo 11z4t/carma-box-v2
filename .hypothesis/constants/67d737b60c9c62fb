@@ -1,4 +1,0 @@
-# file: /home/charlie/carma-box-v2/adapters/service_map.py
-# hypothesis_version: 6.151.10
-
-['button', 'climate', 'easee', 'homeassistant', 'input_boolean', 'input_number', 'input_text', 'number', 'press', 'select', 'select_option', 'set_hvac_mode', 'set_temperature', 'set_value', 'switch', 'turn_off', 'turn_on']

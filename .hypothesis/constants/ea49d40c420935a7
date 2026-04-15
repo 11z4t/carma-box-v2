@@ -1,4 +1,0 @@
-# file: /usr/lib/python3/dist-packages/botocore/discovery.py
-# hypothesis_version: 6.151.10
-
-[421, 'Address', 'CachePeriodInMinutes', 'Code', 'Endpoints', 'Error', 'Expiration', 'HTTPStatusCode', 'Identifiers', 'Operation', 'ResponseMetadata', 'context', 'discovery', 'endpointdiscoveryid', 'http', 'https://', 'identifiers', 'needs-retry.%s', 'request-created.%s', 'required', 'structure']

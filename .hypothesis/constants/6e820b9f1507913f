@@ -1,4 +1,0 @@
-# file: /home/charlie/carma-box-v2/core/executor.py
-# hypothesis_version: 6.151.10
-
-[300.0, 10000, '.', 'No consumer for %s', 'No inverter for %s', 'adapter_failure', 'climate', 'entity_id', 'hvac_mode', 'rate_limited', 'set_hvac_mode', 'set_temperature', 'temperature']

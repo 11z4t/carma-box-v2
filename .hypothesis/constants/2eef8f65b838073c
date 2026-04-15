@@ -1,4 +1,0 @@
-# file: /home/charlie/carma-box-v2/storage/hub_sync.py
-# hypothesis_version: 6.151.10
-
-[300, 1000, 5432, 'CARMA_PG_PASS', 'CARMA_PG_USER', 'audit_log', 'cycle_log', 'event_log', 'id', 'site_id', 'synced']

@@ -1,4 +1,0 @@
-# file: /home/charlie/carma-box-v2/core/guards.py
-# hypothesis_version: 6.151.10
-
-[-100.0, 0.0, 0.5, 0.85, 1.0, 1.1, 3.0, 4.0, 5.0, 10.0, 15.0, 20.0, 25.0, 50.0, 70.0, 80.0, 180, 300, 6000, 'EXPORT', 'G0', 'G1', 'G2', 'G3', 'G4', 'alarm', 'all', 'breach', 'critical', 'ev', 'freeze', 'ok', 'warning']

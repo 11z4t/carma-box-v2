@@ -1,4 +1,0 @@
-# file: /usr/lib/python3/dist-packages/boto3/compat.py
-# hypothesis_version: 6.151.10
-
-['.*boto3\\.compat', 'December 13, 2023', 'blog_link', 'date', 'ignore', 'win']

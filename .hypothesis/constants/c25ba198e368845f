@@ -1,4 +1,0 @@
-# file: /usr/lib/python3/dist-packages/botocore/response.py
-# hypothesis_version: 6.151.10
-
-[300, 1024, 'body', 'content-length', 'headers', 'protocol', 'status_code']

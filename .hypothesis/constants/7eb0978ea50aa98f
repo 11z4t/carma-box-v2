@@ -1,4 +1,0 @@
-# file: /home/charlie/carma-box-v2/core/surplus_dispatch.py
-# hypothesis_version: 6.151.10
-
-[-100.0, 0.0, 60.0, 100.0, 180.0, 200.0, 1800.0, 'already active', 'already off', 'no_change', 'rate limited', 'start', 'stop']

@@ -1,4 +1,0 @@
-# file: /usr/lib/python3/dist-packages/boto3/resources/base.py
-# hypothesis_version: 6.151.10
-
-[', ', '_', 'client', 'service_name', '{}({})']

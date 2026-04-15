@@ -1,4 +1,0 @@
-# file: /usr/lib/python3/dist-packages/boto3/session.py
-# hypothesis_version: 6.151.10
-
-[', ', 'Boto3', 'Botocore', 'Botocore/{}', 'Resource', 'aws', 'data', 'data_loader', 'default', 'event_emitter', 'high-level-dynamodb', 'profile', 'region', 'resources', 'resources-1', 'service', '{}(region_name={})']

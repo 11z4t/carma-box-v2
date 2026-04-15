@@ -1,4 +1,0 @@
-# file: /home/charlie/carma-box-v2/core/mode_change.py
-# hypothesis_version: 6.151.10
-
-[0.0, 30.0, 60.0, 300.0, 3600.0, 'clearing', 'complete', 'failed', 'idle', 'setting_target', 'standby_wait', 'verifying']
