@@ -327,11 +327,13 @@ class GridGuard:
                     )
                 self._at_floor.add(bat_id)
                 result.batteries_at_floor.add(bat_id)
+                # CHARGE_PV at floor: prevents discharge while allowing PV to
+                # charge the battery back up. BATTERY_STANDBY would block PV too.
                 result.commands.append(GuardCommand(
                     guard_id="G1",
                     command_type=CommandType.SET_EMS_MODE,
                     target_id=bat_id,
-                    value=EMSMode.BATTERY_STANDBY.value,
+                    value=EMSMode.CHARGE_PV.value,
                     reason=f"G1: soc={bat.soc_pct:.1f}% <= floor={effective_floor:.1f}%",
                 ))
                 if result.level.value == "ok":

@@ -174,12 +174,13 @@ class TestG0GridCharging:
 class TestG1SocFloor:
     """G1 tests: SoC floor enforcement with hysteresis."""
 
-    def test_below_floor_triggers_standby(self, guard: GridGuard) -> None:
+    def test_below_floor_triggers_charge_pv(self, guard: GridGuard) -> None:
+        """G1 at floor → charge_pv (allows PV recovery, prevents discharge)."""
         bat = make_battery_state(soc_pct=14.0)
         result = _eval(guard, batteries=[bat])
         g1_cmds = [c for c in result.commands if c.guard_id == "G1"]
         assert len(g1_cmds) == 1
-        assert g1_cmds[0].value == "battery_standby"
+        assert g1_cmds[0].value == "charge_pv"
 
     def test_at_floor_triggers(self, guard: GridGuard) -> None:
         bat = make_battery_state(soc_pct=15.0)
