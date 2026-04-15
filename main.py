@@ -403,7 +403,8 @@ class CarmaBoxService:
             )
             logger.info("Plan generation triggered: %s", reason)
             self._last_plan_hour = snapshot.hour
-            await self._plan_executor.generate(snapshot)
+            is_forced = startup_replan or force_replan
+            await self._plan_executor.generate(snapshot, force=is_forced)
 
         # Phase 1.5: ELLEVIO TRACKING — update weighted hourly average
         if self._ellevio:

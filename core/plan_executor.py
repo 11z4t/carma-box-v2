@@ -67,13 +67,15 @@ class PlanExecutor:
         self.active_night_plan: Optional[Any] = None
         self.active_evening_plan: Optional[Any] = None
 
-    async def generate(self, snapshot: SystemSnapshot) -> None:
+    async def generate(self, snapshot: SystemSnapshot, *, force: bool = False) -> None:
         """Generate energy plan for the current hour.
 
         No-op when the current hour is not a plan hour or guard is blocking.
+        When force=True, generates night+evening plan regardless of hour.
 
         Args:
             snapshot: Current system state snapshot.
+            force: If True, generate plans regardless of current hour.
         """
         # Consult GuardPolicy — skip plan during emergency states
         guard_eval = self._guard_policy.evaluate(
@@ -158,6 +160,31 @@ class PlanExecutor:
                 )
                 logger.info("PLAN 12:00 — %s", plan_text)
 
+            elif force:
+                # Force mode: generate night + evening plan regardless of hour
+                plan = self._planner.generate_night_plan(
+                    bat_soc_pct=bat_soc,
+                    bat_cap_kwh=bat_cap,
+                    ev_connected=ev.connected,
+                    ev_soc_pct=ev.soc_pct,
+                    pv_tomorrow_kwh=pv_tomorrow,
+                    prices_by_hour={},
+                )
+                plan_text = (
+                    f"FORCE Night: EV {plan.ev_charge_need_kwh:.0f}kWh "
+                    f"Bat {plan.bat_charge_need_kwh:.0f}kWh "
+                    f"{'skip EV: ' + plan.ev_skip_reason if plan.ev_skip else ''}"
+                )
+                logger.info("PLAN FORCE (hour=%d) — %s", hour, plan_text)
+                self.active_night_plan = plan
+
+                eve_plan = self._planner.generate_evening_plan(
+                    bat_soc_pct=bat_soc,
+                    bat_cap_kwh=bat_cap,
+                    ev_connected=ev.connected,
+                    ev_soc_pct=ev.soc_pct,
+                )
+                self.active_evening_plan = eve_plan
             else:
                 return
 
