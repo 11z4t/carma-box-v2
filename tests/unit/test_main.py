@@ -401,6 +401,16 @@ class TestHealthHandlers:
                 assert False, f"Naked 8412 at main.py:{i}: {stripped}"
 
 
+class TestEngineeringStandardsDoc:
+    """PLAT-1604: Engineering standards document must exist and be substantial."""
+
+    def test_doc_exists_and_substantial(self) -> None:
+        doc = Path(__file__).resolve().parents[2] / "docs" / "ENGINEERING_STANDARDS.md"
+        assert doc.exists(), "docs/ENGINEERING_STANDARDS.md missing"
+        lines = doc.read_text().splitlines()
+        assert len(lines) > 50, f"Doc too short: {len(lines)} lines (need >50)"
+
+
 class TestNoNaked1000InMain:
     """PLAT-1609: No naked 1000 literals in main.py."""
 
