@@ -25,7 +25,7 @@ import aiohttp.web
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from adapters.goodwe import GoodWeAdapter
 from adapters.ha_api import HAApiClient
@@ -134,6 +134,8 @@ class CarmaBoxService:
         self._ha_api = ha_api
         self._last_plan_hour: int = -1
         self._last_pv_tomorrow: float = -1.0
+        # DayPlan: set by generate_day_plan(), read by dashboard sensor (PLAT-1627)
+        self._current_day_plan: Optional[Any] = None
 
         # Create components only when HA API is available
         if ha_api is not None:
@@ -1206,7 +1208,8 @@ class CarmaBoxService:
         )
 
         # DayPlan sensor — write current day plan (PLAT-1627)
-        if hasattr(self, '_current_day_plan') and self._current_day_plan is not None:
+        # LÄRDOM [dead-code-guard]: always init in __init__, never use hasattr()
+        if self._current_day_plan is not None:
             plan = self._current_day_plan
             current_slot = plan.get_slot(snapshot.hour)
             plan_state = "active" if current_slot else "no_slot"
