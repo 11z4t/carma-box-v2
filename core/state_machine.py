@@ -271,9 +271,17 @@ class StateMachine:
         )
 
     def _entry_s3(self, snap: SystemSnapshot) -> bool:
-        """S3 MIDDAY_CHARGE: 12-17."""
+        """S3 MIDDAY_CHARGE: 12-17, or ANY time if SoC critically low.
+
+        When batteries are near floor, charge_pv is the safe fallback
+        regardless of time — PV will charge if available, and standby
+        prevents further drain.
+        """
         cfg = self._config
-        return cfg.forenoon_end_h <= snap.hour < cfg.midday_end_h
+        in_window = cfg.forenoon_end_h <= snap.hour < cfg.midday_end_h
+        low_threshold = cfg.normal_floor_pct + cfg.evening_min_soc_above_floor_pct
+        critically_low = snap.total_battery_soc_pct <= low_threshold
+        return in_window or critically_low
 
     def _entry_s4(self, snap: SystemSnapshot) -> bool:
         """S4 EVENING_DISCHARGE: 17-22, SoC > floor + 10%."""
