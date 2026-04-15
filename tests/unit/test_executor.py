@@ -563,7 +563,7 @@ class TestCoverageBranches:
     ) -> None:
         """NO_OP is registered in the dispatch table (_exec_no_op → True).
 
-        PLAT-1577: dispatch table covers every CommandType; NO_OP handler
+        PLAT-1592: dispatch table covers every CommandType; NO_OP handler
         returns True (vacuously successful).  execute() still pre-filters
         NO_OP before reaching _dispatch in normal flow.
         """
@@ -707,12 +707,12 @@ class TestClimateCommands:
 
 
 # ===========================================================================
-# PLAT-1577 — Dispatch table guard tests
+# PLAT-1592 — Dispatch table guard tests
 # ===========================================================================
 
 
 class TestDispatchTable:
-    """Guard tests for PLAT-1577 dispatch table refactor (sync)."""
+    """Guard tests for PLAT-1592 dispatch table refactor (sync)."""
 
     def test_dispatch_table_contains_all_command_types(self) -> None:
         """Every CommandType must have an entry in the dispatch table.
@@ -728,18 +728,18 @@ class TestDispatchTable:
             )
 
     def test_no_if_elif_chain_in_execute(self) -> None:
-        """_dispatch must not contain an elif command_type == chain (PLAT-1577 C1)."""
+        """_dispatch must not contain an elif command_type == chain (PLAT-1592 C1)."""
         import pathlib
         source = pathlib.Path("core/executor.py").read_text()
         assert "elif command_type ==" not in source, (
             "Found 'elif command_type ==' in core/executor.py — "
-            "dispatch table must replace the if/elif chain (PLAT-1577 C1)"
+            "dispatch table must replace the if/elif chain (PLAT-1592 C1)"
         )
 
 
 @pytest.mark.asyncio()
 class TestDispatchTableAsync:
-    """Guard tests for PLAT-1577 dispatch table refactor (async)."""
+    """Guard tests for PLAT-1592 dispatch table refactor (async)."""
 
     async def test_set_export_limit_returns_false(self) -> None:
         """SET_EXPORT_LIMIT stub handler returns False (not yet implemented)."""

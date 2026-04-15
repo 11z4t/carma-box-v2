@@ -142,7 +142,7 @@ class CommandExecutor:
         self._last_mode_change: dict[str, float] = {}
         # H6: deque with maxlen prevents unbounded memory growth
         self._audit: deque[AuditEntry] = deque(maxlen=self._config.audit_maxlen)
-        # C1 (PLAT-1577): dispatch table — one entry per CommandType, built here
+        # C1 (PLAT-1592): dispatch table — one entry per CommandType, built here
         # so self._exec_* methods capture self as closure.
         self._handlers: dict[CommandType, Callable[[Command], Awaitable[bool]]] = {
             CommandType.SET_EMS_MODE: self._exec_set_ems_mode,
@@ -337,7 +337,7 @@ class CommandExecutor:
         return await consumer.turn_off()
 
     # ------------------------------------------------------------------
-    # Stub commands (C4 PLAT-1577: no adapter registered yet)
+    # Stub commands (C4 PLAT-1592: no adapter registered yet)
     # ------------------------------------------------------------------
 
     async def _exec_set_export_limit(self, cmd: Command) -> bool:
