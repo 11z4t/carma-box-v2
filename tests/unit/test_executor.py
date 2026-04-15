@@ -554,20 +554,19 @@ class TestCoverageBranches:
         assert result.commands_succeeded == 1
         inverters["kontor"].set_ems_power_limit.assert_awaited_with(0)
 
-    async def test_unknown_command_type_returns_false(
+    async def test_no_op_dispatch_returns_true(
         self, executor: CommandExecutor
     ) -> None:
-        """Unknown command type in _dispatch returns False (lines 233-240).
+        """NO_OP is registered in the dispatch table (_exec_no_op → True).
 
-        NO_OP is skipped by execute() but reaches _dispatch's else-branch
-        when called directly.
+        PLAT-1577: dispatch table covers every CommandType; NO_OP handler
+        returns True (vacuously successful).  execute() still pre-filters
+        NO_OP before reaching _dispatch in normal flow.
         """
-        from core.models import CommandType as CT
-        # Call _dispatch directly — NO_OP is not handled by any elif → else branch
         result = await executor._dispatch(
-            Command(command_type=CT.NO_OP, target_id="x")
+            Command(command_type=CommandType.NO_OP, target_id="x")
         )
-        assert result is False
+        assert result is True
 
     async def test_start_ev_no_charger_returns_false(self) -> None:
         """_exec_start_ev with no EV charger → False (line 298)."""
@@ -698,6 +697,53 @@ class TestClimateCommands:
             command_type=CommandType.CLIMATE_SET_TEMP,
             target_id="climate.vp_kontor",
             value=20.0,
+        )
+        result = await executor.execute([cmd])
+        assert result.commands_failed == 1
+
+
+# ===========================================================================
+# PLAT-1577 — Dispatch table guard tests
+# ===========================================================================
+
+
+class TestDispatchTable:
+    """Guard tests for PLAT-1577 dispatch table refactor (sync)."""
+
+    def test_dispatch_table_contains_all_command_types(self) -> None:
+        """Every CommandType must have an entry in the dispatch table.
+
+        Ensures that adding a new CommandType to the enum forces a matching
+        handler to be registered (the test will fail if the table is incomplete).
+        NO_OP is included — it is registered via _exec_no_op.
+        """
+        executor = CommandExecutor(inverters={})
+        for ct in CommandType:
+            assert ct in executor._handlers, (
+                f"CommandType.{ct.name} has no handler in _handlers dispatch table"
+            )
+
+    def test_no_if_elif_chain_in_execute(self) -> None:
+        """_dispatch must not contain an elif command_type == chain (PLAT-1577 C1)."""
+        import pathlib
+        source = pathlib.Path("core/executor.py").read_text()
+        assert "elif command_type ==" not in source, (
+            "Found 'elif command_type ==' in core/executor.py — "
+            "dispatch table must replace the if/elif chain (PLAT-1577 C1)"
+        )
+
+
+@pytest.mark.asyncio()
+class TestDispatchTableAsync:
+    """Guard tests for PLAT-1577 dispatch table refactor (async)."""
+
+    async def test_set_export_limit_returns_false(self) -> None:
+        """SET_EXPORT_LIMIT stub handler returns False (not yet implemented)."""
+        executor = CommandExecutor(inverters={})
+        cmd = Command(
+            command_type=CommandType.SET_EXPORT_LIMIT,
+            target_id="inverter_kontor",
+            value=0,
         )
         result = await executor.execute([cmd])
         assert result.commands_failed == 1
