@@ -145,12 +145,13 @@ class TestSoC100Standby:
         bat_full = make_battery_state(
             battery_id="kontor",
             soc_pct=100.0,
+            ems_mode="charge_pv",  # Wrong mode → should be corrected to standby
             ct_placement=CTPlacement.LOCAL_LOAD,
         )
         snap = make_snapshot(
             batteries=[bat_full],
             current_scenario=Scenario.MIDDAY_CHARGE,
-            hour=12,
+            hour=14,  # Within midday window (12-17)
         )
 
         with patch.object(mode_mgr, "request_change") as mock_request:

@@ -165,30 +165,33 @@ class ControlEngine:
             # Phase 3: SCENARIO — evaluate state machine
             new_scenario = self._sm.evaluate(snapshot)
             if new_scenario is not None:
-                # Route through ModeChangeManager for 5-step standby
-                # (prevents B1/B2 firmware hangs from direct transitions)
-                # Map scenario to target EMS mode
-                sm = self._SCENARIO_MODES.get(
-                    new_scenario,
-                    _ScenarioMode(EMSMode.BATTERY_STANDBY),
-                )
-                base_mode = sm.mode.value
-                # Set mode on EACH battery — adjust for SoC
-                for bat in snapshot.batteries:
-                    if not self._mode_manager.is_in_progress(bat.battery_id):
-                        # At 100% SoC: standby (don't charge a full battery)
-                        if bat.soc_pct >= MAX_SOC_PCT and base_mode in (EMSMode.CHARGE_PV.value,):
-                            target_mode = EMSMode.BATTERY_STANDBY.value
-                        else:
-                            target_mode = base_mode
+                self._sm.transition_to(new_scenario)
+                result.scenario = new_scenario
+
+            # Always enforce correct EMS mode for current scenario.
+            # Not just on transition — ensures mode is set after addon restart
+            # or if previous mode_change was interrupted.
+            active_scenario = self._sm.state.current
+            sm = self._SCENARIO_MODES.get(
+                active_scenario,
+                _ScenarioMode(EMSMode.BATTERY_STANDBY),
+            )
+            base_mode = sm.mode.value
+            for bat in snapshot.batteries:
+                if not self._mode_manager.is_in_progress(bat.battery_id):
+                    # At 100% SoC: standby (don't charge a full battery)
+                    if bat.soc_pct >= MAX_SOC_PCT and base_mode in (EMSMode.CHARGE_PV.value,):
+                        target_mode = EMSMode.BATTERY_STANDBY.value
+                    else:
+                        target_mode = base_mode
+                    # Only request if mode differs from current
+                    if bat.ems_mode.value != target_mode:
                         self._mode_manager.request_change(
                             battery_id=bat.battery_id,
                             target_mode=target_mode,
                             target_limit_w=sm.ems_power_limit,
-                            reason=f"Scenario {new_scenario.value}",
+                            reason=f"Scenario {active_scenario.value}",
                         )
-                self._sm.transition_to(new_scenario)
-                result.scenario = new_scenario
 
             # Phase 4: BALANCE — K/F allocation
             if snapshot.batteries:
