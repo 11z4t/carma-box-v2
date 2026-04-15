@@ -408,7 +408,10 @@ class TestEngineeringStandardsDoc:
         doc = Path(__file__).resolve().parents[2] / "docs" / "ENGINEERING_STANDARDS.md"
         assert doc.exists(), "docs/ENGINEERING_STANDARDS.md missing"
         lines = doc.read_text().splitlines()
-        assert len(lines) > 50, f"Doc too short: {len(lines)} lines (need >50)"
+        _MIN_SUBSTANTIAL_DOC_LINES: int = 50
+        assert len(lines) > _MIN_SUBSTANTIAL_DOC_LINES, (
+            f"Doc too short: {len(lines)} lines (need >{_MIN_SUBSTANTIAL_DOC_LINES})"
+        )
 
 
 class TestNoNaked1000InMain:

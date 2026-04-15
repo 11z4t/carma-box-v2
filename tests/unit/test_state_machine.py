@@ -20,6 +20,10 @@ from core.models import Scenario, SystemSnapshot
 from core.state_machine import StateMachine, StateMachineConfig
 from tests.conftest import make_ev_state, make_grid_state, make_snapshot
 
+# Named test constants
+_MIDNIGHT_HOUR: int = 0
+_S3_MIDDAY_SANITY_HOUR: int = 14
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -207,7 +211,7 @@ class TestNightScenarios:
     def test_night_at_midnight_stays_if_ev_charging(self, sm: StateMachine) -> None:
         """00:00 with EV charging should stay in S5 (S7 blocked by EV not done)."""
         sm.state.current = Scenario.NIGHT_HIGH_PV
-        snap = _snap(hour=0, pv_tomorrow=20.0, ev_connected=True, ev_soc=40.0)
+        snap = _snap(hour=_MIDNIGHT_HOUR, pv_tomorrow=20.0, ev_connected=True, ev_soc=40.0)
         result = sm.evaluate(snap)
         assert result is None  # Stay in S5 — EV still charging
 
@@ -410,21 +414,21 @@ class TestMidnightWrapExit:
     def test_s3_exits_at_midnight(self, sm: StateMachine) -> None:
         """S3 MIDDAY_CHARGE at hour=0 must exit (not stay stuck)."""
         sm.state.current = Scenario.MIDDAY_CHARGE
-        snap = _snap(hour=0, pv_tomorrow=20.0)
+        snap = _snap(hour=_MIDNIGHT_HOUR, pv_tomorrow=20.0)
         result = sm.evaluate(snap)
         assert result is not None, "S3 stuck at midnight — exit not triggered"
 
     def test_s4_exits_at_midnight(self, sm: StateMachine) -> None:
         """S4 EVENING_DISCHARGE at hour=0 must exit."""
         sm.state.current = Scenario.EVENING_DISCHARGE
-        snap = _snap(hour=0, pv_tomorrow=20.0, bat_soc=60.0)
+        snap = _snap(hour=_MIDNIGHT_HOUR, pv_tomorrow=20.0, bat_soc=60.0)
         result = sm.evaluate(snap)
         assert result is not None, "S4 stuck at midnight — exit not triggered"
 
     def test_s3_stays_during_midday(self, sm: StateMachine) -> None:
         """S3 at hour=14 (within window) should NOT exit."""
         sm.state.current = Scenario.MIDDAY_CHARGE
-        snap = _snap(hour=14)
+        snap = _snap(hour=_S3_MIDDAY_SANITY_HOUR)
         result = sm.evaluate(snap)
         assert result is None  # Stay in S3
 
