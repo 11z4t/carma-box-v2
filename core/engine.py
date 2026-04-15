@@ -24,7 +24,7 @@ from typing import Optional
 from config.schema import BatteryConfig
 from core.balancer import BalanceResult, BatteryBalancer, BatteryInfo
 from core.executor import CommandExecutor, ExecutionResult
-from core.guards import GridGuard, GuardEvaluation, GuardLevel
+from core.guards import GridGuard, GuardCommand, GuardEvaluation, GuardLevel
 from core.mode_change import ModeChangeManager
 from core.models import (
     MAX_SOC_PCT,
@@ -181,10 +181,26 @@ class ControlEngine:
                 _ScenarioMode(EMSMode.BATTERY_STANDBY),
             )
             base_mode = sm.mode.value
-            # Daytime charge_pv with limit=0: GoodWe charges bat from PV only.
-            # No grid-import block needed — limit=0 prevents grid charging.
-            # Bat stays in charge_pv to absorb ALL PV surplus (never export
-            # when bat can absorb).
+            # Daytime charge_pv: per-battery PV-only guard.
+            # Each inverter has its own CT. If THAT inverter imports grid,
+            # its PV doesn't cover load → standby to prevent grid charge.
+            # Only charge bat when the specific inverter has PV surplus.
+            if base_mode == EMSMode.CHARGE_PV.value and not snapshot.is_night:
+                pv_only_cmds: list[GuardCommand] = []
+                for bat in snapshot.batteries:
+                    if bat.grid_power_w > 0 and bat.ems_mode.value == EMSMode.CHARGE_PV.value:
+                        pv_only_cmds.append(GuardCommand(
+                            guard_id="G_PV_ONLY",
+                            command_type=CommandType.SET_EMS_MODE,
+                            target_id=bat.battery_id,
+                            value=EMSMode.BATTERY_STANDBY.value,
+                            reason=(
+                                f"PV-only: {bat.battery_id} grid={bat.grid_power_w:.0f}W"
+                                f" (import) → standby"
+                            ),
+                        ))
+                if pv_only_cmds:
+                    await self._executor.execute_guard_commands(pv_only_cmds)
 
             for bat in snapshot.batteries:
                 if not self._mode_manager.is_in_progress(bat.battery_id):
