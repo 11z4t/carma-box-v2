@@ -77,8 +77,8 @@ def _make_engine() -> ControlEngine:
 class TestChargeSoCBalance:
     """Lower SoC bat gets charge_pv, higher stays standby."""
 
-    async def test_lower_soc_gets_charge_higher_standby(self) -> None:
-        """Kontor 30% < Forrad 60% → Kontor charge_pv, Forrad standby."""
+    async def test_lower_soc_gets_charge_higher_discharge(self) -> None:
+        """PLAT-1618: diff=30% (>2%) -> lower SoC bat charges, higher SoC bat gets discharge_pv."""
         engine = _make_engine()
         engine._sm.state.current = Scenario.PV_SURPLUS_DAY
         engine._sm.state.entry_time = datetime(
@@ -112,22 +112,24 @@ class TestChargeSoCBalance:
             for e in result.execution.audit_entries
             if e.command_type == "set_ems_mode"
         }
-        # Kontor (lower SoC) should get charge_pv
+        # Kontor (lower SoC 30%) should get charge_battery
         assert mode_entries.get("kontor") == EMSMode.CHARGE_BATTERY.value, (
-            f"Lower SoC bat should charge, got {mode_entries}"
+            f"Lower SoC bat (kontor) should charge, got {mode_entries}"
         )
-        # Both get charge_battery but Kontor gets 75%, Forrad 25%
-        assert mode_entries.get("forrad") == EMSMode.CHARGE_BATTERY.value, (
-            f"Higher SoC bat also charges (25% share), got {mode_entries}"
+        # Forrad (higher SoC 60%) should get discharge_pv for active balancing
+        assert mode_entries.get("forrad") == EMSMode.DISCHARGE_PV.value, (
+            f"Higher SoC bat (forrad) should discharge_pv for balancing, got {mode_entries}"
         )
-        # Verify Kontor gets more power allocation
+        # Verify Forrad power limit equals _BALANCE_DISCHARGE_RATE_W
+        from core.engine import ControlEngine as CE
         limits = {
-            e.target_id: int(e.value)
+            e.target_id: int(e.value or 0)
             for e in result.execution.audit_entries
             if e.command_type == "set_ems_power_limit"
         }
-        assert limits.get("kontor", 0) > limits.get("forrad", 0), (
-            f"Lower SoC should get higher limit: {limits}"
+        assert limits.get("forrad") == CE._BALANCE_DISCHARGE_RATE_W, (
+            f"Forrad rate should be _BALANCE_DISCHARGE_RATE_W={CE._BALANCE_DISCHARGE_RATE_W},"
+            f"got {limits}"
         )
 
     async def test_balanced_soc_both_charge(self) -> None:
@@ -324,7 +326,7 @@ class TestExportLimitKontor:
             if e.command_type == "set_export_limit"
         ]
         assert len(export_entries) >= _MIN_ALLOCATIONS
-        assert int(export_entries[0].value) == _EXPECTED_EXPORT_LIMIT_STANDBY
+        assert int(export_entries[0].value or 0) == _EXPECTED_EXPORT_LIMIT_STANDBY
 
 
 # ===========================================================================

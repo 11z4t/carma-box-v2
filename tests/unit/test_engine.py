@@ -21,7 +21,7 @@ from core.engine import ControlEngine, NEAR_ZERO_KW, _ScenarioMode
 from core.executor import CommandExecutor, ExecutorConfig
 from core.guards import GridGuard, GuardConfig
 from core.mode_change import ModeChangeConfig, ModeChangeManager
-from core.models import EMSMode, Scenario
+from core.models import Command, CommandType, EMSMode, Scenario, SystemSnapshot
 from core.state_machine import StateMachine, StateMachineConfig
 from tests.conftest import make_battery_state, make_snapshot
 
@@ -559,3 +559,175 @@ class TestDaytimeChargePlan:
 
         # Charge plan should have set a PV surplus limit (not 0)
         assert result.error is None
+
+
+# ===========================================================================
+# PLAT-1618: Active SoC balancing via discharge when imbalanced
+# ===========================================================================
+
+# Named test constants for SoC balancing tests
+_SOC_HIGHER_PCT: float = 60.0   # Higher-SoC battery (Kontor) — 30% above lower
+_SOC_LOWER_PCT: float = 30.0    # Lower-SoC battery (Forrad) — diff = 30%
+_SOC_BALANCED_HIGH_PCT: float = 31.0  # Just 1% above lower — within +/-2% threshold
+_SOC_BALANCED_LOW_PCT: float = 30.0   # Reference — diff = 1% (balanced)
+_PV_SURPLUS_EXPORT_W: float = -3000.0  # Strong PV export (surplus)
+
+
+def _make_dual_battery_engine() -> ControlEngine:
+    """Create engine with two inverter mocks (kontor + forrad)."""
+    guard = GridGuard(GuardConfig())
+    sm = StateMachine(StateMachineConfig(min_dwell_s=0))
+    balancer = BatteryBalancer()
+    mode_mgr = ModeChangeManager(ModeChangeConfig(
+        clear_wait_s=0, standby_wait_s=0, set_wait_s=0, verify_wait_s=0,
+    ))
+
+    def _make_inv() -> AsyncMock:
+        inv = AsyncMock()
+        inv.set_ems_mode = AsyncMock(return_value=True)
+        inv.set_ems_power_limit = AsyncMock(return_value=True)
+        inv.set_fast_charging = AsyncMock(return_value=True)
+        inv.get_fast_charging = AsyncMock(return_value=False)
+        inv.get_ems_mode = AsyncMock(return_value="battery_standby")
+        return inv
+
+    executor = CommandExecutor(
+        inverters={"kontor": _make_inv(), "forrad": _make_inv()},
+        config=ExecutorConfig(mode_change_cooldown_s=0),
+    )
+    return ControlEngine(guard, sm, balancer, mode_mgr, executor)
+
+
+@pytest.mark.asyncio
+class TestSoCBalancingDischarge:
+    """PLAT-1618: SoC diff >2% -> active discharge of higher-SoC bat."""
+
+    async def _make_imbalanced_snap(
+        self, soc_high: float, soc_low: float
+    ) -> SystemSnapshot:
+        from tests.conftest import make_grid_state
+
+        return make_snapshot(
+            hour=_TEST_MIDDAY_HOUR,
+            batteries=[
+                make_battery_state(
+                    battery_id="kontor",
+                    soc_pct=soc_high,
+                    ems_mode=EMSMode.BATTERY_STANDBY,
+                ),
+                make_battery_state(
+                    battery_id="forrad",
+                    soc_pct=soc_low,
+                    ems_mode=EMSMode.BATTERY_STANDBY,
+                ),
+            ],
+            grid=make_grid_state(grid_power_w=_PV_SURPLUS_EXPORT_W),
+        )
+
+    async def test_discharge_command_when_imbalanced(self) -> None:
+        """SoC diff 60%/30% (30% > 2%) -> discharge_pv command for higher-SoC bat."""
+        from core.executor import ExecutionResult
+
+        engine = _make_dual_battery_engine()
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
+        engine._sm.state.entry_time = datetime(
+            _TEST_ENTRY_YEAR, _TEST_ENTRY_MONTH, _TEST_ENTRY_DAY,
+            _TEST_ENTRY_HOUR_MIDDAY, 0, tzinfo=timezone.utc,
+        )
+
+        captured: list[list[Command]] = []
+        original_execute = engine._executor.execute
+
+        async def capturing_execute(commands: list[Command]) -> ExecutionResult:
+            captured.extend([commands])
+            return await original_execute(commands)
+
+        engine._executor.execute = capturing_execute  # type: ignore[method-assign]
+
+        snap = await self._make_imbalanced_snap(_SOC_HIGHER_PCT, _SOC_LOWER_PCT)
+        result = await engine.run_cycle(snap)
+
+        assert result.error is None
+        assert captured, "No commands were issued"
+        all_cmds = [cmd for batch in captured for cmd in batch]
+
+        discharge_cmds = [
+            cmd for cmd in all_cmds
+            if cmd.command_type == CommandType.SET_EMS_MODE
+            and cmd.value == EMSMode.DISCHARGE_PV.value
+        ]
+        assert discharge_cmds, (
+            "Expected a discharge_pv command for the higher-SoC battery. "
+            f"Commands: {[(c.command_type, c.target_id, c.value) for c in all_cmds]}"
+        )
+        discharged_targets = {cmd.target_id for cmd in discharge_cmds}
+        assert "kontor" in discharged_targets, (
+            f"Kontor (60% SoC) should be discharged, got: {discharged_targets}"
+        )
+
+    async def test_no_discharge_when_balanced(self) -> None:
+        """SoC diff 31%/30% (1% < 2%) -> no discharge_pv commands."""
+        from core.executor import ExecutionResult
+
+        engine = _make_dual_battery_engine()
+        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
+        engine._sm.state.entry_time = datetime(
+            _TEST_ENTRY_YEAR, _TEST_ENTRY_MONTH, _TEST_ENTRY_DAY,
+            _TEST_ENTRY_HOUR_MIDDAY, 0, tzinfo=timezone.utc,
+        )
+
+        captured: list[list[Command]] = []
+        original_execute = engine._executor.execute
+
+        async def capturing_execute(commands: list[Command]) -> ExecutionResult:
+            captured.extend([commands])
+            return await original_execute(commands)
+
+        engine._executor.execute = capturing_execute  # type: ignore[method-assign]
+
+        snap = await self._make_imbalanced_snap(_SOC_BALANCED_HIGH_PCT, _SOC_BALANCED_LOW_PCT)
+        result = await engine.run_cycle(snap)
+
+        assert result.error is None
+        all_cmds = [cmd for batch in captured for cmd in batch]
+
+        discharge_cmds = [
+            cmd for cmd in all_cmds
+            if cmd.command_type == CommandType.SET_EMS_MODE
+            and cmd.value == EMSMode.DISCHARGE_PV.value
+        ]
+        assert not discharge_cmds, (
+            f"No discharge_pv expected for balanced batteries (diff=1%), got: "
+            f"{[(c.target_id, c.value) for c in discharge_cmds]}"
+        )
+
+    def test_discharge_rate_constant_exists(self) -> None:
+        """_BALANCE_DISCHARGE_RATE_W must be defined as a named int constant > 0."""
+        assert hasattr(ControlEngine, "_BALANCE_DISCHARGE_RATE_W")
+        assert isinstance(ControlEngine._BALANCE_DISCHARGE_RATE_W, int)
+        assert ControlEngine._BALANCE_DISCHARGE_RATE_W > 0
+
+    def test_no_naked_balance_discharge_rate_in_engine(self) -> None:
+        """engine.py must reference _BALANCE_DISCHARGE_RATE_W by name, never by value.
+
+        Regression guard: NOLLTOLERANS — no naked numeric literals.
+        """
+        from pathlib import Path
+        import re
+
+        source = (
+            Path(__file__).resolve().parents[2] / "core" / "engine.py"
+        ).read_text()
+        rate = ControlEngine._BALANCE_DISCHARGE_RATE_W
+        definition_pattern = re.compile(
+            rf"_BALANCE_DISCHARGE_RATE_W\s*:\s*int\s*=\s*{rate}"
+        )
+        naked_lines = [
+            line for line in source.splitlines()
+            if re.search(rf"\b{rate}\b", line)
+            and not definition_pattern.search(line)
+        ]
+        assert not naked_lines, (
+            f"Naked literal {rate} in engine.py — use _BALANCE_DISCHARGE_RATE_W: "
+            f"{naked_lines}"
+        )

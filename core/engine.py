@@ -353,6 +353,7 @@ class ControlEngine:
     _GRID_HYSTERESIS_W: float = 100.0  # Accept <100W import/export
     _SOC_BALANCE_LOWER_RATIO: float = 0.75  # Lower SoC bat gets 75%
     _SOC_BALANCE_HIGHER_RATIO: float = 0.25  # Higher SoC bat gets 25%
+    _BALANCE_DISCHARGE_RATE_W: int = 500  # Active balancing discharge rate for higher-SoC bat
     _MIN_MODE_DWELL_CYCLES: int = 2  # Stay in mode at least 2 cycles (60s)
 
     async def _compute_charge_plan(
@@ -419,20 +420,20 @@ class ControlEngine:
                 return await self._executor.execute(cmds)
             return None
 
+        discharge_ids: set[str] = set()
         if len(active_bats) == _DUAL_BATTERY_COUNT:
             ids = [b.battery_id for b in active_bats]
             soc_diff = abs(bat_socs[ids[0]] - bat_socs[ids[1]])
 
             if soc_diff > self._SOC_BALANCE_THRESHOLD_PCT:
-                # Unbalanced — more power to lower SoC
+                # Unbalanced — charge lower SoC, actively discharge higher SoC
                 lower_id = (
                     ids[0] if bat_socs[ids[0]] < bat_socs[ids[1]]
                     else ids[1]
                 )
                 higher_id = ids[1] if lower_id == ids[0] else ids[0]
-                # 75% to lower, 25% to higher
-                allocations[lower_id] = int(available_surplus_w * self._SOC_BALANCE_LOWER_RATIO)
-                allocations[higher_id] = int(available_surplus_w * self._SOC_BALANCE_HIGHER_RATIO)
+                allocations[lower_id] = available_surplus_w  # 100% to lower
+                discharge_ids.add(higher_id)  # Higher SoC → active discharge
             else:
                 # Balanced — proportional by capacity
                 for bid in ids:
@@ -446,7 +447,26 @@ class ControlEngine:
         for bat in snapshot.batteries:
             limit_w = allocations.get(bat.battery_id, 0)
 
-            if limit_w > 0:
+            if bat.battery_id in discharge_ids:
+                # Active SoC balancing: discharge higher-SoC bat at fixed rate
+                cmds.append(Command(
+                    command_type=CommandType.SET_EMS_MODE,
+                    target_id=bat.battery_id,
+                    value=EMSMode.DISCHARGE_PV.value,
+                    rule_id='PV_CHARGE_PLAN',
+                    reason=(
+                        f'SoC imbalance: {bat.battery_id}'
+                        f' (soc={bat.soc_pct:.0f}%) → discharge_pv balance'
+                    ),
+                ))
+                cmds.append(Command(
+                    command_type=CommandType.SET_EMS_POWER_LIMIT,
+                    target_id=bat.battery_id,
+                    value=self._BALANCE_DISCHARGE_RATE_W,
+                    rule_id='PV_CHARGE_PLAN',
+                    reason=f'Active balance: limit={self._BALANCE_DISCHARGE_RATE_W}W',
+                ))
+            elif limit_w > 0:
                 # charge_battery with PV surplus limit
                 if bat.ems_mode.value != EMSMode.CHARGE_BATTERY.value:
                     cmds.append(Command(
