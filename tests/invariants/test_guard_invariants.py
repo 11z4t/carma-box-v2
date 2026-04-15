@@ -20,6 +20,22 @@ from core.models import CommandType, EMSMode, Scenario
 from tests.conftest import make_battery_state, make_grid_state, make_snapshot
 
 
+# ---------------------------------------------------------------------------
+# Named test constants — no magic numbers in test code.
+# ---------------------------------------------------------------------------
+_SOC_BELOW_FLOOR_PCT: float = 14.0       # just below G1 floor (default 15.0%)
+_SOC_NOMINAL_PCT: float = 60.0           # mid-range, no guard trigger
+_NEUTRAL_WEIGHTED_AVG_KW: float = 1.0    # safe grid level, no G3 trigger
+_BREACH_TRIGGER_KW: float = 5.0          # above Ellevio tak → G3 BREACH
+_NEUTRAL_SPOT_PRICE_ORE: float = 50.0    # mid-range price, no ExportGuard trigger
+_VERY_STALE_DATA_AGE_S: float = 600.0    # far above stale threshold → G6 FREEZE
+_TEST_HOUR: int = 14                      # mid-afternoon test hour
+_KONTOR_EMS_LIMIT_W: int = 3_000         # test fixture: kontor EMS power limit
+_FORRAD_EMS_LIMIT_W: int = 2_000         # test fixture: forrad EMS power limit
+_PV_NONE_KW: float = 0.0                 # no PV production
+_PV_MODERATE_KW: float = 3.0             # moderate PV
+
+
 # Priority ordering: FREEZE is highest, OK is lowest.
 GUARD_LEVEL_PRIORITY: list[GuardLevel] = [
     GuardLevel.FREEZE,
@@ -53,19 +69,19 @@ class TestChargeDischargeExclusion:
         # Low SoC (triggers G1 → standby) + grid charging at floor (triggers G0)
         bat = make_battery_state(
             battery_id="kontor",
-            soc_pct=14.0,
+            soc_pct=_SOC_BELOW_FLOOR_PCT,
             ems_mode="charge_pv",
-            ems_power_limit_w=3000,
+            ems_power_limit_w=_KONTOR_EMS_LIMIT_W,
         )
-        snap = make_snapshot(hour=14, batteries=[bat])
+        snap = make_snapshot(hour=_TEST_HOUR, batteries=[bat])
         result = policy.evaluate(
             batteries=snap.batteries,
             current_scenario=Scenario.MIDDAY_CHARGE,
-            weighted_avg_kw=1.0,
+            weighted_avg_kw=_NEUTRAL_WEIGHTED_AVG_KW,
             hour=snap.hour,
             ha_connected=True,
-            pv_kw=0.0,
-            spot_price_ore=50.0,
+            pv_kw=_PV_NONE_KW,
+            spot_price_ore=_NEUTRAL_SPOT_PRICE_ORE,
         )
 
         # Collect mode commands per target
@@ -89,23 +105,23 @@ class TestChargeDischargeExclusion:
 
         bats = [
             make_battery_state(
-                battery_id="kontor", soc_pct=14.0,
-                ems_mode="charge_pv", ems_power_limit_w=3000,
+                battery_id="kontor", soc_pct=_SOC_BELOW_FLOOR_PCT,
+                ems_mode="charge_pv", ems_power_limit_w=_KONTOR_EMS_LIMIT_W,
             ),
             make_battery_state(
-                battery_id="forrad", soc_pct=14.0,
-                ems_mode="charge_pv", ems_power_limit_w=2000,
+                battery_id="forrad", soc_pct=_SOC_BELOW_FLOOR_PCT,
+                ems_mode="charge_pv", ems_power_limit_w=_FORRAD_EMS_LIMIT_W,
             ),
         ]
-        snap = make_snapshot(hour=14, batteries=bats)
+        snap = make_snapshot(hour=_TEST_HOUR, batteries=bats)
         result = policy.evaluate(
             batteries=snap.batteries,
             current_scenario=Scenario.MIDDAY_CHARGE,
-            weighted_avg_kw=1.0,
+            weighted_avg_kw=_NEUTRAL_WEIGHTED_AVG_KW,
             hour=snap.hour,
             ha_connected=True,
-            pv_kw=0.0,
-            spot_price_ore=50.0,
+            pv_kw=_PV_NONE_KW,
+            spot_price_ore=_NEUTRAL_SPOT_PRICE_ORE,
         )
 
         mode_cmds: dict[str, set[str]] = {}
@@ -135,11 +151,11 @@ class TestImportCapOnBreach:
         policy = GuardPolicy(guard, ExportGuard())
 
         # High weighted average → triggers G3 BREACH
-        bat = make_battery_state(soc_pct=60.0)
+        bat = make_battery_state(soc_pct=_SOC_NOMINAL_PCT)
         snap = make_snapshot(
-            hour=14,
+            hour=_TEST_HOUR,
             batteries=[bat],
-            grid=make_grid_state(weighted_avg_kw=5.0),
+            grid=make_grid_state(weighted_avg_kw=_BREACH_TRIGGER_KW),
         )
         result = policy.evaluate(
             batteries=snap.batteries,
@@ -147,8 +163,8 @@ class TestImportCapOnBreach:
             weighted_avg_kw=snap.grid.weighted_avg_kw,
             hour=snap.hour,
             ha_connected=True,
-            pv_kw=0.0,
-            spot_price_ore=50.0,
+            pv_kw=_PV_NONE_KW,
+            spot_price_ore=_NEUTRAL_SPOT_PRICE_ORE,
         )
 
         if result.level in (GuardLevel.BREACH, GuardLevel.ALARM, GuardLevel.FREEZE):
@@ -198,17 +214,17 @@ class TestAlarmDominatesWarning:
         guard = GridGuard(GuardConfig())
         policy = GuardPolicy(guard, ExportGuard())
 
-        bat = make_battery_state(soc_pct=60.0)
-        snap = make_snapshot(hour=14, batteries=[bat])
+        bat = make_battery_state(soc_pct=_SOC_NOMINAL_PCT)
+        snap = make_snapshot(hour=_TEST_HOUR, batteries=[bat])
         result = policy.evaluate(
             batteries=snap.batteries,
             current_scenario=Scenario.MIDDAY_CHARGE,
-            weighted_avg_kw=1.0,
+            weighted_avg_kw=_NEUTRAL_WEIGHTED_AVG_KW,
             hour=snap.hour,
             ha_connected=True,
-            pv_kw=3.0,
-            spot_price_ore=50.0,
-            data_age_s=600.0,  # Very stale
+            pv_kw=_PV_MODERATE_KW,
+            spot_price_ore=_NEUTRAL_SPOT_PRICE_ORE,
+            data_age_s=_VERY_STALE_DATA_AGE_S,
         )
 
         freeze_idx = GUARD_LEVEL_PRIORITY.index(GuardLevel.FREEZE)
@@ -233,19 +249,19 @@ class TestEveryCommandHasCause:
 
         # Trigger multiple guards: low SoC (G1) + grid charging (G0)
         bat = make_battery_state(
-            soc_pct=14.0,
+            soc_pct=_SOC_BELOW_FLOOR_PCT,
             ems_mode="charge_pv",
-            ems_power_limit_w=3000,
+            ems_power_limit_w=_KONTOR_EMS_LIMIT_W,
         )
-        snap = make_snapshot(hour=14, batteries=[bat])
+        snap = make_snapshot(hour=_TEST_HOUR, batteries=[bat])
         result = policy.evaluate(
             batteries=snap.batteries,
             current_scenario=Scenario.MIDDAY_CHARGE,
-            weighted_avg_kw=1.0,
+            weighted_avg_kw=_NEUTRAL_WEIGHTED_AVG_KW,
             hour=snap.hour,
             ha_connected=True,
-            pv_kw=0.0,
-            spot_price_ore=50.0,
+            pv_kw=_PV_NONE_KW,
+            spot_price_ore=_NEUTRAL_SPOT_PRICE_ORE,
         )
 
         assert len(result.commands) >= 1, "Expected at least 1 guard command"
@@ -259,19 +275,19 @@ class TestEveryCommandHasCause:
         policy = GuardPolicy(guard, ExportGuard())
 
         bat = make_battery_state(
-            soc_pct=14.0,
+            soc_pct=_SOC_BELOW_FLOOR_PCT,
             ems_mode="charge_pv",
-            ems_power_limit_w=3000,
+            ems_power_limit_w=_KONTOR_EMS_LIMIT_W,
         )
-        snap = make_snapshot(hour=14, batteries=[bat])
+        snap = make_snapshot(hour=_TEST_HOUR, batteries=[bat])
         result = policy.evaluate(
             batteries=snap.batteries,
             current_scenario=Scenario.MIDDAY_CHARGE,
-            weighted_avg_kw=1.0,
+            weighted_avg_kw=_NEUTRAL_WEIGHTED_AVG_KW,
             hour=snap.hour,
             ha_connected=True,
-            pv_kw=0.0,
-            spot_price_ore=50.0,
+            pv_kw=_PV_NONE_KW,
+            spot_price_ore=_NEUTRAL_SPOT_PRICE_ORE,
         )
 
         for cmd in result.commands:
