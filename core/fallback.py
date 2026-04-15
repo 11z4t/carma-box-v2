@@ -23,7 +23,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 DEFAULT_SOC_FALLBACK_PCT: float = 50.0
-_DEFAULT_MAX_SOC_AGE_S: float = 300.0
+DEFAULT_MAX_SOC_AGE_S: float = 300.0
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,7 @@ class FallbackConfig:
     """Configuration for fallback policy."""
 
     default_soc_pct: float = DEFAULT_SOC_FALLBACK_PCT
-    max_soc_age_s: float = _DEFAULT_MAX_SOC_AGE_S
+    max_soc_age_s: float = DEFAULT_MAX_SOC_AGE_S
 
 
 @unique
@@ -118,7 +118,7 @@ def resolve_soc_fallback(
         Tuple of (resolved_soc, fallback_event_or_None).
     """
     effective_max_age = (
-        config.max_soc_age_s if config.max_soc_age_s != _DEFAULT_MAX_SOC_AGE_S else max_age_s
+        config.max_soc_age_s if config.max_soc_age_s != DEFAULT_MAX_SOC_AGE_S else max_age_s
     )
     if raw_soc >= 0:
         return raw_soc, None

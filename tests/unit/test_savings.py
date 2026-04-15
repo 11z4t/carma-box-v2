@@ -340,6 +340,8 @@ class TestStateFromDictExceptionPath:
 _CUSTOM_MAX_HISTORY_DAYS: int = 7
 _CUSTOM_COST_PER_KW: float = 90.0
 _CUSTOM_TOP_N: int = 5
+_TEST_MONTH: int = 1
+_TEST_YEAR: int = 2026
 
 
 class TestSavingsConfig:
@@ -361,7 +363,7 @@ class TestSavingsConfig:
         from core.savings import SavingsConfig, SavingsState, record_daily_snapshot
 
         cfg = SavingsConfig(max_history_days=_CUSTOM_MAX_HISTORY_DAYS)
-        state = SavingsState(month=1, year=2026)
+        state = SavingsState(month=_TEST_MONTH, year=_TEST_YEAR)
 
         for day in range(10):
             record_daily_snapshot(state, f"2026-01-{day + 1:02d}", config=cfg)
