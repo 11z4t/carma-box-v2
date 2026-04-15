@@ -48,6 +48,13 @@ from core.models import (
     SystemSnapshot,
 )
 from core.ellevio import EllevioConfig, EllevioTracker
+from core.day_plan import DayPlan, HourlyForecast
+from core.day_planner import (
+    BatteryPlanConfig,
+    DayPlanConfig,
+    EVPlanConfig,
+    generate_day_plan,
+)
 from core.planner import Planner, PlannerConfig
 from core.ev_controller import EVAction, EVController, EVControllerConfig
 from core.surplus_dispatch import SurplusConfig as SurplusDispatchConfig, SurplusDispatch
@@ -412,6 +419,12 @@ class CarmaBoxService:
             is_forced = startup_replan or force_replan
             await self._plan_executor.generate(snapshot, force=is_forced)
 
+            # Generate DayPlan for dashboard sensor (PLAT-1627)
+            try:
+                self._current_day_plan = self._generate_day_plan(snapshot)
+            except Exception as exc:
+                logger.warning("DayPlan generation skipped: %s", exc)
+
         # Phase 1.5: ELLEVIO TRACKING — update weighted hourly average
         if self._ellevio:
             grid_kw = snapshot.grid.grid_power_w / _W_TO_KW
@@ -547,6 +560,67 @@ class CarmaBoxService:
             return
         if task.exception():
             logger.error("Health server failed: %s", task.exception())
+
+    def _generate_day_plan(self, snapshot: SystemSnapshot) -> Optional[DayPlan]:
+        """Generate DayPlan from current state + Solcast forecast.
+
+        PLAT-1627: Creates DayPlan for dashboard sensor and Excel report.
+        Returns None if insufficient data.
+        """
+        cfg = self._config
+        batteries = tuple(
+            BatteryPlanConfig(
+                battery_id=bat_cfg.id,
+                cap_kwh=bat_cfg.cap_kwh,
+                max_charge_kw=bat_cfg.max_charge_kw,
+                efficiency=bat_cfg.efficiency,
+                min_soc_pct=bat_cfg.min_soc_pct,
+                current_soc_pct=next(
+                    (b.soc_pct for b in snapshot.batteries if b.battery_id == bat_cfg.id),
+                    50.0,
+                ),
+            )
+            for bat_cfg in cfg.batteries
+        )
+        ev = EVPlanConfig(
+            min_amps=cfg.ev_charger.min_amps,
+            max_amps=cfg.ev_charger.max_amps,
+            phases=cfg.ev_charger.phases,
+            voltage_v=cfg.ev_charger.voltage_v,
+            current_soc_pct=snapshot.ev.soc_pct,
+            target_soc_pct=snapshot.ev.target_soc_pct,
+            battery_kwh=cfg.ev.battery_kwh,
+            efficiency=cfg.ev.efficiency,
+            connected=snapshot.ev.connected,
+        )
+        # Build hourly PV forecast from GridState (Solcast attributes)
+        pv_hourly = getattr(snapshot.grid, "pv_forecast_hourly", {}) or {}
+        if not pv_hourly:
+            # Fallback: flat distribution of daily total
+            total = snapshot.grid.pv_forecast_today_kwh
+            _DAYLIGHT_HOURS: int = 12
+            _FALLBACK_START_H: int = 6
+            _FALLBACK_END_H: int = 22
+            per_hour = total / _DAYLIGHT_HOURS if total > 0 else 0.0
+            pv_hourly = {
+                h: HourlyForecast(
+                    p10_kwh=per_hour * 0.7,
+                    p50_kwh=per_hour,
+                    p90_kwh=per_hour * 1.3,
+                )
+                for h in range(_FALLBACK_START_H, _FALLBACK_END_H)
+            }
+
+        plan_cfg = DayPlanConfig(
+            batteries=batteries,
+            ev=ev,
+            baseload_kw=cfg.planner.house_baseload_kw if self._planner else 2.5,
+        )
+        try:
+            return generate_day_plan(pv_hourly, plan_cfg)
+        except Exception as exc:
+            logger.error("DayPlan generation failed: %s", exc)
+            return None
 
     @staticmethod
     def _entity_domain(entity_id: str) -> str:
