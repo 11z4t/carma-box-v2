@@ -620,7 +620,7 @@ class CarmaBoxService:
         plan_cfg = DayPlanConfig(
             batteries=batteries,
             ev=ev,
-            baseload_kw=cfg.planner.house_baseload_kw if self._planner else _DEFAULT_BASELOAD_KW,
+            baseload_kw=cfg.night_plan.house_baseload_kw if self._planner else _DEFAULT_BASELOAD_KW,
         )
         try:
             return generate_day_plan(pv_hourly, plan_cfg)
