@@ -331,3 +331,39 @@ class TestStateFromDictExceptionPath:
         }
         state = state_from_dict(corrupt)
         assert state.month == 0
+
+
+# ---------------------------------------------------------------------------
+# PLAT-1578: SavingsConfig
+# ---------------------------------------------------------------------------
+
+_CUSTOM_MAX_HISTORY_DAYS: int = 7
+_CUSTOM_COST_PER_KW: float = 90.0
+_CUSTOM_TOP_N: int = 5
+
+
+class TestSavingsConfig:
+    """PLAT-1578 C2: SavingsConfig dataclass defaults and overrides."""
+
+    def test_savings_config_defaults(self) -> None:
+        from core.savings import (
+            DEFAULT_COST_PER_KW,
+            DEFAULT_TOP_N,
+            MAX_SAVINGS_HISTORY_DAYS,
+            SavingsConfig,
+        )
+        cfg = SavingsConfig()
+        assert cfg.cost_per_kw == DEFAULT_COST_PER_KW
+        assert cfg.top_n == DEFAULT_TOP_N
+        assert cfg.max_history_days == MAX_SAVINGS_HISTORY_DAYS
+
+    def test_savings_config_overridable(self) -> None:
+        from core.savings import SavingsConfig, SavingsState, record_daily_snapshot
+
+        cfg = SavingsConfig(max_history_days=_CUSTOM_MAX_HISTORY_DAYS)
+        state = SavingsState(month=1, year=2026)
+
+        for day in range(10):
+            record_daily_snapshot(state, f"2026-01-{day + 1:02d}", config=cfg)
+
+        assert len(state.daily_savings) == _CUSTOM_MAX_HISTORY_DAYS

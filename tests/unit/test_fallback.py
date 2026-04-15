@@ -59,3 +59,34 @@ class TestSoCFallback:
     def test_no_last_known_uses_50(self) -> None:
         soc, event = resolve_soc_fallback(-1.0, -1.0, 3600.0, 0.0)
         assert soc == 50.0
+
+
+# ---------------------------------------------------------------------------
+# PLAT-1578: FallbackConfig
+# ---------------------------------------------------------------------------
+
+_CUSTOM_DEFAULT_SOC: float = 30.0
+_CUSTOM_MAX_AGE_S: float = 60.0
+
+
+class TestFallbackConfig:
+    """PLAT-1578 C13: FallbackConfig dataclass defaults and overrides."""
+
+    def test_fallback_config_defaults(self) -> None:
+        from core.fallback import DEFAULT_SOC_FALLBACK_PCT, FallbackConfig
+
+        cfg = FallbackConfig()
+        assert cfg.default_soc_pct == DEFAULT_SOC_FALLBACK_PCT
+        assert cfg.max_soc_age_s == 300.0
+
+    def test_soc_fallback_uses_config_values(self) -> None:
+        from core.fallback import FallbackConfig, resolve_soc_fallback
+
+        cfg = FallbackConfig(default_soc_pct=_CUSTOM_DEFAULT_SOC, max_soc_age_s=_CUSTOM_MAX_AGE_S)
+        # last_known fresh but raw invalid — within custom max_age
+        soc, event = resolve_soc_fallback(-1.0, 80.0, 300.0, 30.0, config=cfg)
+        assert soc == 80.0  # last_known used (age 30s < custom 60s)
+
+        # last_known stale (age > custom 60s) — falls back to config default
+        soc2, event2 = resolve_soc_fallback(-1.0, 80.0, 300.0, 120.0, config=cfg)
+        assert soc2 == _CUSTOM_DEFAULT_SOC

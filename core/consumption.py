@@ -9,6 +9,7 @@ Ported from v6 optimizer/consumption.py — pure Python, no HA imports.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 
 # Default 24h consumption profile (kW per hour)
@@ -27,6 +28,15 @@ MIN_SAMPLES_FOR_LEARNED = 168  # 7 days x 24 hours
 CONSUMPTION_MAX_KW: float = 20.0  # Clamp unreasonable readings
 
 
+@dataclass(frozen=True)
+class ConsumptionConfig:
+    """Configuration for the consumption profile learner."""
+
+    ema_alpha: float = EMA_ALPHA
+    min_samples: int = MIN_SAMPLES_FOR_LEARNED
+    max_kw: float = CONSUMPTION_MAX_KW
+
+
 class ConsumptionProfile:
     """Learned consumption profile with weekday/weekend split.
 
@@ -38,13 +48,20 @@ class ConsumptionProfile:
         self,
         ema_alpha: float = EMA_ALPHA,
         min_samples: int = MIN_SAMPLES_FOR_LEARNED,
+        config: ConsumptionConfig = ConsumptionConfig(),
     ) -> None:
         self.weekday: list[float] = list(DEFAULT_CONSUMPTION_PROFILE)
         self.weekend: list[float] = list(DEFAULT_CONSUMPTION_PROFILE)
         self.samples_weekday: int = 0
         self.samples_weekend: int = 0
-        self._ema_alpha = ema_alpha
-        self._min_samples = min_samples
+        # config takes precedence; legacy params kept for backward compat
+        self._ema_alpha = (
+            config.ema_alpha if config.ema_alpha != EMA_ALPHA else ema_alpha
+        )
+        self._min_samples = (
+            config.min_samples if config.min_samples != MIN_SAMPLES_FOR_LEARNED else min_samples
+        )
+        self._max_kw = config.max_kw
 
     def update(
         self, hour: int, consumption_kw: float, is_weekend: bool,
@@ -52,7 +69,7 @@ class ConsumptionProfile:
         """Update profile with a new measurement."""
         if hour < 0 or hour > 23:
             return
-        consumption_kw = max(0.0, min(CONSUMPTION_MAX_KW, consumption_kw))
+        consumption_kw = max(0.0, min(self._max_kw, consumption_kw))
 
         if is_weekend:
             self.weekend[hour] = (

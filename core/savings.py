@@ -22,6 +22,15 @@ MAX_SAVINGS_HISTORY_DAYS: int = 30
 MAX_PRICE_HISTORY_ENTRIES: int = 2000
 
 
+@dataclass(frozen=True)
+class SavingsConfig:
+    """Configuration for the savings calculator."""
+
+    cost_per_kw: float = DEFAULT_COST_PER_KW
+    top_n: int = DEFAULT_TOP_N
+    max_history_days: int = MAX_SAVINGS_HISTORY_DAYS
+
+
 @dataclass
 class DailySavings:
     """One day's savings for trend tracking."""
@@ -195,17 +204,19 @@ def record_daily_snapshot(
     date_str: str,
     cost_per_kw: float = DEFAULT_COST_PER_KW,
     top_n: int = DEFAULT_TOP_N,
+    config: SavingsConfig = SavingsConfig(),
 ) -> None:
     """Snapshot today's savings into the daily trend list.
 
     Call once per day (or idempotently — same date updates in place).
-    Keeps max 30 days of history.
+    Keeps max config.max_history_days days of history.
 
     Args:
         state: Current savings state.
         date_str: ISO date string (YYYY-MM-DD).
         cost_per_kw: Grid operator peak cost (kr/kW/month).
         top_n: Number of top peaks.
+        config: SavingsConfig — controls history retention and default thresholds.
     """
     peak_kr = calculate_peak_savings(state, cost_per_kw, top_n)
     total = round(peak_kr + state.discharge_savings_kr + state.grid_charge_savings_kr, 1)
@@ -224,9 +235,9 @@ def record_daily_snapshot(
             state.daily_savings[i] = entry
             return
     state.daily_savings.append(entry)
-    # Keep max 30 days
-    if len(state.daily_savings) > MAX_SAVINGS_HISTORY_DAYS:
-        state.daily_savings = state.daily_savings[-MAX_SAVINGS_HISTORY_DAYS:]
+    # Keep max history_days (driven by config)
+    if len(state.daily_savings) > config.max_history_days:
+        state.daily_savings = state.daily_savings[-config.max_history_days:]
 
 
 def record_cost_estimate(

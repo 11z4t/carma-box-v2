@@ -123,3 +123,41 @@ class TestCalculateHouseConsumption:
         p.update(0, CONSUMPTION_MAX_KW + 50, is_weekend=False)
         expected = EMA_ALPHA * CONSUMPTION_MAX_KW + (1 - EMA_ALPHA) * DEFAULT_CONSUMPTION_PROFILE[0]
         assert abs(p.weekday[0] - expected) < 0.001
+
+
+# ---------------------------------------------------------------------------
+# PLAT-1578: ConsumptionConfig
+# ---------------------------------------------------------------------------
+
+_CUSTOM_EMA_ALPHA: float = 0.2
+_CUSTOM_MIN_SAMPLES: int = 48
+_CUSTOM_MAX_KW: float = 10.0
+
+
+class TestConsumptionConfig:
+    """PLAT-1578 C3: ConsumptionConfig dataclass defaults and overrides."""
+
+    def test_consumption_config_defaults(self) -> None:
+        from core.consumption import (
+            CONSUMPTION_MAX_KW,
+            EMA_ALPHA,
+            MIN_SAMPLES_FOR_LEARNED,
+            ConsumptionConfig,
+        )
+        cfg = ConsumptionConfig()
+        assert cfg.ema_alpha == EMA_ALPHA
+        assert cfg.min_samples == MIN_SAMPLES_FOR_LEARNED
+        assert cfg.max_kw == CONSUMPTION_MAX_KW
+
+    def test_consumption_profile_uses_config(self) -> None:
+        from core.consumption import ConsumptionConfig, ConsumptionProfile
+
+        cfg = ConsumptionConfig(
+            ema_alpha=_CUSTOM_EMA_ALPHA,
+            min_samples=_CUSTOM_MIN_SAMPLES,
+            max_kw=_CUSTOM_MAX_KW,
+        )
+        profile = ConsumptionProfile(config=cfg)
+        assert profile._ema_alpha == _CUSTOM_EMA_ALPHA
+        assert profile._min_samples == _CUSTOM_MIN_SAMPLES
+        assert profile._max_kw == _CUSTOM_MAX_KW
