@@ -748,3 +748,52 @@ class TestGenerate48hPlan:
         today, _ = service._plan_executor.generate_48h(snap, 17)
         first = today.split("|")[0]
         assert ":DIS:" in first or ":STB:" in first
+
+
+# ---------------------------------------------------------------------------
+# _generate_day_plan (PLAT-1627)
+# ---------------------------------------------------------------------------
+
+_DAY_PLAN_WINDOW_HOURS: int = 16  # 06-22
+
+
+class TestGenerateDayPlan:
+    """PLAT-1627: _generate_day_plan builds DayPlan from snapshot + config."""
+
+    def _make_service(self) -> CarmaBoxService:
+        from config.schema import load_config
+        config_path = str(
+            Path(__file__).resolve().parents[2] / "config" / "site.yaml"
+        )
+        cfg = load_config(config_path)
+        return CarmaBoxService(cfg)
+
+    def test_returns_day_plan_with_valid_snapshot(self) -> None:
+        """_generate_day_plan returns DayPlan with correct number of slots."""
+        from core.day_plan import DayPlan
+        from tests.conftest import make_snapshot, make_grid_state
+
+        service = self._make_service()
+        snap = make_snapshot(
+            hour=10,
+            minute=0,
+            grid=make_grid_state(pv_forecast_today_kwh=25.0),
+        )
+        plan = service._generate_day_plan(snap)
+        assert plan is not None
+        assert isinstance(plan, DayPlan)
+        assert len(plan.slots) == _DAY_PLAN_WINDOW_HOURS
+
+    def test_returns_none_on_error(self) -> None:
+        """_generate_day_plan returns None when generation fails."""
+        from unittest.mock import patch
+        from tests.conftest import make_snapshot
+
+        service = self._make_service()
+        snap = make_snapshot(hour=10, minute=0)
+        with patch(
+            "main.generate_day_plan",
+            side_effect=ValueError("test error"),
+        ):
+            plan = service._generate_day_plan(snap)
+        assert plan is None
