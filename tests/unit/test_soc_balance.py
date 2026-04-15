@@ -200,3 +200,119 @@ class TestDischargeSoCBalance:
         # Balancer should allocate — check result has balance
         assert result.balance is not None
         assert len(result.balance.allocations) >= _MIN_ALLOCATIONS
+
+
+# ===========================================================================
+# PLAT-1616: clear_pending prevents mode_manager override
+# ===========================================================================
+
+_STANDBY_MODE: str = "battery_standby"
+_CHARGE_PV_MODE: str = "charge_pv"
+
+
+@pytest.mark.asyncio()
+class TestClearPendingPreventsOverride:
+    """Branch A clears pending mode_manager requests."""
+
+    async def test_pending_standby_cleared_by_charge_plan(self) -> None:
+        """Pending standby from Branch B → Branch A clears → charge_pv set."""
+        engine = _make_engine()
+
+        # Cycle 1: Branch B (night) — queues standby
+        engine._sm.state.current = Scenario.EVENING_DISCHARGE
+        snap_night = make_snapshot(
+            hour=_DISCHARGE_HOUR,
+            batteries=[make_battery_state(
+                battery_id="kontor", soc_pct=_SOC_HIGH_PCT,
+                ct_placement=CTPlacement.LOCAL_LOAD,
+            )],
+        )
+        await engine.run_cycle(snap_night)
+
+        # Cycle 2: Branch A (day) — should clear pending + set charge_pv
+        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+        snap_day = make_snapshot(
+            hour=_CHARGE_HOUR,
+            batteries=[make_battery_state(
+                battery_id="kontor", soc_pct=_SOC_HIGH_PCT,
+                ems_mode=_STANDBY_MODE,
+                ct_placement=CTPlacement.LOCAL_LOAD,
+                pv_power_w=_PV_SURPLUS_W, load_power_w=_LOAD_W,
+            )],
+            grid=make_grid_state(grid_power_w=_PV_EXPORT_W),
+        )
+        result = await engine.run_cycle(snap_day)
+
+        # Charge plan should have set charge_pv despite pending standby
+        assert result.execution is not None
+        mode_entries = [
+            e for e in result.execution.audit_entries
+            if e.command_type == "set_ems_mode"
+        ]
+        assert any(
+            e.value == _CHARGE_PV_MODE for e in mode_entries
+        ), f"Expected charge_pv, got {[e.value for e in mode_entries]}"
+
+
+# ===========================================================================
+# PLAT-1617: export_limit set for Kontor (local_load CT)
+# ===========================================================================
+
+_EXPECTED_EXPORT_LIMIT_CHARGE: int = 0
+_EXPECTED_EXPORT_LIMIT_STANDBY: int = 5000
+
+
+@pytest.mark.asyncio()
+class TestExportLimitKontor:
+    """Kontor gets export_limit=0 during charge, restored at standby."""
+
+    async def test_charge_sets_export_limit_zero(self) -> None:
+        """Kontor charge_pv → export_limit=0."""
+        engine = _make_engine()
+        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+
+        snap = make_snapshot(
+            hour=_CHARGE_HOUR,
+            batteries=[make_battery_state(
+                battery_id="kontor", soc_pct=_SOC_LOW_PCT,
+                ems_mode=_STANDBY_MODE,
+                ct_placement=CTPlacement.LOCAL_LOAD,
+                pv_power_w=_PV_SURPLUS_W, load_power_w=_LOAD_W,
+            )],
+            grid=make_grid_state(grid_power_w=_PV_EXPORT_W),
+        )
+        result = await engine.run_cycle(snap)
+
+        assert result.execution is not None
+        export_entries = [
+            e for e in result.execution.audit_entries
+            if e.command_type == "set_export_limit"
+        ]
+        assert len(export_entries) >= _MIN_ALLOCATIONS
+        assert int(export_entries[0].value) == _EXPECTED_EXPORT_LIMIT_CHARGE
+
+    async def test_standby_restores_export_limit(self) -> None:
+        """Kontor standby → export_limit restored to default."""
+        engine = _make_engine()
+        engine._sm.state.current = Scenario.MIDDAY_CHARGE
+
+        snap = make_snapshot(
+            hour=_CHARGE_HOUR,
+            batteries=[make_battery_state(
+                battery_id="kontor", soc_pct=_SOC_LOW_PCT,
+                ems_mode=_CHARGE_PV_MODE,
+                ct_placement=CTPlacement.LOCAL_LOAD,
+                pv_power_w=_ZERO_WAIT_S,  # No PV
+                load_power_w=_LOAD_W,
+            )],
+            grid=make_grid_state(grid_power_w=_GRID_DISCHARGE_W),
+        )
+        result = await engine.run_cycle(snap)
+
+        assert result.execution is not None
+        export_entries = [
+            e for e in result.execution.audit_entries
+            if e.command_type == "set_export_limit"
+        ]
+        assert len(export_entries) >= _MIN_ALLOCATIONS
+        assert int(export_entries[0].value) == _EXPECTED_EXPORT_LIMIT_STANDBY

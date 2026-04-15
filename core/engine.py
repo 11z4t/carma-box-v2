@@ -54,6 +54,9 @@ _CHARGE_PV_EMS_LIMIT_W: int = 0
 # Number of batteries in a dual-battery system.
 _DUAL_BATTERY_COUNT: int = 2
 
+# Default export limit when not actively charging (allow normal export).
+_DEFAULT_EXPORT_LIMIT_W: int = 5000
+
 # Safe conservative fallback for max charge/discharge power (W)
 # when battery config is unavailable.
 _SAFE_BAT_FALLBACK_W: float = 5000.0
@@ -470,6 +473,15 @@ class ControlEngine:
                             f" or SoC balance → standby"
                         ),
                     ))
+                    # Restore export_limit for Kontor (PLAT-1617)
+                    if bat.ct_placement == CTPlacement.LOCAL_LOAD:
+                        cmds.append(Command(
+                            command_type=CommandType.SET_EXPORT_LIMIT,
+                            target_id=bat.battery_id,
+                            value=_DEFAULT_EXPORT_LIMIT_W,
+                            rule_id="PV_CHARGE_PLAN",
+                            reason="Standby: restore export_limit",
+                        ))
 
         if cmds:
             exec_result = await self._executor.execute(cmds)

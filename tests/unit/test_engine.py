@@ -408,7 +408,9 @@ class TestNoNaked1000InEngineModels:
 
         source = (Path(__file__).resolve().parents[2] / "core" / "engine.py").read_text()
         for i, line in enumerate(source.splitlines(), 1):
-            if re.search(r'\b5000\b', line) and '_SAFE_BAT_FALLBACK_W' not in line:
+            has_5000 = re.search(r'\b5000\b', line)
+            is_const = '_SAFE_BAT_FALLBACK_W' in line or '_DEFAULT_EXPORT_LIMIT_W' in line
+            if has_5000 and not is_const:
                 if not line.strip().startswith("#"):
                     assert False, f"Naked 5000 at engine.py:{i}: {line.strip()}"
 
