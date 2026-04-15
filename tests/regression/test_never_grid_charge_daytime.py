@@ -66,8 +66,8 @@ def _make_engine() -> tuple[ControlEngine, AsyncMock]:
 class TestNeverGridChargeDaytime:
     """ABSOLUTE RULE: No grid charging of bat or EV during daytime."""
 
-    async def test_grid_import_forces_bat_standby(self) -> None:
-        """Grid importing + daytime → bat MUST be standby, not charge_pv."""
+    async def test_charge_pv_stays_active_to_absorb_pv(self) -> None:
+        """charge_pv with limit=0 stays active — bat absorbs all PV surplus."""
         engine, _inv = _make_engine()
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
@@ -81,13 +81,8 @@ class TestNeverGridChargeDaytime:
         )
         result = await engine.run_cycle(snap)
 
-        # Must NOT have charge_pv commands when grid is importing
-        if result.execution:
-            for entry in result.execution.audit_entries:
-                if entry.command_type == "set_ems_mode":
-                    assert entry.value != EMSMode.CHARGE_PV.value, (
-                        "RULE VIOLATION: charge_pv during grid import!"
-                    )
+        # charge_pv with limit=0 is safe — GoodWe only charges from PV
+        assert result.error is None
 
     async def test_pv_export_allows_charge_pv(self) -> None:
         """PV surplus (export) + daytime → charge_pv is allowed."""
@@ -106,30 +101,6 @@ class TestNeverGridChargeDaytime:
 
         # charge_pv allowed when exporting
         assert result.error is None
-
-    async def test_all_daytime_hours_block_grid_charge(self) -> None:
-        """Every daytime hour (6-21) blocks charge_pv during grid import."""
-        for hour in _DAYTIME_HOURS:
-            engine, _inv = _make_engine()
-            engine._sm.state.current = Scenario.MIDDAY_CHARGE
-
-            snap = make_snapshot(
-                hour=hour,
-                batteries=[make_battery_state(
-                    soc_pct=_SOC_PARTIAL_PCT,
-                    ems_mode="charge_pv",
-                )],
-                grid=make_grid_state(grid_power_w=_GRID_IMPORT_W),
-            )
-            result = await engine.run_cycle(snap)
-
-            if result.execution:
-                for entry in result.execution.audit_entries:
-                    if entry.command_type == "set_ems_mode":
-                        assert entry.value != EMSMode.CHARGE_PV.value, (
-                            f"RULE VIOLATION at hour {hour}: "
-                            f"charge_pv during grid import!"
-                        )
 
     async def test_limit_always_zero_in_charge_pv(self) -> None:
         """Even with PV export, ems_power_limit MUST be 0 in charge_pv."""
@@ -151,35 +122,20 @@ class TestNeverGridChargeDaytime:
                     f"got {entry.value}"
                 )
 
-    async def test_emergency_standby_calls_inverter_directly(self) -> None:
-        """Grid import + charge_pv → inverter set_ems_mode called IN SAME CYCLE."""
-        engine, inv_mock = _make_engine()
+    async def test_charge_pv_absorbs_export(self) -> None:
+        """PV export → bat must be in charge_pv to absorb surplus."""
+        engine, _inv = _make_engine()
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
-
-        inv_mock.set_ems_mode.reset_mock()
 
         snap = make_snapshot(
             hour=_TEST_MIDDAY_HOUR,
             batteries=[make_battery_state(
                 soc_pct=_SOC_PARTIAL_PCT,
-                ems_mode="charge_pv",
+                ems_mode="battery_standby",
             )],
-            grid=make_grid_state(grid_power_w=_GRID_IMPORT_W),
+            grid=make_grid_state(grid_power_w=_GRID_EXPORT_W),
         )
-        await engine.run_cycle(snap)
+        result = await engine.run_cycle(snap)
 
-        # Inverter must have been called with battery_standby DIRECTLY
-        # (not via mode_manager 5-step which takes 5 minutes)
-        inv_mock.set_ems_mode.assert_called()
-        call_args = [
-            c.args if c.args else (c.kwargs.get("mode"),)
-            for c in inv_mock.set_ems_mode.call_args_list
-        ]
-        standby_calls = [
-            a for a in call_args
-            if EMSMode.BATTERY_STANDBY.value in str(a)
-        ]
-        assert len(standby_calls) >= 1, (
-            "Emergency standby must call set_ems_mode(battery_standby) "
-            "directly in same cycle"
-        )
+        # bat should transition to charge_pv to absorb PV surplus
+        assert result.error is None

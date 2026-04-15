@@ -24,7 +24,7 @@ from typing import Optional
 from config.schema import BatteryConfig
 from core.balancer import BalanceResult, BatteryBalancer, BatteryInfo
 from core.executor import CommandExecutor, ExecutionResult
-from core.guards import GridGuard, GuardCommand, GuardEvaluation, GuardLevel
+from core.guards import GridGuard, GuardEvaluation, GuardLevel
 from core.mode_change import ModeChangeManager
 from core.models import (
     MAX_SOC_PCT,
@@ -181,34 +181,10 @@ class ControlEngine:
                 _ScenarioMode(EMSMode.BATTERY_STANDBY),
             )
             base_mode = sm.mode.value
-            # CRITICAL: During daytime charge scenarios, grid import means
-            # PV doesn't cover house load → bat MUST be standby.
-            # Only allow charge_pv when there is actual PV surplus (export).
-            grid_importing = snapshot.grid.grid_power_w > 0
-            is_day_charge = base_mode == EMSMode.CHARGE_PV.value and not snapshot.is_night
-            if is_day_charge and grid_importing:
-                base_mode = EMSMode.BATTERY_STANDBY.value
-                # EMERGENCY: Set standby IMMEDIATELY — bypass 5-step mode change.
-                # Execute guard commands directly in this cycle.
-                emergency_cmds: list[GuardCommand] = []
-                for bat in snapshot.batteries:
-                    if bat.ems_mode.value == EMSMode.CHARGE_PV.value:
-                        emergency_cmds.append(GuardCommand(
-                            guard_id="G_GRID_IMPORT",
-                            command_type=CommandType.SET_EMS_MODE,
-                            target_id=bat.battery_id,
-                            value=EMSMode.BATTERY_STANDBY.value,
-                            reason=(
-                                f"EMERGENCY: grid importing {snapshot.grid.grid_power_w:.0f}W"
-                                f" daytime — standby to prevent grid charge"
-                            ),
-                        ))
-                if emergency_cmds:
-                    await self._executor.execute_guard_commands(emergency_cmds)
-                logger.info(
-                    "Daytime charge blocked: grid importing %.0fW → standby",
-                    snapshot.grid.grid_power_w,
-                )
+            # Daytime charge_pv with limit=0: GoodWe charges bat from PV only.
+            # No grid-import block needed — limit=0 prevents grid charging.
+            # Bat stays in charge_pv to absorb ALL PV surplus (never export
+            # when bat can absorb).
 
             for bat in snapshot.batteries:
                 if not self._mode_manager.is_in_progress(bat.battery_id):
