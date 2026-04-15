@@ -1,5 +1,6 @@
 
 [tool.mypy]
+strict = true
 ignore_missing_imports = false
 
 [[tool.mypy.overrides]]
@@ -8,9 +9,24 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
+testpaths = ["tests"]
+markers = [
+    "unit: Unit tests (no I/O)",
+    "regression: Regression tests for known bugs",
+    "e2e: End-to-end integration tests",
+]
 
 [tool.ruff]
 line-length = 100
 
 [tool.ruff.lint]
-select = ["F", "E", "W"]
+select = ["F", "E", "W", "C90"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 25
+
+[tool.coverage.report]
+fail_under = 95
