@@ -256,10 +256,27 @@ class ControlEngine:
                 result.balance = balance
 
                 # H1: Turn allocations into SET_EMS_POWER_LIMIT commands and execute.
-                # Skip batteries that are at the floor (zero allocation) to avoid
-                # writing 0 and inadvertently waking GoodWe's autonomous grid-charge.
-                if balance.allocations:
-                    limit_cmds: list[Command] = [
+                # CRITICAL: In charge_pv mode, ems_power_limit MUST be 0.
+                # Any limit > 0 in charge_pv = GoodWe grid-imports up to that limit.
+                # Only set limits in discharge_pv mode (controls discharge rate).
+                active_mode = self._SCENARIO_MODES.get(
+                    self._sm.state.current,
+                    _ScenarioMode(EMSMode.BATTERY_STANDBY),
+                ).mode
+                if active_mode == EMSMode.CHARGE_PV:
+                    # Force limit=0 on all batteries — PV-only charging
+                    limit_cmds = [
+                        Command(
+                            command_type=CommandType.SET_EMS_POWER_LIMIT,
+                            target_id=alloc.battery_id,
+                            value=0,
+                            rule_id="CHARGE_PV_ZERO",
+                            reason="charge_pv: limit must be 0 (PV-only, no grid import)",
+                        )
+                        for alloc in balance.allocations
+                    ]
+                elif balance.allocations:
+                    limit_cmds = [
                         Command(
                             command_type=CommandType.SET_EMS_POWER_LIMIT,
                             target_id=alloc.battery_id,
@@ -273,16 +290,19 @@ class ControlEngine:
                         for alloc in balance.allocations
                         if alloc.watts > 0
                     ]
-                    if limit_cmds:
-                        exec_result = await self._executor.execute(limit_cmds)
-                        result.execution = exec_result
-                        logger.debug(
-                            "Cycle %s: balance → %d EMS limit commands (%d ok, %d fail)",
-                            cycle_id,
-                            len(limit_cmds),
-                            exec_result.commands_succeeded,
-                            exec_result.commands_failed,
-                        )
+                else:
+                    limit_cmds = []
+
+                if limit_cmds:
+                    exec_result = await self._executor.execute(limit_cmds)
+                    result.execution = exec_result
+                    logger.debug(
+                        "Cycle %s: balance → %d EMS limit commands (%d ok, %d fail)",
+                        cycle_id,
+                        len(limit_cmds),
+                        exec_result.commands_succeeded,
+                        exec_result.commands_failed,
+                    )
 
             # Phase 5: MODE CHANGE MANAGER — process pending changes
             await self._mode_manager.process(self._executor)

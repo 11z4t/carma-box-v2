@@ -349,13 +349,13 @@ class GridGuard:
                     )
                     self._at_floor.discard(bat_id)
                 else:
-                    # Still in hysteresis zone — keep at standby
+                    # Still in hysteresis zone — charge_pv to allow recovery
                     result.batteries_at_floor.add(bat_id)
                     result.commands.append(GuardCommand(
                         guard_id="G1",
                         command_type=CommandType.SET_EMS_MODE,
                         target_id=bat_id,
-                        value=EMSMode.BATTERY_STANDBY.value,
+                        value=EMSMode.CHARGE_PV.value,
                         reason=(
                             f"G1: hysteresis, soc={bat.soc_pct:.1f}% "
                             f"< floor+5%={effective_floor + self._config.hysteresis_pct:.1f}%"
