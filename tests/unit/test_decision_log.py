@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from core.decision_log import DecisionLog, DecisionRecord
+from core.decision_log import DecisionLog, DecisionRecord, DecisionTrace
 from core.models import Scenario
 
 
@@ -94,3 +94,76 @@ class TestDecisionLog:
             error="inverter timeout",
         )
         assert r.error == "inverter timeout"
+
+
+# ===========================================================================
+# PLAT-1595: DecisionTrace tests
+# ===========================================================================
+
+_TEST_CYCLE_ID: str = "test-cycle-001"
+_WARN_LEVEL: str = "WARNING"
+_TEST_GUARD_REASON: str = "weighted_avg 2.3kW > tak 2.0kW"
+_TEST_SCENARIO: str = "EVENING_DISCHARGE"
+_TEST_PLAN_USED: str = "night_plan_active"
+_TEST_SUPPRESSED_CMD: str = "ev_start: guard_level=CRITICAL"
+_TEST_SENT_CMD: str = "set_mode:discharge_pv:kontor"
+_TEST_DEGRADED_MODE: str = "stale_soc"
+_EXPECTED_SCHEMA_VERSION: str = "1.0"
+_TEST_TRACE_TIMESTAMP: datetime = datetime(2026, 4, 16, 3, 0, 0, tzinfo=timezone.utc)
+
+
+def _make_trace(**overrides: object) -> DecisionTrace:
+    defaults: dict[str, object] = {
+        "cycle_id": _TEST_CYCLE_ID,
+        "timestamp": _TEST_TRACE_TIMESTAMP,
+        "scenario": _TEST_SCENARIO,
+        "active_guard_level": _WARN_LEVEL,
+        "guard_reason": _TEST_GUARD_REASON,
+        "plan_used": _TEST_PLAN_USED,
+        "commands_sent": [_TEST_SENT_CMD],
+        "commands_suppressed": [_TEST_SUPPRESSED_CMD],
+        "degraded_modes_active": [_TEST_DEGRADED_MODE],
+    }
+    defaults.update(overrides)
+    return DecisionTrace(**defaults)  # type: ignore[arg-type]
+
+
+class TestTraceCapturesGuardReason:
+    """T1: Guard reason preserved in trace."""
+
+    def test_trace_captures_guard_reason(self) -> None:
+        trace = _make_trace()
+        assert trace.active_guard_level == _WARN_LEVEL
+        assert "weighted_avg" in trace.guard_reason
+
+
+class TestTraceCapturesSuppressedCommands:
+    """T2: Suppressed commands list preserved."""
+
+    def test_trace_captures_suppressed_commands(self) -> None:
+        trace = _make_trace()
+        assert len(trace.commands_suppressed) == 1
+        assert "ev_start" in trace.commands_suppressed[0]
+
+
+class TestTraceSerializableToJson:
+    """T3: to_dict() → json roundtrip."""
+
+    def test_trace_serializable_to_json(self) -> None:
+        trace = _make_trace()
+        d = trace.to_dict()
+        json_str = json.dumps(d)
+        roundtrip = json.loads(json_str)
+        assert roundtrip == d
+        assert "schema_version" in d
+
+
+class TestTraceSchemaVersioned:
+    """T4: SCHEMA_VERSION class attribute in to_dict()."""
+
+    def test_trace_schema_versioned(self) -> None:
+        assert isinstance(DecisionTrace.SCHEMA_VERSION, str)
+        trace = _make_trace()
+        d = trace.to_dict()
+        assert d["schema_version"] == _EXPECTED_SCHEMA_VERSION
+        assert d["schema_version"] == DecisionTrace.SCHEMA_VERSION

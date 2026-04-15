@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
 from core.models import ModelEncoder, Scenario
 
@@ -37,6 +37,42 @@ class DecisionRecord:
         return json.dumps(
             asdict(self), cls=ModelEncoder, separators=(",", ":"),
         )
+
+
+@dataclass(frozen=True)
+class DecisionTrace:
+    """Per-cycle trace capturing the full reasoning chain.
+
+    Complements DecisionRecord with suppressed commands, degraded modes,
+    and guard reasoning — for post-mortem analysis and audit.
+    """
+
+    SCHEMA_VERSION: ClassVar[str] = "1.0"
+
+    cycle_id: str
+    timestamp: datetime
+    scenario: str
+    active_guard_level: str
+    guard_reason: str
+    plan_used: str
+    commands_sent: list[str] = field(default_factory=list)
+    commands_suppressed: list[str] = field(default_factory=list)
+    degraded_modes_active: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize to JSON-safe dict with schema version."""
+        return {
+            "schema_version": self.SCHEMA_VERSION,
+            "cycle_id": self.cycle_id,
+            "timestamp": self.timestamp.isoformat(),
+            "scenario": self.scenario,
+            "active_guard_level": self.active_guard_level,
+            "guard_reason": self.guard_reason,
+            "plan_used": self.plan_used,
+            "commands_sent": list(self.commands_sent),
+            "commands_suppressed": list(self.commands_suppressed),
+            "degraded_modes_active": list(self.degraded_modes_active),
+        }
 
 
 class DecisionLog:
