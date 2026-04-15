@@ -102,8 +102,8 @@ class TestNeverGridChargeDaytime:
         # charge_pv allowed when exporting
         assert result.error is None
 
-    async def test_charge_plan_limits_to_pv_surplus(self) -> None:
-        """Charge plan sets limit = PV surplus (not unlimited)."""
+    async def test_limit_always_zero_in_charge_pv(self) -> None:
+        """PLAT-1613 ABSOLUTE: ems_power_limit=0 in charge_pv. NEVER remove this test."""
         engine, _inv = _make_engine()
         engine._sm.state.current = Scenario.MIDDAY_CHARGE
 
@@ -114,8 +114,15 @@ class TestNeverGridChargeDaytime:
         )
         result = await engine.run_cycle(snap)
 
-        # Charge plan should complete without error
         assert result.error is None
+        # ALL limit commands in charge_pv mode MUST be 0
+        if result.execution:
+            for entry in result.execution.audit_entries:
+                if entry.command_type == "set_ems_power_limit":
+                    assert int(entry.value) == 0, (
+                        f"PLAT-1613 VIOLATION: charge_pv limit={entry.value},"
+                        f" MUST be 0"
+                    )
 
     async def test_charge_pv_absorbs_export(self) -> None:
         """PV export → bat must be in charge_pv to absorb surplus."""
