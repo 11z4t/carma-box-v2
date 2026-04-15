@@ -18,6 +18,9 @@ from core.day_plan import HourlyForecast
 
 logger = logging.getLogger(__name__)
 
+# Percentage factor for confidence calculation.
+_PCT_FACTOR: float = 100.0
+
 # Cache: re-fetch hourly forecast only when the hour changes.
 _CACHE_SENTINEL_HOUR: int = -1
 
@@ -170,4 +173,4 @@ class SolcastAdapter:
         if estimate <= 0:
             return 0.0
         spread = p90 - p10
-        return max(0.0, (1.0 - spread / estimate)) * 100.0
+        return max(0.0, (1.0 - spread / estimate)) * _PCT_FACTOR

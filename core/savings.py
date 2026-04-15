@@ -21,6 +21,9 @@ DEFAULT_TOP_N: int = 3
 MAX_SAVINGS_HISTORY_DAYS: int = 30
 MAX_PRICE_HISTORY_ENTRIES: int = 2000
 
+# Öre-to-kronor conversion (100 öre = 1 kr).
+_ORE_TO_KR: float = 100.0
+
 
 @dataclass(frozen=True)
 class SavingsConfig:
@@ -128,7 +131,7 @@ def record_discharge(
         avg_price_ore: Average daily price (öre/kWh).
     """
     if discharge_kwh > 0:
-        savings = discharge_kwh * (price_ore - avg_price_ore) / 100  # öre → kr
+        savings = discharge_kwh * (price_ore - avg_price_ore) / _ORE_TO_KR  # öre → kr
         state.discharge_savings_kr += savings  # Can be negative if discharged at cheap price
         state.total_discharge_kwh += discharge_kwh
 
@@ -150,7 +153,7 @@ def record_grid_charge(
         avg_price_ore: Average daily price (öre/kWh).
     """
     if charge_kwh > 0 and avg_price_ore > price_ore:
-        savings = charge_kwh * (avg_price_ore - price_ore) / 100  # öre → kr
+        savings = charge_kwh * (avg_price_ore - price_ore) / _ORE_TO_KR  # öre → kr
         state.grid_charge_savings_kr += savings
         state.total_grid_charge_kwh += charge_kwh
 
@@ -256,7 +259,7 @@ def record_cost_estimate(
         price_ore: Current electricity price (öre/kWh).
         battery_discharge_kwh: Energy discharged from battery this interval (kWh).
     """
-    cost_per_kwh = price_ore / 100  # öre → kr
+    cost_per_kwh = price_ore / _ORE_TO_KR  # öre → kr
 
     # Without CARMA Box: all consumption from grid
     state.baseline_cost_kr += consumption_kwh * cost_per_kwh

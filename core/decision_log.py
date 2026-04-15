@@ -14,6 +14,9 @@ from typing import Any, ClassVar, Optional
 
 from core.models import ModelEncoder, Scenario
 
+# Seconds-to-milliseconds conversion.
+_MS_PER_S: int = 1000
+
 logger = logging.getLogger(__name__)
 
 
@@ -104,7 +107,7 @@ class DecisionLog:
         rec = DecisionRecord(
             cycle_id=cycle_id,
             timestamp=timestamp.isoformat(),
-            elapsed_ms=int(elapsed_s * 1000),
+            elapsed_ms=int(elapsed_s * _MS_PER_S),
             scenario=scenario.value,
             guard_level=guard_level,
             guard_commands=guard_commands or [],

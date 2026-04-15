@@ -13,6 +13,9 @@ from dataclasses import dataclass
 
 from adapters.ha_api import HAApiClient
 
+# SEK-to-öre conversion (1 SEK = 100 öre).
+_SEK_TO_ORE: float = 100.0
+
 logger = logging.getLogger(__name__)
 
 # Default price thresholds (öre/kWh).
@@ -51,7 +54,7 @@ class NordpoolAdapter:
         try:
             raw = float(state)
             # Only multiply by 100 if unit is SEK (not already öre)
-            return raw * 100.0 if self._config.price_unit.lower() == "sek" else raw
+            return raw * _SEK_TO_ORE if self._config.price_unit.lower() == "sek" else raw
         except (ValueError, TypeError):
             return self._config.fallback_ore
 
@@ -90,7 +93,7 @@ class NordpoolAdapter:
             try:
                 fval = float(val)
                 # Only multiply by 100 if unit is SEK (not already öre)
-                prices[i] = fval * 100.0 if self._config.price_unit.lower() == "sek" else fval
+                prices[i] = fval * _SEK_TO_ORE if self._config.price_unit.lower() == "sek" else fval
             except (ValueError, TypeError):
                 prices[i] = self._config.fallback_ore
 

@@ -13,6 +13,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
+# Percentage factor for ratio-to-percent conversion.
+_PCT_FACTOR: float = 100.0
+
 
 @dataclass
 class MonthlyReport:
@@ -133,7 +136,7 @@ def generate_report(
 
     if report.peak_baseline_kw > 0:
         reduction = report.peak_baseline_kw - report.peak_actual_kw
-        report.peak_reduction_pct = round(reduction / report.peak_baseline_kw * 100, 1)
+        report.peak_reduction_pct = round(reduction / report.peak_baseline_kw * _PCT_FACTOR, 1)
         report.peak_savings_kr = round(max(0, reduction) * cost_per_kw, 1)
 
     # Price optimization
@@ -151,7 +154,7 @@ def generate_report(
     report.ev_nights_target_reached = sum(1 for s in ev_nights if s.ev_target_reached)
     if report.ev_nights_charged > 0:
         report.ev_target_hit_pct = round(
-            report.ev_nights_target_reached / report.ev_nights_charged * 100, 1
+            report.ev_nights_target_reached / report.ev_nights_charged * _PCT_FACTOR, 1
         )
     report.ev_total_kwh = round(sum(s.ev_kwh for s in samples), 1)
 
