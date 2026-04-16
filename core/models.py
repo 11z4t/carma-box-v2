@@ -74,6 +74,7 @@ class Scenario(Enum):
     NIGHT_LOW_PV = "NIGHT_LOW_PV"                # S6
     NIGHT_GRID_CHARGE = "NIGHT_GRID_CHARGE"      # S7
     PV_SURPLUS = "PV_SURPLUS"                    # S8
+    NIGHT_EV = "NIGHT_EV"                        # S9 (PLAT-1674)
 
 
 @unique

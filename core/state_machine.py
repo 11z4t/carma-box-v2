@@ -241,6 +241,7 @@ class StateMachine:
         Scenario.NIGHT_LOW_PV: "_entry_s6",
         Scenario.NIGHT_GRID_CHARGE: "_entry_s7",
         Scenario.PV_SURPLUS: "_entry_s8",
+        Scenario.NIGHT_EV: "_entry_s9",
     }
 
     def _check_entry(self, scenario: Scenario, snap: SystemSnapshot) -> bool:
@@ -328,6 +329,19 @@ class StateMachine:
             and snap.grid.grid_power_w < -cfg.surplus_export_min_w
         )
 
+    def _entry_s9(self, snap: SystemSnapshot) -> bool:
+        """S9 NIGHT_EV (PLAT-1674): natt + EV plugged + below target.
+
+        Take precedence over NIGHT_HIGH_PV / NIGHT_LOW_PV / NIGHT_GRID_CHARGE
+        when EV needs charging — engine prioritizes via scenario priority order.
+        """
+        cfg = self._config
+        return (
+            snap.is_night
+            and snap.ev.connected
+            and snap.ev.soc_pct < cfg.ev_target_soc_pct
+        )
+
     # ------------------------------------------------------------------
     # Exit conditions per scenario
     # ------------------------------------------------------------------
@@ -342,6 +356,7 @@ class StateMachine:
         Scenario.NIGHT_LOW_PV: "_exit_s6",
         Scenario.NIGHT_GRID_CHARGE: "_exit_s7",
         Scenario.PV_SURPLUS: "_exit_s8",
+        Scenario.NIGHT_EV: "_exit_s9",
     }
 
     def _should_exit(self, scenario: Scenario, snap: SystemSnapshot) -> bool:
@@ -413,4 +428,15 @@ class StateMachine:
         return (
             snap.total_battery_soc_pct < cfg.surplus_exit_soc_pct
             or snap.grid.pv_total_w < cfg.surplus_exit_pv_min_w
+        )
+
+    def _exit_s9(self, snap: SystemSnapshot) -> bool:
+        """Exit S9 NIGHT_EV (PLAT-1674): EV target reached, EV unplugged,
+        or daytime window. Hand-off to S7 NIGHT_GRID_CHARGE for bat charging.
+        """
+        cfg = self._config
+        return (
+            self._exit_night(snap)
+            or not snap.ev.connected
+            or snap.ev.soc_pct >= cfg.ev_target_soc_pct
         )

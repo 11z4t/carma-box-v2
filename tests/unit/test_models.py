@@ -65,13 +65,14 @@ class TestScenario:
     """Test Scenario enum."""
 
     def test_all_scenarios(self) -> None:
-        """All 8 scenarios should be defined."""
-        assert len(Scenario) == 8
+        """All 9 scenarios should be defined (PLAT-1674: + NIGHT_EV)."""
+        assert len(Scenario) == 9
 
     def test_scenario_values(self) -> None:
         """Scenario values should match the state machine definition."""
         assert Scenario.MORNING_DISCHARGE.value == "MORNING_DISCHARGE"
         assert Scenario.NIGHT_GRID_CHARGE.value == "NIGHT_GRID_CHARGE"
+        assert Scenario.NIGHT_EV.value == "NIGHT_EV"
 
 
 class TestBatteryState:

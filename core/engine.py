@@ -104,6 +104,9 @@ class ControlEngine:
         Scenario.NIGHT_LOW_PV: _ScenarioMode(EMSMode.BATTERY_STANDBY),
         Scenario.NIGHT_GRID_CHARGE: _ScenarioMode(EMSMode.CHARGE_PV),
         Scenario.PV_SURPLUS: _ScenarioMode(EMSMode.CHARGE_PV),
+        # PLAT-1674: NIGHT_EV — bat passively follows bat_support_controller's
+        # decisions; mode set to discharge_pv as default for support during EV.
+        Scenario.NIGHT_EV: _ScenarioMode(EMSMode.DISCHARGE_PV),
     }
 
     def __init__(
