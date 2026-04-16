@@ -60,6 +60,8 @@ from core.day_planner import (
 )
 from core.planner import Planner, PlannerConfig
 from core.ev_controller import EVAction, EVController, EVControllerConfig
+from core.bat_support_controller import BatSupportConfig as BatSupportCtrlCfg
+from core.ev_night_controller import NightEVConfig
 from core.ev_surplus import EVSurplusConfig, EVSurplusController
 from core.surplus_dispatch import SurplusConfig as SurplusDispatchConfig, SurplusDispatch
 from health import HealthStatus, Metrics
@@ -357,11 +359,40 @@ class CarmaBoxService:
         # H2: map battery_id → config so engine can read per-battery limits
         battery_cfg_map = {bc.id: bc for bc in config.batteries}
 
+        # PLAT-1674: Wire up NightEVController + BatSupportController
+        night_ev_cfg: Optional[NightEVConfig] = None
+        bat_support_cfg: Optional[BatSupportCtrlCfg] = None
+        if config.night_ev.enabled:
+            night_ev_cfg = NightEVConfig(
+                night_start_hour=config.night_ev.night_start_hour,
+                night_end_hour=config.night_ev.night_end_hour,
+                start_amps=config.night_ev.start_amps,
+                max_amps=config.night_ev.max_amps,
+                min_amps=config.night_ev.min_amps,
+                ramp_step_amps=config.night_ev.ramp_step_amps,
+                ramp_interval_s=config.night_ev.ramp_interval_s,
+                tak_weighted_kw=config.night_ev.tak_weighted_kw,
+                grid_safety_margin_up=config.night_ev.grid_safety_margin_up,
+                grid_safety_margin_down=config.night_ev.grid_safety_margin_down,
+            )
+        if config.bat_support.enabled:
+            bat_support_cfg = BatSupportCtrlCfg(
+                enabled=config.bat_support.enabled,
+                tak_weighted_kw=config.bat_support.tak_weighted_kw,
+                night_weight=config.bat_support.night_weight,
+                safety_margin=config.bat_support.safety_margin,
+                min_soc_normal_pct=config.bat_support.min_soc_normal_pct,
+                min_soc_cold_pct=config.bat_support.min_soc_cold_pct,
+                cold_temp_c=config.bat_support.cold_temp_c,
+            )
+
         self._engine = ControlEngine(
             grid_guard, sm, balancer, mode_mgr, executor,
             battery_configs=battery_cfg_map,
             ev_surplus=ev_surplus_ctrl,
             surplus_dispatch=self._surplus_dispatch,
+            night_ev_config=night_ev_cfg,
+            bat_support_config=bat_support_cfg,
         )
 
     @property

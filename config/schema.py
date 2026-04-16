@@ -428,6 +428,46 @@ class EveningPlanConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# PLAT-1674: Night EV controller + Bat support controller
+# ---------------------------------------------------------------------------
+
+
+class NightEVControllerConfig(BaseModel):
+    """Configuration for ev_night_controller (PLAT-1674).
+
+    Maps directly to NightEVConfig dataclass — used to construct controller.
+    """
+
+    enabled: bool = Field(default=True)
+    night_start_hour: int = Field(default=22, ge=0, le=23)
+    night_end_hour: int = Field(default=6, ge=0, le=23)
+    start_amps: int = Field(default=6, ge=6, le=32)
+    max_amps: int = Field(default=10, ge=6, le=32)
+    min_amps: int = Field(default=6, ge=6, le=32)
+    ramp_step_amps: int = Field(default=1, ge=1, le=8)
+    ramp_interval_s: int = Field(default=60, ge=10, le=600)
+    tak_weighted_kw: float = Field(default=3.0, ge=0.5, le=20.0)
+    grid_safety_margin_up: float = Field(default=0.9, ge=0.5, le=1.0)
+    grid_safety_margin_down: float = Field(default=0.95, ge=0.5, le=1.0)
+    ha_target_entity: str = Field(default="input_number.car_target_soc")
+
+
+class BatSupportControllerConfig(BaseModel):
+    """Configuration for bat_support_controller (PLAT-1674).
+
+    Maps directly to BatSupportConfig dataclass — used to construct controller.
+    """
+
+    enabled: bool = Field(default=True)
+    tak_weighted_kw: float = Field(default=3.0, ge=0.5, le=20.0)
+    night_weight: float = Field(default=0.5, ge=0.1, le=1.0)
+    safety_margin: float = Field(default=0.95, ge=0.5, le=1.0)
+    min_soc_normal_pct: float = Field(default=15.0, ge=0.0, le=100.0)
+    min_soc_cold_pct: float = Field(default=20.0, ge=0.0, le=100.0)
+    cold_temp_c: float = Field(default=4.0, ge=-50.0, le=50.0)
+
+
+# ---------------------------------------------------------------------------
 # Control loop
 # ---------------------------------------------------------------------------
 
@@ -699,6 +739,9 @@ class CarmaConfig(BaseModel):
     weather: WeatherConfig = Field(default_factory=WeatherConfig)
     night_plan: NightPlanConfig = Field(default_factory=NightPlanConfig)
     evening_plan: EveningPlanConfig = Field(default_factory=EveningPlanConfig)
+    # PLAT-1674: Night EV controller + bat support controller (optional)
+    night_ev: NightEVControllerConfig = Field(default_factory=NightEVControllerConfig)
+    bat_support: BatSupportControllerConfig = Field(default_factory=BatSupportControllerConfig)
     control: ControlConfig = Field(default_factory=ControlConfig)
     guards: GuardsConfig = Field(default_factory=GuardsConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
