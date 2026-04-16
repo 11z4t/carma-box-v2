@@ -151,7 +151,7 @@ ev:
   name: "XPENG G9"
   battery_kwh: 92.0
   efficiency: 0.92
-  daily_target_soc_pct: 75.0
+  daily_target_soc_pct: 100.0
   weekly_full_charge_days: 7
   max_soc_jump_pct: 20.0
 
