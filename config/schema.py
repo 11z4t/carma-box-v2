@@ -249,7 +249,7 @@ class EVConfig(BaseModel):
     name: str = Field(..., min_length=1)
     battery_kwh: float = Field(..., gt=0.0, le=200.0)
     efficiency: float = Field(default=0.92, ge=0.5, le=1.0)
-    daily_target_soc_pct: float = Field(default=75.0, ge=10.0, le=100.0)
+    daily_target_soc_pct: float = Field(default=100.0, ge=10.0, le=100.0)
     weekly_full_charge_days: int = Field(default=7, ge=1, le=30)
     max_soc_jump_pct: float = Field(default=20.0, ge=5.0, le=100.0)
     entities: EVEntities
