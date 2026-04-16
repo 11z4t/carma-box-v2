@@ -68,19 +68,23 @@ _TRANSITION_MATRIX: dict[Scenario, set[Scenario]] = {
         Scenario.PV_SURPLUS_DAY, Scenario.PV_SURPLUS,
     },
     Scenario.PV_SURPLUS_DAY: {
-        Scenario.EVENING_DISCHARGE, Scenario.PV_SURPLUS,
+        Scenario.EVENING_DISCHARGE, Scenario.PV_SURPLUS, Scenario.NIGHT_EV,
     },
     Scenario.EVENING_DISCHARGE: {
-        Scenario.NIGHT_HIGH_PV, Scenario.NIGHT_LOW_PV,
+        Scenario.NIGHT_HIGH_PV, Scenario.NIGHT_LOW_PV, Scenario.NIGHT_EV,
     },
     Scenario.NIGHT_HIGH_PV: {
-        Scenario.MORNING_DISCHARGE, Scenario.NIGHT_GRID_CHARGE,
+        Scenario.MORNING_DISCHARGE, Scenario.NIGHT_GRID_CHARGE, Scenario.NIGHT_EV,
     },
     Scenario.NIGHT_LOW_PV: {
-        Scenario.MORNING_DISCHARGE, Scenario.NIGHT_GRID_CHARGE,
+        Scenario.MORNING_DISCHARGE, Scenario.NIGHT_GRID_CHARGE, Scenario.NIGHT_EV,
     },
     Scenario.NIGHT_GRID_CHARGE: {
-        Scenario.MORNING_DISCHARGE,
+        Scenario.MORNING_DISCHARGE, Scenario.NIGHT_EV,
+    },
+    Scenario.NIGHT_EV: {
+        Scenario.MORNING_DISCHARGE, Scenario.NIGHT_GRID_CHARGE,
+        Scenario.NIGHT_HIGH_PV, Scenario.NIGHT_LOW_PV,
     },
     Scenario.PV_SURPLUS: {
         Scenario.FORENOON_PV_EV, Scenario.PV_SURPLUS_DAY, Scenario.EVENING_DISCHARGE,
@@ -88,7 +92,10 @@ _TRANSITION_MATRIX: dict[Scenario, set[Scenario]] = {
 }
 
 # Scenarios checked in priority order (lowest number = highest priority)
+# PLAT-1674: NIGHT_EV first — prevents PV_SURPLUS_DAY (low-bat-trigger) hijack
+# of night-window when EV needs charging.
 _SCENARIO_PRIORITY = [
+    Scenario.NIGHT_EV,             # S9 (PLAT-1674) — highest at night
     Scenario.MORNING_DISCHARGE,    # S1
     Scenario.FORENOON_PV_EV,       # S2
     Scenario.PV_SURPLUS_DAY,        # S3

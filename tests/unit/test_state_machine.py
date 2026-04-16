@@ -208,12 +208,18 @@ class TestNightScenarios:
         result = sm.evaluate(snap)
         assert result == Scenario.NIGHT_LOW_PV
 
-    def test_night_at_midnight_stays_if_ev_charging(self, sm: StateMachine) -> None:
-        """00:00 with EV charging should stay in S5 (S7 blocked by EV not done)."""
+    def test_night_at_midnight_with_ev_charging_transitions_to_NIGHT_EV(
+        self, sm: StateMachine,
+    ) -> None:
+        """PLAT-1674: 00:00 + EV plugged + below target → NIGHT_EV takes over.
+
+        Previously expected: stay in NIGHT_HIGH_PV.
+        Now expected: opportunistic transition to NIGHT_EV (S9 highest priority).
+        """
         sm.state.current = Scenario.NIGHT_HIGH_PV
         snap = _snap(hour=_MIDNIGHT_HOUR, pv_tomorrow=20.0, ev_connected=True, ev_soc=40.0)
         result = sm.evaluate(snap)
-        assert result is None  # Stay in S5 — EV still charging
+        assert result == Scenario.NIGHT_EV
 
     def test_night_exits_at_06(self, sm: StateMachine) -> None:
         """06:00 exits night scenarios."""
