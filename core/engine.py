@@ -23,6 +23,17 @@ from typing import Optional
 
 from config.schema import BatteryConfig
 from core.balancer import BalanceResult, BatteryBalancer, BatteryInfo
+from core.bat_support_controller import (
+    BatInfo as BatSupportInfo,
+    BatSupportConfig,
+    BatSupportInput,
+    evaluate as bat_support_evaluate,
+)
+from core.ev_night_controller import (
+    NightEVConfig,
+    NightEVState,
+    evaluate as ev_night_evaluate,
+)
 from core.ev_surplus import EVSurplusController
 from core.executor import CommandExecutor, ExecutionResult
 from core.guards import GridGuard, GuardEvaluation, GuardLevel
@@ -120,6 +131,10 @@ class ControlEngine:
         session_tracker: Optional[EnergySessionTracker] = None,
         ev_surplus: Optional[EVSurplusController] = None,
         surplus_dispatch: Optional[SurplusDispatch] = None,
+        # PLAT-1674: Night EV + bat support controllers (optional — engine
+        # falls back to legacy Branch B logic if None).
+        night_ev_config: Optional[NightEVConfig] = None,
+        bat_support_config: Optional[BatSupportConfig] = None,
     ) -> None:
         self._guard = guard
         self._sm = state_machine
@@ -137,6 +152,10 @@ class ControlEngine:
         # PV charge plan: track mode per battery for dwell hysteresis
         self._charge_plan_mode: dict[str, str] = {}
         self._charge_plan_dwell: dict[str, int] = {}  # cycles in current mode
+        # PLAT-1674: night EV controller state + configs
+        self._night_ev_config = night_ev_config
+        self._bat_support_config = bat_support_config
+        self._night_ev_state: Optional[NightEVState] = None
 
     async def run_cycle(
         self,
@@ -314,6 +333,14 @@ class ControlEngine:
                             )
                             result.execution = exec_result
 
+            # Phase 4b (PLAT-1674): NIGHT_EV — call ev_night + bat_support
+            # controllers if configured AND in NIGHT_EV scenario.
+            if (
+                active_scenario == Scenario.NIGHT_EV
+                and self._night_ev_config is not None
+            ):
+                await self._run_night_ev_controllers(snapshot)
+
             # Phase 5: MODE CHANGE MANAGER — process pending changes
             # (only relevant for Branch B — Branch A writes directly)
             await self._mode_manager.process(self._executor)
@@ -353,6 +380,91 @@ class ControlEngine:
             result.guard.level.value if result.guard else "none",
         )
         return result
+
+    # ------------------------------------------------------------------
+    # PLAT-1674: NIGHT_EV controllers (EV start/ramp + bat support)
+    # ------------------------------------------------------------------
+
+    async def _run_night_ev_controllers(
+        self, snapshot: SystemSnapshot,
+    ) -> None:
+        """Drive ev_night_controller + bat_support_controller during NIGHT_EV.
+
+        Pure-function controllers compute commands; this method executes them
+        via CommandExecutor (single-writer principle).
+        """
+        cfg_ev = self._night_ev_config
+        if cfg_ev is None:
+            return
+
+        # Initialize state if first call
+        if self._night_ev_state is None:
+            self._night_ev_state = NightEVState()
+
+        # Read EV target SoC — use snapshot.ev.target_soc_pct (set by HA layer)
+        target_soc = snapshot.ev.target_soc_pct
+
+        # Use raw grid power as "weighted" input (per 901 ARCH RESPONSE Q3,
+        # realtime, not 1h-avg). snapshot.grid.weighted_avg_kw is Ellevio's
+        # rolling window — that IS the realtime metric used by guards.
+        grid_kw = snapshot.grid.weighted_avg_kw
+
+        decision = ev_night_evaluate(
+            now=snapshot.timestamp,
+            ev=snapshot.ev,
+            grid_weighted_kw=grid_kw,
+            target_soc_pct=target_soc,
+            state=self._night_ev_state,
+            cfg=cfg_ev,
+        )
+
+        # Persist new amps + ramp ts
+        if decision.new_amps != self._night_ev_state.current_amps:
+            self._night_ev_state = NightEVState(
+                current_amps=decision.new_amps,
+                last_ramp_ts=snapshot.timestamp.timestamp(),
+                last_decision_reason=decision.reason,
+            )
+
+        # Execute EV commands via single writer
+        if decision.commands:
+            await self._executor.execute(decision.commands)
+
+        # Bat support — if configured + load is high enough
+        cfg_bat = self._bat_support_config
+        if cfg_bat is None or not snapshot.batteries:
+            return
+
+        ev_kw = snapshot.ev.power_w / _W_TO_KW
+        # Estimate baseload from grid power minus known loads
+        baseload_kw = max(0.0, abs(snapshot.grid.grid_power_w) / _W_TO_KW - ev_kw)
+        total_load_kw = ev_kw + baseload_kw
+
+        bat_infos = [
+            BatSupportInfo(
+                battery_id=b.battery_id,
+                soc_pct=b.soc_pct,
+                cap_kwh=b.cap_kwh,
+                cell_temp_c=b.cell_temp_c,
+                max_discharge_w=(
+                    self._battery_configs[b.battery_id].max_discharge_kw * _W_TO_KW
+                    if b.battery_id in self._battery_configs
+                    else _SAFE_BAT_FALLBACK_W
+                ),
+                current_mode=b.ems_mode,
+            )
+            for b in snapshot.batteries
+        ]
+        bat_decision = bat_support_evaluate(
+            BatSupportInput(
+                batteries=bat_infos,
+                total_load_kw=total_load_kw,
+                grid_weighted_kw=grid_kw,
+            ),
+            cfg_bat,
+        )
+        if bat_decision.commands:
+            await self._executor.execute(bat_decision.commands)
 
     # ------------------------------------------------------------------
     # PV Surplus Regulator
