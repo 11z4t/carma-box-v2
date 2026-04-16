@@ -153,6 +153,9 @@ class TestSchemaVersion:
         local_db = LocalDB(str(path))
         with pytest.raises(RuntimeError, match="newer than code version"):
             _run(local_db.initialize())
+        # Explicit close to terminate aiosqlite worker thread
+        # (prevents pytest-homeassistant teardown thread-leak assertion)
+        _run(local_db.close())
 
 
 # ===========================================================================
