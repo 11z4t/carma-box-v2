@@ -336,8 +336,8 @@ def test_evening_discharge_skipped_bat_low(cfg: BudgetConfig) -> None:
     assert "EVENING_DISCHARGE" not in result.reason
 
 
-def test_evening_discharge_skipped_bat_full(cfg: BudgetConfig) -> None:
-    """Evening discharge: bat at 100% → falls through to EVENING standby."""
+def test_evening_discharge_bat_full_still_discharges(cfg: BudgetConfig) -> None:
+    """Evening discharge: bat at 100% → STILL discharge to cover house load."""
     inp = _inp(
         hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
         grid_w=_EVENING_GRID_IMPORT_W,
@@ -345,8 +345,8 @@ def test_evening_discharge_skipped_bat_full(cfg: BudgetConfig) -> None:
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
-    # Bat full → skip evening discharge
-    assert "EVENING_DISCHARGE" not in result.reason
+    assert "EVENING_DISCHARGE" in result.reason
+    assert result.bat_discharge_w > 0
 
 
 def test_evening_discharge_grid_responsive(cfg: BudgetConfig) -> None:
