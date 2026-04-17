@@ -38,6 +38,7 @@ _FM_END_H: int = 12
 
 _GRID_TARGET_W: float = 0.0
 _GRID_TOLERANCE_W: float = 100.0
+_PCT_FACTOR: float = 100.0
 
 # EV power per amp (3-phase 230V)
 _EV_W_PER_AMP: float = 3.0 * 230.0  # 690W per amp
@@ -67,6 +68,10 @@ class BudgetConfig:
     bat_discharge_support: bool = True
     # Evening cutoff — bat prio after this hour
     evening_cutoff_h: int = 17
+    # Bat discharge minimum SoC — absolute floor (GoodWe AC output cut)
+    bat_discharge_min_soc_pct: float = 15.0
+    # Default bat capacity fallback if caller omits bat_caps
+    bat_default_cap_kwh: float = 10.0
 
 
 # ---------------------------------------------------------------------------
@@ -353,12 +358,11 @@ def _bat_discharge_shares(
     cfg: BudgetConfig,
 ) -> dict[str, float]:
     """Proportional discharge shares so both bats reach min_soc simultaneously."""
-    _PCT = 100.0
-    _MIN_SOC = 15.0  # absolute floor
     avail = {}
     for bid, soc in inp.bat_socs.items():
-        cap = inp.bat_caps.get(bid, 10.0)
-        avail[bid] = max(0.0, (soc - _MIN_SOC) / _PCT * cap)
+        cap = inp.bat_caps.get(bid, cfg.bat_default_cap_kwh)
+        headroom = max(0.0, soc - cfg.bat_discharge_min_soc_pct)
+        avail[bid] = headroom / _PCT_FACTOR * cap
     total = sum(avail.values())
     if total <= 0:
         return {bid: 0.0 for bid in inp.bat_socs}
@@ -481,7 +485,9 @@ def _allocate_bat(
 
     # Two batteries — check spread
     soc_a, soc_b = inp.bat_socs[bids[0]], inp.bat_socs[bids[1]]
-    cap_a, cap_b = inp.bat_caps.get(bids[0], 15.0), inp.bat_caps.get(bids[1], 5.0)
+    default_cap = cfg.bat_default_cap_kwh
+    cap_a = inp.bat_caps.get(bids[0], default_cap)
+    cap_b = inp.bat_caps.get(bids[1], default_cap)
     total_cap = cap_a + cap_b
     spread = abs(soc_a - soc_b)
 
