@@ -390,24 +390,25 @@ def _allocate_evening_discharge(
     cfg: BudgetConfig,
     state: BudgetState,
 ) -> tuple[int, dict[str, int]]:
-    """Evening discharge: bat covers house load responsively.
+    """Evening discharge: bat covers grid import, targeting grid 0W.
 
-    Grid-feedback loop:
-    - grid importing → discharge MORE (house needs more than bat gives)
-    - grid exporting → discharge LESS (bat gives too much)
-    - grid ≈ 0 → hold (perfect balance)
+    Pure grid-feedback control:
+    - grid importing (positive) → discharge that amount
+    - grid exporting (negative) → discharge 0 (bat giving too much)
+    - grid ≈ 0 → discharge 0 (balanced)
+
+    This is a simple proportional controller. The grid power already
+    reflects the net of all sources (PV, bat, house, EV). If grid
+    imports X watts, bat needs to discharge X watts to zero it out.
 
     Returns (total_discharge_w, per_battery_alloc).
     """
-    # Target discharge = house load (what the house consumes)
-    # Adjust based on grid feedback: if grid imports, house needs more
-    # than we're giving → increase target. If grid exports → decrease.
-    target_w = max(0.0, inp.house_load_w + inp.grid_power_w)
-    # grid_power_w > 0 = import → adds to target (house needs more)
-    # grid_power_w < 0 = export → subtracts (we're giving too much)
+    # Discharge exactly what grid imports — nothing more, nothing less
+    target_w = max(0.0, inp.grid_power_w)
+    # grid_power_w > 0 = import → discharge that amount
+    # grid_power_w <= 0 = export or balanced → no discharge needed
 
-    # Clamp: never discharge below min_soc
-    total_discharge = int(max(0.0, target_w))
+    total_discharge = int(target_w)
     if total_discharge <= 0:
         return 0, {bid: 0 for bid in inp.bat_socs}
 
