@@ -440,17 +440,18 @@ class ControlEngine:
             b.battery_id: b.ems_mode.value for b in snapshot.batteries
         }
 
-        # Estimate house load = grid + bat_charge - PV
-        # (what house consumes excluding bat and EV)
+        # Estimate house load from power balance:
+        # grid + pv + bat_discharge = house + ev + bat_charge
+        # → house = grid + pv + bat_discharge - ev - bat_charge
+        # Simplified: house = grid + pv + bat_net - ev
+        #   where bat_net = sum(power) (positive=discharge, negative=charge)
         pv_w = snapshot.grid.pv_total_w
         grid_w = snapshot.grid.grid_power_w
         ev_w = snapshot.ev.power_w if snapshot.ev.charging else 0.0
-        bat_charge_w = sum(
-            abs(b.power_w) for b in snapshot.batteries if b.power_w < 0
-        )
-        # house = grid_import + PV - bat_charge - EV
-        # (grid_power_w positive = import, bat_charge subtracted)
-        house_w = max(0.0, grid_w + pv_w - bat_charge_w - ev_w)
+        bat_net_w = sum(b.power_w for b in snapshot.batteries)
+        # bat_net > 0 → discharge (adds to supply)
+        # bat_net < 0 → charge (subtracts from supply)
+        house_w = max(0.0, grid_w + pv_w + bat_net_w - ev_w)
 
         budget_input = BudgetInput(
             now=snapshot.timestamp,
