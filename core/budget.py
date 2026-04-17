@@ -198,7 +198,7 @@ def allocate(
     bat_total_cap = sum(inp.bat_caps.values()) or 1.0
     pv_for_bat = max(0.0, inp.pv_remaining_kwh - inp.house_remaining_kwh)
     bat_min_soc_dynamic = max(
-        0.0, cfg.bat_soc_full_pct - (pv_for_bat / bat_total_cap * 100.0),
+        0.0, cfg.bat_soc_full_pct - (pv_for_bat / bat_total_cap * _PCT_FACTOR),
     )
     bat_avg_soc = (
         sum(inp.bat_socs.values()) / len(inp.bat_socs)
