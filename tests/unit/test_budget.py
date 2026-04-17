@@ -349,3 +349,18 @@ def test_balance_ratios_are_named_constants() -> None:
                 f"engine.py:{i}: Raw 0.8/0.2 in allocation. "
                 f"Use _SOC_BALANCE_LOWER/HIGHER_RATIO. Line: {stripped}"
             )
+
+
+def test_budget_config_none_when_no_ev_charger() -> None:
+    """Guard: engine._budget_config stays None when ev_charger not configured."""
+    from core.engine import ControlEngine
+    from unittest.mock import MagicMock
+
+    engine = ControlEngine(
+        guard=MagicMock(),
+        state_machine=MagicMock(),
+        balancer=MagicMock(),
+        mode_manager=MagicMock(),
+        executor=MagicMock(),
+    )
+    assert engine._budget_config is None
