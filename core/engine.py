@@ -601,17 +601,16 @@ class ControlEngine:
             soc_diff = abs(bat_socs[ids[0]] - bat_socs[ids[1]])
 
             if soc_diff > self._SOC_BALANCE_THRESHOLD_PCT:
-                # Unbalanced — charge lower SoC more
+                # Unbalanced — lower SoC gets MORE, higher gets LESS
+                # (NEVER 100/0 — both must charge to 100%)
                 lower_id = (
                     ids[0] if bat_socs[ids[0]] < bat_socs[ids[1]]
                     else ids[1]
                 )
                 higher_id = ids[1] if lower_id == ids[0] else ids[0]
-                # PLAT-1674: NEVER discharge higher bat to balance —
-                # just give 100% surplus to lower. Higher gets standby
-                # (NOT active discharge). Both charge to 100%.
-                allocations[lower_id] = available_surplus_w
-                allocations[higher_id] = 0  # standby, no discharge
+                # 80/20 split — lower catches up, higher still charges
+                allocations[lower_id] = int(available_surplus_w * 0.8)
+                allocations[higher_id] = int(available_surplus_w * 0.2)
             else:
                 # Balanced — proportional by capacity
                 for bid in ids:
