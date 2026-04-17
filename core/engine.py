@@ -29,6 +29,12 @@ from core.bat_support_controller import (
     BatSupportInput,
     evaluate as bat_support_evaluate,
 )
+from core.budget import (
+    BudgetConfig,
+    BudgetInput,
+    BudgetState,
+    allocate as budget_allocate,
+)
 from core.ev_night_controller import (
     NightEVConfig,
     NightEVState,
@@ -160,6 +166,9 @@ class ControlEngine:
         self._night_ev_config = night_ev_config
         self._bat_support_config = bat_support_config
         self._night_ev_state: Optional[NightEVState] = None
+        # PLAT-1686: Unified Budget Allocator
+        self._budget_config: Optional[BudgetConfig] = None
+        self._budget_state: BudgetState = BudgetState()
 
     async def run_cycle(
         self,
@@ -232,13 +241,20 @@ class ControlEngine:
 
             if is_daytime_charge:
                 # ----- BRANCH A: Daytime PV surplus charging -----
-                # SOLE OWNER of mode + ems_power_limit + export_limit.
-                # No balancer, no mode_enforce, no mode_manager limits.
-                # Clear pending mode_manager requests to prevent Branch B
-                # leftovers from overriding charge plan (PLAT-1616).
+                # PLAT-1686: Unified Budget Allocator replaces
+                # _compute_charge_plan + EVSurplusController + SurplusDispatch.
                 for bat in snapshot.batteries:
                     self._mode_manager.clear_pending(bat.battery_id)
-                result.execution = await self._compute_charge_plan(snapshot)
+
+                if self._budget_config is not None:
+                    result.execution = await self._run_budget_allocator(
+                        snapshot,
+                    )
+                else:
+                    # Fallback to legacy charge plan if budget not configured
+                    result.execution = await self._compute_charge_plan(
+                        snapshot,
+                    )
 
             else:
                 # ----- BRANCH B: Discharge / standby / night -----
@@ -384,6 +400,75 @@ class ControlEngine:
             result.guard.level.value if result.guard else "none",
         )
         return result
+
+    # ------------------------------------------------------------------
+    # PLAT-1686: Unified Budget Allocator
+    # ------------------------------------------------------------------
+
+    async def _run_budget_allocator(
+        self, snapshot: SystemSnapshot,
+    ) -> Optional[ExecutionResult]:
+        """Run unified budget allocator for daytime PV surplus charging.
+
+        Replaces _compute_charge_plan + EVSurplusController + SurplusDispatch
+        with ONE centralized allocation per cycle.
+        """
+        cfg = self._budget_config
+        if cfg is None:
+            return None
+
+        # Build BudgetInput from snapshot
+        bat_socs = {b.battery_id: b.soc_pct for b in snapshot.batteries}
+        bat_caps = {
+            b.battery_id: (
+                self._battery_configs[b.battery_id].cap_kwh
+                if b.battery_id in self._battery_configs
+                else cfg.bat_default_cap_kwh
+            )
+            for b in snapshot.batteries
+        }
+        bat_powers = {b.battery_id: b.power_w for b in snapshot.batteries}
+        bat_modes = {
+            b.battery_id: b.ems_mode.value for b in snapshot.batteries
+        }
+
+        # Estimate house load = grid + bat_charge - PV
+        # (what house consumes excluding bat and EV)
+        pv_w = snapshot.grid.pv_total_w
+        grid_w = snapshot.grid.grid_power_w
+        ev_w = snapshot.ev.power_w if snapshot.ev.charging else 0.0
+        bat_charge_w = sum(
+            abs(b.power_w) for b in snapshot.batteries if b.power_w < 0
+        )
+        house_w = max(0.0, grid_w + bat_charge_w + pv_w - ev_w)
+
+        budget_input = BudgetInput(
+            now=snapshot.timestamp,
+            grid_power_w=grid_w,
+            pv_power_w=pv_w,
+            house_load_w=house_w,
+            ev_connected=snapshot.ev.connected,
+            ev_charging=snapshot.ev.charging,
+            ev_current_amps=int(snapshot.ev.current_a),
+            ev_soc_pct=snapshot.ev.soc_pct,
+            ev_target_soc_pct=snapshot.ev.target_soc_pct,
+            bat_socs=bat_socs,
+            bat_caps=bat_caps,
+            bat_powers=bat_powers,
+            bat_modes=bat_modes,
+            pv_remaining_kwh=snapshot.grid.pv_forecast_today_kwh,
+        )
+
+        budget_result = budget_allocate(budget_input, cfg, self._budget_state)
+
+        logger.info(
+            "BUDGET: %s",
+            budget_result.reason,
+        )
+
+        if budget_result.commands:
+            return await self._executor.execute(budget_result.commands)
+        return None
 
     # ------------------------------------------------------------------
     # PLAT-1674: NIGHT_EV controllers (EV start/ramp + bat support)
