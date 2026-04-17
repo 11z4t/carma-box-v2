@@ -74,6 +74,9 @@ _DEFAULT_EXPORT_LIMIT_W: int = 5000
 # when battery config is unavailable.
 _SAFE_BAT_FALLBACK_W: float = 5000.0
 
+# PLAT-1674: Min PV surplus for EV FM priority (EV @ 6A 3-phase ≈ 1380W).
+_EV_MIN_SURPLUS_W: float = 1400.0
+
 
 @dataclass
 class CycleResult:
@@ -519,6 +522,35 @@ class ControlEngine:
             available_surplus_w = max(
                 0, available_surplus_w - int(self._GRID_HYSTERESIS_W),
             )
+
+        # PLAT-1674: FM priority — EV before bat when EV connected + FM
+        # FM (06-12): EV gets surplus first, bat gets remainder
+        # EM (12+): bat gets surplus first, EV after bat full
+        _FM_START_H = 6
+        _FM_END_H = 12
+        ev_fm_priority = (
+            _FM_START_H <= snapshot.hour < _FM_END_H
+            and snapshot.ev.connected
+            and snapshot.ev.soc_pct < snapshot.ev.target_soc_pct
+        )
+
+        if ev_fm_priority and available_surplus_w >= _EV_MIN_SURPLUS_W:
+            # FM + EV connected + surplus ≥ 1.4 kW:
+            # EV FIRST, remainder to bat (NEVER export)
+            ev_cmds = self._ev_surplus_evaluate(
+                available_surplus_w, house_grid_power_w, snapshot,
+            )
+            ev_used_w: int = 0
+            if self._ev_surplus and self._ev_surplus.is_charging:
+                ev_used_w = int(
+                    self._ev_surplus.current_amps
+                    * self._ev_surplus._cfg.w_per_amp
+                )
+            # Remainder after EV → bat (not export!)
+            available_surplus_w = max(0, available_surplus_w - ev_used_w)
+            if ev_cmds:
+                await self._executor.execute(ev_cmds)
+            # Fall through to bat allocation with reduced surplus
 
         # SoC balancing: allocate surplus between batteries
         bat_socs = {b.battery_id: b.soc_pct for b in snapshot.batteries}
