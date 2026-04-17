@@ -32,10 +32,13 @@ logger = logging.getLogger(__name__)
 class StateMachineConfig:
     """State machine thresholds — all from site.yaml."""
 
-    start_scenario: Scenario = Scenario.PV_SURPLUS_DAY  # Initial scenario at startup
+    # PLAT-1674: start_scenario removed — evaluate() picks correct
+    # scenario on first cycle. No hardcoded default needed.
+    start_scenario: Scenario = Scenario.PV_SURPLUS_DAY  # Fallback only
     min_dwell_s: float = 300.0          # 5 min minimum in any scenario
-    pv_high_threshold_kwh: float = 15.0  # High PV forecast threshold
-    pv_medium_threshold_kwh: float = 10.0  # Medium PV forecast threshold
+    # PLAT-1674: raised thresholds — MORNING_DISCHARGE only at high PV
+    pv_high_threshold_kwh: float = 25.0  # High PV forecast threshold
+    pv_medium_threshold_kwh: float = 25.0  # Medium = same as high (no discharge at low PV)
     morning_min_soc_pct: float = 30.0    # Min SoC for morning discharge
     evening_min_soc_above_floor_pct: float = 10.0  # Min SoC above floor for evening
     normal_floor_pct: float = 15.0       # Absolute SoC floor (GoodWe limit)
@@ -46,7 +49,8 @@ class StateMachineConfig:
     surplus_exit_pv_min_w: float = 200.0  # Min PV to stay in surplus
     grid_charge_max_soc_pct: float = 90.0
     grid_charge_price_threshold_ore: float = 60.0
-    ev_target_soc_pct: float = 75.0
+    # PLAT-1674: synced with config.ev.daily_target_soc_pct (default 100)
+    ev_target_soc_pct: float = 100.0
     # Time windows for scenario transitions (QC reject: no hardcoded hours)
     morning_start_h: int = 6
     morning_end_h: int = 9

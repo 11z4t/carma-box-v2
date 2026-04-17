@@ -75,27 +75,27 @@ class TestS1MorningDischarge:
 
     def test_entry_conditions_met(self, sm: StateMachine) -> None:
         sm.state.current = Scenario.NIGHT_HIGH_PV
-        snap = _snap(hour=7, pv_today=15.0, bat_soc=60.0)
+        snap = _snap(hour=7, pv_today=30.0, bat_soc=60.0)
         result = sm.evaluate(snap)
         assert result == Scenario.MORNING_DISCHARGE
 
     def test_too_early(self, sm: StateMachine) -> None:
         sm.state.current = Scenario.NIGHT_HIGH_PV
-        snap = _snap(hour=5, pv_today=15.0, bat_soc=60.0)
+        snap = _snap(hour=5, pv_today=30.0, bat_soc=60.0)
         result = sm.evaluate(snap)
         assert result != Scenario.MORNING_DISCHARGE
 
     def test_exits_at_9_with_ev(self, sm: StateMachine) -> None:
         """At hour 9, S1 exits. With EV connected → S2."""
         sm.state.current = Scenario.MORNING_DISCHARGE
-        snap = _snap(hour=9, pv_today=20.0, bat_soc=60.0, ev_connected=True, ev_soc=40.0)
+        snap = _snap(hour=9, pv_today=30.0, bat_soc=60.0, ev_connected=True, ev_soc=40.0)
         result = sm.evaluate(snap)
         assert result == Scenario.FORENOON_PV_EV
 
     def test_exits_at_9_no_target(self, sm: StateMachine) -> None:
         """At hour 9 without EV, no valid transition from S1 at this hour."""
         sm.state.current = Scenario.MORNING_DISCHARGE
-        snap = _snap(hour=9, pv_today=15.0, bat_soc=60.0)
+        snap = _snap(hour=9, pv_today=30.0, bat_soc=60.0)
         result = sm.evaluate(snap)
         # S1 exits but S2 needs EV, S3 needs hour>=12 — no valid target
         assert result is None
@@ -108,7 +108,7 @@ class TestS1MorningDischarge:
 
     def test_low_soc(self, sm: StateMachine) -> None:
         sm.state.current = Scenario.NIGHT_HIGH_PV
-        snap = _snap(hour=7, pv_today=15.0, bat_soc=20.0)
+        snap = _snap(hour=7, pv_today=30.0, bat_soc=20.0)
         result = sm.evaluate(snap)
         assert result != Scenario.MORNING_DISCHARGE
 
@@ -123,19 +123,19 @@ class TestS2ForenoonPvEv:
 
     def test_entry_conditions_met(self, sm: StateMachine) -> None:
         sm.state.current = Scenario.MORNING_DISCHARGE
-        snap = _snap(hour=9, pv_today=20.0, ev_connected=True, ev_soc=40.0)
+        snap = _snap(hour=9, pv_today=30.0, ev_connected=True, ev_soc=40.0)
         result = sm.evaluate(snap)
         assert result == Scenario.FORENOON_PV_EV
 
     def test_ev_not_connected(self, sm: StateMachine) -> None:
         sm.state.current = Scenario.MORNING_DISCHARGE
-        snap = _snap(hour=9, pv_today=20.0, ev_connected=False)
+        snap = _snap(hour=9, pv_today=30.0, ev_connected=False)
         result = sm.evaluate(snap)
         assert result != Scenario.FORENOON_PV_EV
 
     def test_ev_at_target(self, sm: StateMachine) -> None:
         sm.state.current = Scenario.MORNING_DISCHARGE
-        snap = _snap(hour=9, pv_today=20.0, ev_connected=True, ev_soc=80.0)
+        snap = _snap(hour=9, pv_today=30.0, ev_connected=True, ev_soc=100.0)
         result = sm.evaluate(snap)
         assert result != Scenario.FORENOON_PV_EV
 
@@ -198,7 +198,7 @@ class TestNightScenarios:
 
     def test_s5_high_pv_tomorrow(self, sm: StateMachine) -> None:
         sm.state.current = Scenario.EVENING_DISCHARGE
-        snap = _snap(hour=22, pv_tomorrow=20.0)
+        snap = _snap(hour=22, pv_tomorrow=30.0)
         result = sm.evaluate(snap)
         assert result == Scenario.NIGHT_HIGH_PV
 
@@ -217,14 +217,14 @@ class TestNightScenarios:
         Now expected: opportunistic transition to NIGHT_EV (S9 highest priority).
         """
         sm.state.current = Scenario.NIGHT_HIGH_PV
-        snap = _snap(hour=_MIDNIGHT_HOUR, pv_tomorrow=20.0, ev_connected=True, ev_soc=40.0)
+        snap = _snap(hour=_MIDNIGHT_HOUR, pv_tomorrow=30.0, ev_connected=True, ev_soc=40.0)
         result = sm.evaluate(snap)
         assert result == Scenario.NIGHT_EV
 
     def test_night_exits_at_06(self, sm: StateMachine) -> None:
         """06:00 exits night scenarios."""
         sm.state.current = Scenario.NIGHT_HIGH_PV
-        snap = _snap(hour=6, pv_today=15.0, bat_soc=60.0)
+        snap = _snap(hour=6, pv_today=30.0, bat_soc=60.0)
         result = sm.evaluate(snap)
         assert result is not None  # Should exit to S1
 
@@ -238,9 +238,10 @@ class TestS7NightGridCharge:
     """S7: EV done, bat needs charge, price OK."""
 
     def test_entry_conditions_met(self, sm: StateMachine) -> None:
+        """S7 entry: EV done (not connected) + bat low + cheap price."""
         sm.state.current = Scenario.NIGHT_HIGH_PV
         snap = _snap(
-            hour=3, ev_connected=True, ev_soc=80.0,
+            hour=3, ev_connected=False, ev_soc=100.0,
             bat_soc=40.0, price_ore=30.0,
         )
         result = sm.evaluate(snap)
@@ -249,7 +250,7 @@ class TestS7NightGridCharge:
     def test_high_price_blocks(self, sm: StateMachine) -> None:
         sm.state.current = Scenario.NIGHT_HIGH_PV
         snap = _snap(
-            hour=3, ev_connected=True, ev_soc=80.0,
+            hour=3, ev_connected=False, ev_soc=100.0,
             bat_soc=40.0, price_ore=100.0,
         )
         result = sm.evaluate(snap)
@@ -258,7 +259,7 @@ class TestS7NightGridCharge:
     def test_bat_already_full_blocks(self, sm: StateMachine) -> None:
         sm.state.current = Scenario.NIGHT_HIGH_PV
         snap = _snap(
-            hour=3, ev_connected=True, ev_soc=80.0,
+            hour=3, ev_connected=False, ev_soc=100.0,
             bat_soc=95.0, price_ore=30.0,
         )
         result = sm.evaluate(snap)
@@ -313,7 +314,7 @@ class TestPriority:
         """Both S1 and S2 match at 07:00 with EV connected — S1 has priority."""
         sm.state.current = Scenario.NIGHT_HIGH_PV
         snap = _snap(
-            hour=7, pv_today=20.0, bat_soc=60.0,
+            hour=7, pv_today=30.0, bat_soc=60.0,
             ev_connected=True, ev_soc=40.0,
         )
         result = sm.evaluate(snap)
@@ -395,7 +396,7 @@ class TestTransitionMatrix:
     def test_s3_at_morning_recovers_to_s1(self, sm: StateMachine) -> None:
         """S3 PV_SURPLUS_DAY at hour=7 → catchall recovery to S1."""
         sm.state.current = Scenario.PV_SURPLUS_DAY
-        snap = _snap(hour=7, pv_today=20.0, bat_soc=60.0)
+        snap = _snap(hour=7, pv_today=30.0, bat_soc=60.0)
         result = sm.evaluate(snap)
         # S3 at hour 7 is outside midday window → exit → catchall → S1
         assert result == Scenario.MORNING_DISCHARGE
@@ -420,14 +421,14 @@ class TestMidnightWrapExit:
     def test_s3_exits_at_midnight(self, sm: StateMachine) -> None:
         """S3 PV_SURPLUS_DAY at hour=0 must exit (not stay stuck)."""
         sm.state.current = Scenario.PV_SURPLUS_DAY
-        snap = _snap(hour=_MIDNIGHT_HOUR, pv_tomorrow=20.0)
+        snap = _snap(hour=_MIDNIGHT_HOUR, pv_tomorrow=30.0)
         result = sm.evaluate(snap)
         assert result is not None, "S3 stuck at midnight — exit not triggered"
 
     def test_s4_exits_at_midnight(self, sm: StateMachine) -> None:
         """S4 EVENING_DISCHARGE at hour=0 must exit."""
         sm.state.current = Scenario.EVENING_DISCHARGE
-        snap = _snap(hour=_MIDNIGHT_HOUR, pv_tomorrow=20.0, bat_soc=60.0)
+        snap = _snap(hour=_MIDNIGHT_HOUR, pv_tomorrow=30.0, bat_soc=60.0)
         result = sm.evaluate(snap)
         assert result is not None, "S4 stuck at midnight — exit not triggered"
 
@@ -465,7 +466,7 @@ class TestExitConditions:
     def test_exit_s6_at_6am(self, sm: StateMachine) -> None:
         """S6 exits when hour >= 6 (line 341 covered by _exit_s6)."""
         sm.state.current = Scenario.NIGHT_LOW_PV
-        snap = _snap(hour=6, pv_today=15.0, bat_soc=60.0)
+        snap = _snap(hour=6, pv_today=30.0, bat_soc=60.0)
         result = sm.evaluate(snap)
         # Should exit S6 and transition to S1 (6am, high PV, SoC ok)
         assert result == Scenario.MORNING_DISCHARGE
@@ -473,20 +474,19 @@ class TestExitConditions:
     def test_exit_s7_at_6am(self, sm: StateMachine) -> None:
         """S7 exits when hour >= 6 (lines 345-346 covered by _exit_s7)."""
         sm.state.current = Scenario.NIGHT_GRID_CHARGE
-        snap = _snap(hour=6, pv_today=15.0, bat_soc=60.0)
+        snap = _snap(hour=6, pv_today=30.0, bat_soc=60.0)
         result = sm.evaluate(snap)
         assert result == Scenario.MORNING_DISCHARGE
 
     def test_exit_s7_bat_full(self, sm: StateMachine) -> None:
         """S7 also exits when battery is full (line 348 covered).
 
-        M1 fix: when normal matrix exit finds no valid target, a catchall
-        recovery fires and selects the best scenario for current conditions.
-        At hour=3, pv_today=15 → NIGHT_HIGH_PV entry conditions match.
+        PLAT-1674: pv_high_threshold raised to 25. pv_tomorrow=30 needed
+        for NIGHT_HIGH_PV entry. M1 catchall selects best night scenario.
         """
         sm.state.current = Scenario.NIGHT_GRID_CHARGE
         # Battery at or above grid_charge_max_soc (90%) → triggers exit path
-        snap = _snap(hour=3, bat_soc=95.0, pv_today=15.0)
+        snap = _snap(hour=3, bat_soc=95.0, pv_today=30.0, pv_tomorrow=30.0)
         result = sm.evaluate(snap)
         # M1 catchall: NIGHT_HIGH_PV is valid at hour=3 with high PV forecast
         assert result == Scenario.NIGHT_HIGH_PV

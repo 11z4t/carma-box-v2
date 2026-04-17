@@ -470,7 +470,8 @@ class ControlEngine:
     # PV Surplus Regulator
     # ------------------------------------------------------------------
 
-    _SOC_BALANCE_THRESHOLD_PCT: float = 2.0  # SoC diff below this = balanced
+    # PLAT-1674: max 1pp SoC spread between kontor/forrad
+    _SOC_BALANCE_THRESHOLD_PCT: float = 1.0
     _GRID_HYSTERESIS_W: float = 100.0  # Accept <100W import/export
     _SOC_BALANCE_LOWER_RATIO: float = 0.75  # Lower SoC bat gets 75%
     _SOC_BALANCE_HIGHER_RATIO: float = 0.25  # Higher SoC bat gets 25%
