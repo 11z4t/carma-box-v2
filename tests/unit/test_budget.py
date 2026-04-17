@@ -317,3 +317,35 @@ def test_all_commands_have_rule_id(cfg: BudgetConfig) -> None:
     result = allocate(inp, cfg, state)
     for cmd in result.commands:
         assert cmd.rule_id == "BUDGET"
+
+
+# -------------------------------------------------------------------
+# Guard tests (per 901 reject krav)
+# -------------------------------------------------------------------
+
+def test_house_load_formula_sign_convention() -> None:
+    """Guard: house = grid + pv - bat_charge - ev. Never grid + bat_charge."""
+    # Read engine.py source and verify formula
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[2] / "core" / "engine.py").read_text()
+    for i, line in enumerate(source.splitlines(), 1):
+        if "house_w" in line and "bat_charge_w" in line and "=" in line:
+            assert "- bat_charge_w" in line, (
+                f"engine.py:{i}: house_load must SUBTRACT bat_charge_w, "
+                f"not add it. Line: {line.strip()}"
+            )
+
+
+def test_balance_ratios_are_named_constants() -> None:
+    """Guard: no raw 0.8/0.2 in engine.py balance logic."""
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[2] / "core" / "engine.py").read_text()
+    for i, line in enumerate(source.splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if "allocations[" in stripped and ("* 0.8" in stripped or "* 0.2" in stripped):
+            assert False, (
+                f"engine.py:{i}: Raw 0.8/0.2 in allocation. "
+                f"Use _SOC_BALANCE_LOWER/HIGHER_RATIO. Line: {stripped}"
+            )

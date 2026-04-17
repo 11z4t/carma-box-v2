@@ -440,7 +440,9 @@ class ControlEngine:
         bat_charge_w = sum(
             abs(b.power_w) for b in snapshot.batteries if b.power_w < 0
         )
-        house_w = max(0.0, grid_w + bat_charge_w + pv_w - ev_w)
+        # house = grid_import + PV - bat_charge - EV
+        # (grid_power_w positive = import, bat_charge subtracted)
+        house_w = max(0.0, grid_w + pv_w - bat_charge_w - ev_w)
 
         budget_input = BudgetInput(
             now=snapshot.timestamp,
@@ -562,8 +564,8 @@ class ControlEngine:
     # PLAT-1674: max 1pp SoC spread between kontor/forrad
     _SOC_BALANCE_THRESHOLD_PCT: float = 1.0
     _GRID_HYSTERESIS_W: float = 100.0  # Accept <100W import/export
-    _SOC_BALANCE_LOWER_RATIO: float = 0.75  # Lower SoC bat gets 75%
-    _SOC_BALANCE_HIGHER_RATIO: float = 0.25  # Higher SoC bat gets 25%
+    _SOC_BALANCE_LOWER_RATIO: float = 0.8  # Lower SoC bat gets 80%
+    _SOC_BALANCE_HIGHER_RATIO: float = 0.2  # Higher SoC bat gets 20%
     _BALANCE_DISCHARGE_RATE_W: int = 500  # Active balancing discharge rate for higher-SoC bat
     _MIN_MODE_DWELL_CYCLES: int = 2  # Stay in mode at least 2 cycles (60s)
 
@@ -694,8 +696,12 @@ class ControlEngine:
                 )
                 higher_id = ids[1] if lower_id == ids[0] else ids[0]
                 # 80/20 split — lower catches up, higher still charges
-                allocations[lower_id] = int(available_surplus_w * 0.8)
-                allocations[higher_id] = int(available_surplus_w * 0.2)
+                allocations[lower_id] = int(
+                    available_surplus_w * self._SOC_BALANCE_LOWER_RATIO
+                )
+                allocations[higher_id] = int(
+                    available_surplus_w * self._SOC_BALANCE_HIGHER_RATIO
+                )
             else:
                 # Balanced — proportional by capacity
                 for bid in ids:
