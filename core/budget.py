@@ -216,10 +216,10 @@ def allocate(
 
     elif (
         _EVENING_DISCHARGE_START_H <= hour < _EVENING_DISCHARGE_END_H
-        and not _all_bat_full(inp, cfg)
         and bat_avg_soc > cfg.bat_discharge_min_soc_pct
     ):
         # Evening discharge 17-20: bat covers house load, grid target 0W
+        # Bat FULL or partial — discharge to cover house load either way
         bat_discharge, bat_alloc = _allocate_evening_discharge(
             inp, cfg, state,
         )
