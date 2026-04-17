@@ -396,9 +396,10 @@ class CarmaBoxService:
             bat_support_config=bat_support_cfg,
         )
         # PLAT-1686: Activate Budget Allocator for daytime PV charging
-        self._engine._budget_config = BudgetConfig(
-            ev_min_amps=config.ev_charger.ramp.start_amps,
-        )
+        if config.ev_charger:
+            self._engine._budget_config = BudgetConfig(
+                ev_min_amps=config.ev_charger.ramp.start_amps,
+            )
 
     @property
     def config(self) -> CarmaConfig:
