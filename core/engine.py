@@ -511,10 +511,14 @@ class ControlEngine:
             if bat.power_w < 0:  # Negative = charging
                 available_surplus_w += int(abs(bat.power_w))
 
-        # Subtract hysteresis margin to avoid grid import
-        available_surplus_w = max(
-            0, available_surplus_w - int(self._GRID_HYSTERESIS_W),
-        )
+        # PLAT-1674: Aggressive grid regulation — target grid ≈ 0W (±100W).
+        # Only subtract hysteresis when IMPORTING (avoid oscillation).
+        # When EXPORTING: use full surplus (absorb all PV, minimize export).
+        if house_grid_power_w > 0:
+            # Importing — back off slightly to avoid overshoot
+            available_surplus_w = max(
+                0, available_surplus_w - int(self._GRID_HYSTERESIS_W),
+            )
 
         # SoC balancing: allocate surplus between batteries
         bat_socs = {b.battery_id: b.soc_pct for b in snapshot.batteries}
