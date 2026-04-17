@@ -61,6 +61,7 @@ from core.day_planner import (
 from core.planner import Planner, PlannerConfig
 from core.ev_controller import EVAction, EVController, EVControllerConfig
 from core.bat_support_controller import BatSupportConfig as BatSupportCtrlCfg
+from core.budget import BudgetConfig
 from core.ev_night_controller import NightEVConfig
 from core.ev_surplus import EVSurplusConfig, EVSurplusController
 from core.surplus_dispatch import SurplusConfig as SurplusDispatchConfig, SurplusDispatch
@@ -393,6 +394,10 @@ class CarmaBoxService:
             surplus_dispatch=self._surplus_dispatch,
             night_ev_config=night_ev_cfg,
             bat_support_config=bat_support_cfg,
+        )
+        # PLAT-1686: Activate Budget Allocator for daytime PV charging
+        self._engine._budget_config = BudgetConfig(
+            ev_min_amps=config.ev_charger.ramp.start_amps,
         )
 
     @property
