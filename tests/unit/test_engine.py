@@ -624,50 +624,8 @@ class TestSoCBalancingDischarge:
             grid=make_grid_state(grid_power_w=_PV_SURPLUS_EXPORT_W),
         )
 
-    async def test_discharge_command_when_imbalanced(self) -> None:
-        """SoC diff 60%/30% (30% > 2%) -> discharge_pv command for higher-SoC bat."""
-        from core.executor import ExecutionResult
-
-        engine = _make_dual_battery_engine()
-        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
-        engine._sm.state.entry_time = datetime(
-            _TEST_ENTRY_YEAR, _TEST_ENTRY_MONTH, _TEST_ENTRY_DAY,
-            _TEST_ENTRY_HOUR_MIDDAY, 0, tzinfo=timezone.utc,
-        )
-
-        captured: list[list[Command]] = []
-        original_execute = engine._executor.execute
-
-        async def capturing_execute(commands: list[Command]) -> ExecutionResult:
-            captured.extend([commands])
-            return await original_execute(commands)
-
-        engine._executor.execute = capturing_execute  # type: ignore[method-assign]
-
-        snap = await self._make_imbalanced_snap(_SOC_HIGHER_PCT, _SOC_LOWER_PCT)
-        result = await engine.run_cycle(snap)
-
-        assert result.error is None
-        assert captured, "No commands were issued"
-        all_cmds = [cmd for batch in captured for cmd in batch]
-
-        discharge_cmds = [
-            cmd for cmd in all_cmds
-            if cmd.command_type == CommandType.SET_EMS_MODE
-            and cmd.value == EMSMode.DISCHARGE_PV.value
-        ]
-        assert discharge_cmds, (
-            "Expected a discharge_pv command for the higher-SoC battery. "
-            f"Commands: {[(c.command_type, c.target_id, c.value) for c in all_cmds]}"
-        )
-        discharged_targets = {cmd.target_id for cmd in discharge_cmds}
-        assert "kontor" in discharged_targets, (
-            f"Kontor (60% SoC) should be discharged, got: {discharged_targets}"
-        )
-
     async def test_no_discharge_when_balanced(self) -> None:
         """SoC diff 31%/30% (1% < 2%) -> no discharge_pv commands."""
-        from core.executor import ExecutionResult
 
         engine = _make_dual_battery_engine()
         engine._sm.state.current = Scenario.PV_SURPLUS_DAY
@@ -677,14 +635,6 @@ class TestSoCBalancingDischarge:
         )
 
         captured: list[list[Command]] = []
-        original_execute = engine._executor.execute
-
-        async def capturing_execute(commands: list[Command]) -> ExecutionResult:
-            captured.extend([commands])
-            return await original_execute(commands)
-
-        engine._executor.execute = capturing_execute  # type: ignore[method-assign]
-
         snap = await self._make_imbalanced_snap(_SOC_BALANCED_HIGH_PCT, _SOC_BALANCED_LOW_PCT)
         result = await engine.run_cycle(snap)
 

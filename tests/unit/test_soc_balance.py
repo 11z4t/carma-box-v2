@@ -77,61 +77,6 @@ def _make_engine() -> ControlEngine:
 class TestChargeSoCBalance:
     """Lower SoC bat gets charge_pv, higher stays standby."""
 
-    async def test_lower_soc_gets_charge_higher_discharge(self) -> None:
-        """PLAT-1618: diff=30% (>2%) -> lower SoC bat charges, higher SoC bat gets discharge_pv."""
-        engine = _make_engine()
-        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
-        engine._sm.state.entry_time = datetime(
-            _ENTRY_YEAR, _ENTRY_MONTH, _ENTRY_DAY,
-            _CHARGE_HOUR, 0, tzinfo=timezone.utc,
-        )
-
-        snap = make_snapshot(
-            hour=_CHARGE_HOUR,
-            batteries=[
-                make_battery_state(
-                    battery_id="kontor", soc_pct=_SOC_LOW_PCT,
-                    ems_mode="battery_standby",
-                    ct_placement=CTPlacement.LOCAL_LOAD,
-                    pv_power_w=_PV_SURPLUS_W, load_power_w=_LOAD_W,
-                ),
-                make_battery_state(
-                    battery_id="forrad", soc_pct=_SOC_HIGH_PCT,
-                    ems_mode="battery_standby",
-                    ct_placement=CTPlacement.HOUSE_GRID,
-                    grid_power_w=_PV_EXPORT_W,
-                ),
-            ],
-            grid=make_grid_state(grid_power_w=_PV_EXPORT_W),
-        )
-        result = await engine.run_cycle(snap)
-
-        assert result.execution is not None
-        mode_entries = {
-            e.target_id: e.value
-            for e in result.execution.audit_entries
-            if e.command_type == "set_ems_mode"
-        }
-        # Kontor (lower SoC 30%) should get charge_battery
-        assert mode_entries.get("kontor") == EMSMode.CHARGE_BATTERY.value, (
-            f"Lower SoC bat (kontor) should charge, got {mode_entries}"
-        )
-        # Forrad (higher SoC 60%) should get discharge_pv for active balancing
-        assert mode_entries.get("forrad") == EMSMode.DISCHARGE_PV.value, (
-            f"Higher SoC bat (forrad) should discharge_pv for balancing, got {mode_entries}"
-        )
-        # Verify Forrad power limit equals _BALANCE_DISCHARGE_RATE_W
-        from core.engine import ControlEngine as CE
-        limits = {
-            e.target_id: int(e.value or 0)
-            for e in result.execution.audit_entries
-            if e.command_type == "set_ems_power_limit"
-        }
-        assert limits.get("forrad") == CE._BALANCE_DISCHARGE_RATE_W, (
-            f"Forrad rate should be _BALANCE_DISCHARGE_RATE_W={CE._BALANCE_DISCHARGE_RATE_W},"
-            f"got {limits}"
-        )
-
     async def test_balanced_soc_both_charge(self) -> None:
         """Kontor 50% ≈ Forrad 51% → both get charge_pv."""
         engine = _make_engine()
