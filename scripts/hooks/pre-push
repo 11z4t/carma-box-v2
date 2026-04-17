@@ -1,0 +1,80 @@
+#!/bin/bash
+# PLAT-1683: Pre-push hook — blocks push without QC PASS in inbox-901.
+#
+# This hook reads push stdin to find ALL commits being pushed,
+# then verifies each has a matching QC-request with verdict=PASS.
+#
+# Install: scripts/setup-hooks.sh
+# Location: scripts/hooks/pre-push (committed in repo)
+# Copied to: .git/hooks/pre-push (by setup script)
+
+set -euo pipefail
+
+INBOX_901="/mnt/solutions/Root/platform/global/agent-comms/inbox-901"
+INBOX_900="/mnt/solutions/Root/platform/global/agent-comms/inbox-900"
+
+# Read push info from stdin (format: local_ref local_sha remote_ref remote_sha)
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # Skip delete pushes
+    if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+        continue
+    fi
+
+    # Find new commits being pushed
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        # New branch — check all commits
+        commits=$(git rev-list "$local_sha" --not --remotes 2>/dev/null || echo "$local_sha")
+    else
+        commits=$(git rev-list "$remote_sha..$local_sha" 2>/dev/null || echo "$local_sha")
+    fi
+
+    for commit in $commits; do
+        short=$(git rev-parse --short "$commit")
+
+        # Check for QC-request in inbox-901 matching this commit
+        qc_request=$(find "$INBOX_901" -name "*${short}*" -type f 2>/dev/null | head -1)
+        if [ -z "$qc_request" ]; then
+            echo ""
+            echo "=========================================="
+            echo "  PUSH BLOCKED — Ingen QC-request"
+            echo "=========================================="
+            echo "  Commit: $short"
+            echo "  Skicka QC-request till inbox-901/ först."
+            echo "=========================================="
+            exit 1
+        fi
+
+        # Check for QC PASS response in inbox-900
+        pass_file=$(find "$INBOX_900" -name "*${short}*PASS*" -type f 2>/dev/null | head -1)
+        if [ -z "$pass_file" ]; then
+            # Check if there's a REJECT
+            reject_file=$(find "$INBOX_900" -name "*${short}*REJECT*" -type f 2>/dev/null | head -1)
+            if [ -n "$reject_file" ]; then
+                echo ""
+                echo "=========================================="
+                echo "  PUSH BLOCKED — QC REJECT"
+                echo "=========================================="
+                echo "  Commit: $short"
+                echo "  REJECT: $(basename "$reject_file")"
+                echo "  Fix reject-kraven och skicka ny QC."
+                echo "=========================================="
+                exit 1
+            fi
+
+            echo ""
+            echo "=========================================="
+            echo "  PUSH BLOCKED — Inväntar QC PASS"
+            echo "=========================================="
+            echo "  Commit: $short"
+            echo "  QC-request skickad men inget PASS svar."
+            echo "  Vänta på 901 PASS innan push."
+            echo "=========================================="
+            exit 1
+        fi
+
+        echo "✓ $short — QC PASS ($(basename "$pass_file"))"
+    done
+done
+
+echo "Alla commits QC-verifierade. Push tillåten."
+exit 0
