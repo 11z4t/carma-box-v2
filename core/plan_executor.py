@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import zoneinfo
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 from adapters.ha_api import HAApiClient
@@ -222,12 +222,15 @@ class PlanExecutor:
         self,
         snapshot: SystemSnapshot,
         current_hour: int,
+        reference_date: date | None = None,
     ) -> tuple[str, str]:
         """Generate 48-hour hourly plan split by day.
 
         Args:
             snapshot: Current system state.
             current_hour: Starting hour for the 48-hour projection.
+            reference_date: Date for weekday calculation. Defaults to
+                today in site timezone. Inject for deterministic testing.
 
         Returns:
             (today_plan, tomorrow_plan) as pipe-separated hour strings.
@@ -265,7 +268,7 @@ class PlanExecutor:
         tomorrow_hours: list[str] = []
         soc = bat_soc
         ev = ev_soc
-        today_date = datetime.now(
+        today_date = reference_date or datetime.now(
             tz=zoneinfo.ZoneInfo(cfg.site.timezone),
         ).date()
 
