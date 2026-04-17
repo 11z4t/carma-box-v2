@@ -274,7 +274,7 @@ def test_evening_discharge_covers_house_load(cfg: BudgetConfig) -> None:
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
-    assert result.bat_discharge_w > 0
+    assert result.bat_discharge_w == int(_EVENING_GRID_IMPORT_W)
     assert "EVENING_DISCHARGE" in result.reason
 
 
@@ -350,7 +350,7 @@ def test_evening_discharge_bat_full_still_discharges(cfg: BudgetConfig) -> None:
 
 
 def test_evening_discharge_grid_responsive(cfg: BudgetConfig) -> None:
-    """Grid already at 0 (export) → reduce discharge."""
+    """Grid exporting (negative) → no discharge needed (bat already covers)."""
     inp = _inp(
         hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
         grid_w=-500.0,  # exporting = bat gives too much
@@ -358,8 +358,8 @@ def test_evening_discharge_grid_responsive(cfg: BudgetConfig) -> None:
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
-    # house_load(2000) + grid(-500) = 1500W target discharge
-    assert result.bat_discharge_w < int(_EVENING_HOUSE_LOAD_W)
+    # grid_w=-500 (export) → target = max(0, -500) = 0 → no discharge
+    assert result.bat_discharge_w == 0
 
 
 def test_evening_20h_no_discharge(cfg: BudgetConfig) -> None:
