@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 _DAYTIME_START_H: int = 6
 _DAYTIME_END_H: int = 22
 _FM_END_H: int = 12
+_EVENING_DISCHARGE_START_H: int = 17
+_EVENING_DISCHARGE_END_H: int = 20
 
 _GRID_TARGET_W: float = 0.0
 _GRID_TOLERANCE_W: float = 100.0
@@ -212,8 +214,23 @@ def allocate(
         # Night — defers to night controller
         reasons.append("NIGHT: defers to night controller")
 
+    elif (
+        _EVENING_DISCHARGE_START_H <= hour < _EVENING_DISCHARGE_END_H
+        and not _all_bat_full(inp, cfg)
+        and bat_avg_soc > cfg.bat_discharge_min_soc_pct
+    ):
+        # Evening discharge 17-20: bat covers house load, grid target 0W
+        bat_discharge, bat_alloc = _allocate_evening_discharge(
+            inp, cfg, state,
+        )
+        ev_target = 0
+        reasons.append(
+            f"EVENING_DISCHARGE: bat_discharge {bat_discharge}W"
+            f" house={inp.house_load_w:.0f}W"
+        )
+
     elif hour >= cfg.evening_cutoff_h:
-        # Evening 17-22: bat prio, NO EV
+        # Evening 20-22: bat standby, NO EV (preserve for morning)
         bat_alloc, remaining = _allocate_bat(inp, remaining, cfg)
         ev_target = 0
         reasons.append(f"EVENING: bat {sum(bat_alloc.values())}W, EV off")
@@ -224,21 +241,32 @@ def allocate(
             inp, remaining, cfg, state,
         )
         # Remaining PV → bat
-        bat_alloc, remaining = _allocate_bat(inp, remaining, cfg)
+        bat_charge_alloc, remaining = _allocate_bat(inp, remaining, cfg)
         # Bat discharge support if EV needs more than PV provides
         if ev_target > 0 and bat_can_support_ev and cfg.bat_discharge_support:
             ev_power = _ev_power_at_amps(ev_target)
             gap = ev_power - surplus
             if gap > 0:
                 bat_discharge = int(gap)
+                # Discharge overrides charge — set per-bat discharge limits
+                shares = _bat_discharge_shares(inp, cfg)
+                bat_alloc = {
+                    bid: int(bat_discharge * share)
+                    for bid, share in shares.items()
+                }
+            else:
+                bat_alloc = bat_charge_alloc
+        else:
+            bat_alloc = bat_charge_alloc
         reasons.append(
-            f"FM: EV {ev_target}A bat_charge {sum(bat_alloc.values())}W"
+            f"FM: EV {ev_target}A bat_charge {sum(bat_charge_alloc.values())}W"
             f" bat_discharge {bat_discharge}W"
         )
 
     else:
         # EM 12-17: bat first, EV with remainder or bat-support
-        bat_alloc, remaining = _allocate_bat(inp, remaining, cfg)
+        bat_charge_alloc, remaining = _allocate_bat(inp, remaining, cfg)
+        bat_alloc = bat_charge_alloc
 
         if ev_wants_charge:
             if _all_bat_full(inp, cfg):
@@ -251,6 +279,11 @@ def allocate(
                     gap = ev_power - surplus
                     if gap > 0:
                         bat_discharge = int(gap)
+                        shares = _bat_discharge_shares(inp, cfg)
+                        bat_alloc = {
+                            bid: int(bat_discharge * share)
+                            for bid, share in shares.items()
+                        }
                 reasons.append(f"EM: bat full, EV {ev_target}A discharge {bat_discharge}W")
             elif bat_can_support_ev:
                 # Bat not full but has margin → EV from PV surplus
@@ -266,7 +299,7 @@ def allocate(
                 reasons.append(f"EM: bat {bat_avg_soc:.0f}%≤min{bat_min_soc_dynamic:.0f}% EV off")
         else:
             ev_target = 0
-            reasons.append(f"EM: bat {sum(bat_alloc.values())}W")
+            reasons.append(f"EM: bat {sum(bat_charge_alloc.values())}W")
 
     # ----- EMIT COMMANDS -----
 
@@ -293,17 +326,16 @@ def allocate(
 
     # Bat commands — charge or discharge
     if bat_discharge > 0:
-        # Bat-discharge-support for EV — proportional per battery
-        shares = _bat_discharge_shares(inp, cfg)
-        for bid, share in shares.items():
-            discharge_w = int(bat_discharge * share)
+        # Discharge mode — either EV support or evening discharge
+        # bat_alloc already has per-battery discharge limits
+        for bid, discharge_w in bat_alloc.items():
             if discharge_w > 0:
                 cmds.append(Command(
                     command_type=CommandType.SET_EMS_MODE,
                     target_id=bid,
                     value=EMSMode.DISCHARGE_PV.value,
                     rule_id=_RULE_ID,
-                    reason=f"Budget: discharge_pv {discharge_w}W (EV support)",
+                    reason=f"Budget: discharge_pv {discharge_w}W",
                 ))
                 cmds.append(Command(
                     command_type=CommandType.SET_EMS_POWER_LIMIT,
@@ -351,6 +383,41 @@ def allocate(
 # ---------------------------------------------------------------------------
 # Allocation functions
 # ---------------------------------------------------------------------------
+
+
+def _allocate_evening_discharge(
+    inp: BudgetInput,
+    cfg: BudgetConfig,
+    state: BudgetState,
+) -> tuple[int, dict[str, int]]:
+    """Evening discharge: bat covers house load responsively.
+
+    Grid-feedback loop:
+    - grid importing → discharge MORE (house needs more than bat gives)
+    - grid exporting → discharge LESS (bat gives too much)
+    - grid ≈ 0 → hold (perfect balance)
+
+    Returns (total_discharge_w, per_battery_alloc).
+    """
+    # Target discharge = house load (what the house consumes)
+    # Adjust based on grid feedback: if grid imports, house needs more
+    # than we're giving → increase target. If grid exports → decrease.
+    target_w = max(0.0, inp.house_load_w + inp.grid_power_w)
+    # grid_power_w > 0 = import → adds to target (house needs more)
+    # grid_power_w < 0 = export → subtracts (we're giving too much)
+
+    # Clamp: never discharge below min_soc
+    total_discharge = int(max(0.0, target_w))
+    if total_discharge <= 0:
+        return 0, {bid: 0 for bid in inp.bat_socs}
+
+    # Proportional shares per battery (simultaneous min_soc convergence)
+    shares = _bat_discharge_shares(inp, cfg)
+    alloc: dict[str, int] = {}
+    for bid, share in shares.items():
+        alloc[bid] = int(total_discharge * share)
+
+    return total_discharge, alloc
 
 
 def _bat_discharge_shares(

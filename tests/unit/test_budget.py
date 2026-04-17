@@ -255,6 +255,127 @@ def test_bat_unbalanced_lower_gets_more(cfg: BudgetConfig) -> None:
 
 
 # -------------------------------------------------------------------
+# EVENING_DISCHARGE: bat covers house load, grid target 0W
+# -------------------------------------------------------------------
+
+_EVENING_DISCHARGE_HOUR: int = 18
+_EVENING_HOUSE_LOAD_W: float = 2000.0
+_EVENING_GRID_IMPORT_W: float = 2000.0
+_EVENING_BAT_SOC: float = 80.0
+_EVENING_BAT_LOW_SOC: float = 15.0  # exactly at min_soc floor
+
+
+def test_evening_discharge_covers_house_load(cfg: BudgetConfig) -> None:
+    """17-20: bat discharge = house_load, targeting grid 0W."""
+    inp = _inp(
+        hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        grid_w=_EVENING_GRID_IMPORT_W,
+        bat_k_soc=_EVENING_BAT_SOC, bat_f_soc=_EVENING_BAT_SOC,
+    )
+    state = BudgetState()
+    result = allocate(inp, cfg, state)
+    assert result.bat_discharge_w > 0
+    assert "EVENING_DISCHARGE" in result.reason
+
+
+def test_evening_discharge_proportional(cfg: BudgetConfig) -> None:
+    """Evening discharge proportional by available energy (like FM/EM)."""
+    inp = _inp(
+        hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        grid_w=_EVENING_GRID_IMPORT_W,
+        bat_k_soc=_EVENING_BAT_SOC, bat_f_soc=_EVENING_BAT_SOC,
+    )
+    state = BudgetState()
+    result = allocate(inp, cfg, state)
+    k = result.bat_allocations.get("kontor", 0)
+    f = result.bat_allocations.get("forrad", 0)
+    assert k > f, "Kontor (15kWh) should get more than Förråd (5kWh)"
+
+
+def test_evening_discharge_discharge_pv_commands(cfg: BudgetConfig) -> None:
+    """Evening discharge emits discharge_pv mode + limit commands."""
+    inp = _inp(
+        hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        grid_w=_EVENING_GRID_IMPORT_W,
+        bat_k_soc=_EVENING_BAT_SOC, bat_f_soc=_EVENING_BAT_SOC,
+    )
+    state = BudgetState()
+    result = allocate(inp, cfg, state)
+    cmd_types = [c.command_type for c in result.commands]
+    assert CommandType.SET_EMS_MODE in cmd_types
+    assert CommandType.SET_EMS_POWER_LIMIT in cmd_types
+    # All mode commands should be discharge_pv
+    mode_cmds = [c for c in result.commands if c.command_type == CommandType.SET_EMS_MODE]
+    for cmd in mode_cmds:
+        assert cmd.value == "discharge_pv"
+
+
+def test_evening_discharge_no_ev(cfg: BudgetConfig) -> None:
+    """Evening discharge: EV always off (preserve bat for peak shaving)."""
+    inp = _inp(
+        hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        grid_w=_EVENING_GRID_IMPORT_W,
+        ev_connected=True, ev_soc=50,
+        bat_k_soc=_EVENING_BAT_SOC, bat_f_soc=_EVENING_BAT_SOC,
+    )
+    state = BudgetState()
+    result = allocate(inp, cfg, state)
+    assert result.ev_target_amps == 0
+
+
+def test_evening_discharge_skipped_bat_low(cfg: BudgetConfig) -> None:
+    """Evening discharge: bat at min_soc → no discharge, falls through to standby."""
+    inp = _inp(
+        hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        grid_w=_EVENING_GRID_IMPORT_W,
+        bat_k_soc=_EVENING_BAT_LOW_SOC, bat_f_soc=_EVENING_BAT_LOW_SOC,
+    )
+    state = BudgetState()
+    result = allocate(inp, cfg, state)
+    # Should NOT be evening discharge (bat too low)
+    assert "EVENING_DISCHARGE" not in result.reason
+
+
+def test_evening_discharge_skipped_bat_full(cfg: BudgetConfig) -> None:
+    """Evening discharge: bat at 100% → falls through to EVENING standby."""
+    inp = _inp(
+        hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        grid_w=_EVENING_GRID_IMPORT_W,
+        bat_k_soc=100.0, bat_f_soc=100.0,
+    )
+    state = BudgetState()
+    result = allocate(inp, cfg, state)
+    # Bat full → skip evening discharge
+    assert "EVENING_DISCHARGE" not in result.reason
+
+
+def test_evening_discharge_grid_responsive(cfg: BudgetConfig) -> None:
+    """Grid already at 0 (export) → reduce discharge."""
+    inp = _inp(
+        hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        grid_w=-500.0,  # exporting = bat gives too much
+        bat_k_soc=_EVENING_BAT_SOC, bat_f_soc=_EVENING_BAT_SOC,
+    )
+    state = BudgetState()
+    result = allocate(inp, cfg, state)
+    # house_load(2000) + grid(-500) = 1500W target discharge
+    assert result.bat_discharge_w < int(_EVENING_HOUSE_LOAD_W)
+
+
+def test_evening_20h_no_discharge(cfg: BudgetConfig) -> None:
+    """After 20:00 → evening standby, not discharge."""
+    inp = _inp(
+        hour=20, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        grid_w=_EVENING_GRID_IMPORT_W,
+        bat_k_soc=_EVENING_BAT_SOC, bat_f_soc=_EVENING_BAT_SOC,
+    )
+    state = BudgetState()
+    result = allocate(inp, cfg, state)
+    assert "EVENING_DISCHARGE" not in result.reason
+    assert result.bat_discharge_w == 0
+
+
+# -------------------------------------------------------------------
 # HARD RULE: ALDRIG grid import dagtid
 # -------------------------------------------------------------------
 

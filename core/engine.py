@@ -232,29 +232,37 @@ class ControlEngine:
             is_daytime_charge = (
                 sm.mode == EMSMode.CHARGE_PV and not snapshot.is_night
             )
+            # Budget Allocator handles daytime charge + evening discharge
+            is_budget_scenario = (
+                is_daytime_charge
+                or active_scenario == Scenario.EVENING_DISCHARGE
+            )
 
             # ============================================================
-            # BRANCH: Daytime PV charging vs everything else
-            # These are fundamentally different control problems.
+            # BRANCH: Budget Allocator vs everything else
+            # Budget Allocator owns daytime PV + evening discharge.
             # ONE code path per branch — no conflicting writers.
             # ============================================================
 
-            if is_daytime_charge:
-                # ----- BRANCH A: Daytime PV surplus charging -----
-                # PLAT-1686: Unified Budget Allocator replaces
-                # _compute_charge_plan + EVSurplusController + SurplusDispatch.
+            if is_budget_scenario and self._budget_config is not None:
+                # ----- BRANCH A: Budget Allocator -----
+                # PLAT-1686: Unified Budget Allocator handles
+                # charge, discharge, and EV allocation responsively.
                 for bat in snapshot.batteries:
                     self._mode_manager.clear_pending(bat.battery_id)
 
-                if self._budget_config is not None:
-                    result.execution = await self._run_budget_allocator(
-                        snapshot,
-                    )
-                else:
-                    # Fallback to legacy charge plan if budget not configured
-                    result.execution = await self._compute_charge_plan(
-                        snapshot,
-                    )
+                result.execution = await self._run_budget_allocator(
+                    snapshot,
+                )
+
+            elif is_daytime_charge:
+                # ----- BRANCH A (legacy): Daytime PV surplus charging -----
+                for bat in snapshot.batteries:
+                    self._mode_manager.clear_pending(bat.battery_id)
+
+                result.execution = await self._compute_charge_plan(
+                    snapshot,
+                )
 
             else:
                 # ----- BRANCH B: Discharge / standby / night -----
