@@ -141,7 +141,7 @@ class EVState:
     current_a: float
     charger_status: str
     reason_for_no_current: str = ""
-    target_soc_pct: float = 75.0
+    target_soc_pct: float = 100.0  # PLAT-1674: synced with car_target_soc
 
 
 @dataclass(frozen=True)
