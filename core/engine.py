@@ -74,8 +74,9 @@ _DEFAULT_EXPORT_LIMIT_W: int = 5000
 # when battery config is unavailable.
 _SAFE_BAT_FALLBACK_W: float = 5000.0
 
-# PLAT-1674: Min PV surplus for EV FM priority (EV @ 6A 3-phase ≈ 1380W).
-_EV_MIN_SURPLUS_W: float = 1400.0
+# PLAT-1674: Min PV surplus for EV FM priority.
+# EV @ 6A 3-phase = 6 × 3 × 230 = 4140W. Surplus must cover FULL EV draw.
+_EV_MIN_SURPLUS_W: float = 4200.0
 
 
 @dataclass
