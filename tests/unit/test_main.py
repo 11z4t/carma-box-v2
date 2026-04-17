@@ -731,21 +731,31 @@ class TestGenerate48hPlan:
 
     def test_plan_pv_charge(self) -> None:
         service = self._make_service()
+        from datetime import date as _date
         from tests.conftest import make_snapshot, make_grid_state
+        # LÄRDOM: inject deterministic date (Tuesday) — NEVER depend on
+        # system clock for weekday logic. Friday evening broke this test.
+        _TUESDAY: _date = _date(2026, 4, 14)  # known Tuesday
         snap = make_snapshot(
             hour=8, minute=0,
             grid=make_grid_state(pv_forecast_today_kwh=30.0),
         )
-        today, _ = service._plan_executor.generate_48h(snap, 8)
+        today, _ = service._plan_executor.generate_48h(
+            snap, 8, reference_date=_TUESDAY,
+        )
         # First hours (8-9) should be CHG with 30kWh PV forecast
         entries = {e.split(":")[0]: e for e in today.split("|")}
         assert ":CHG:" in entries.get("08", "") or ":CHG:" in entries.get("09", "")
 
     def test_plan_discharge_evening(self) -> None:
         service = self._make_service()
+        from datetime import date as _date
         from tests.conftest import make_snapshot
+        _TUESDAY: _date = _date(2026, 4, 14)  # known Tuesday
         snap = make_snapshot(hour=17, minute=0)
-        today, _ = service._plan_executor.generate_48h(snap, 17)
+        today, _ = service._plan_executor.generate_48h(
+            snap, 17, reference_date=_TUESDAY,
+        )
         first = today.split("|")[0]
         assert ":DIS:" in first or ":STB:" in first
 
