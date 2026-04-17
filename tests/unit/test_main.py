@@ -799,3 +799,24 @@ class TestGenerateDayPlan:
         ):
             plan = await service._generate_day_plan(snap)
         assert plan is None
+
+
+class TestBudgetConfigGuard:
+    """PLAT-1686: BudgetConfig None-guard when ev_charger missing."""
+
+    def test_budget_config_wiring_in_source(self) -> None:
+        """Guard: main.py has 'if config.ev_charger:' before BudgetConfig."""
+        source = Path(__file__).resolve().parents[2] / "main.py"
+        lines = source.read_text().splitlines()
+        found_guard = False
+        found_budget = False
+        for line in lines:
+            if "if config.ev_charger:" in line:
+                found_guard = True
+            if "BudgetConfig(" in line and found_guard:
+                found_budget = True
+                break
+        assert found_guard, "main.py missing 'if config.ev_charger:' guard"
+        assert found_budget, (
+            "BudgetConfig() must be INSIDE 'if config.ev_charger:' block"
+        )
