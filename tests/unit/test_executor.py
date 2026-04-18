@@ -741,13 +741,42 @@ class TestDispatchTable:
 class TestDispatchTableAsync:
     """Guard tests for PLAT-1592 dispatch table refactor (async)."""
 
-    async def test_set_export_limit_returns_false(self) -> None:
-        """SET_EXPORT_LIMIT stub handler returns False (not yet implemented)."""
+    async def test_set_export_limit_unknown_target_returns_false(self) -> None:
+        """SET_EXPORT_LIMIT with no matching inverter returns False (PLAT-1699)."""
         executor = CommandExecutor(inverters={})
         cmd = Command(
             command_type=CommandType.SET_EXPORT_LIMIT,
             target_id="inverter_kontor",
             value=_EXPORT_LIMIT_DISABLED_W,
+        )
+        result = await executor.execute([cmd])
+        assert result.commands_failed == 1
+
+    async def test_set_export_limit_calls_adapter_on_success(self) -> None:
+        """PLAT-1699 success path: SET_EXPORT_LIMIT calls inverter.set_export_limit
+        with the requested watts value and returns success.
+        """
+        inverter = _make_inverter()
+        inverter.set_export_limit = AsyncMock(return_value=True)
+        executor = CommandExecutor(inverters={"kontor": inverter})
+        cmd = Command(
+            command_type=CommandType.SET_EXPORT_LIMIT,
+            target_id="kontor",
+            value=2500,
+        )
+        result = await executor.execute([cmd])
+        assert result.commands_failed == 0
+        inverter.set_export_limit.assert_awaited_once_with(2500)
+
+    async def test_set_export_limit_adapter_failure_returns_false(self) -> None:
+        """PLAT-1699: when the adapter raises, executor returns False + logs."""
+        inverter = _make_inverter()
+        inverter.set_export_limit = AsyncMock(side_effect=RuntimeError("HA 500"))
+        executor = CommandExecutor(inverters={"kontor": inverter})
+        cmd = Command(
+            command_type=CommandType.SET_EXPORT_LIMIT,
+            target_id="kontor",
+            value=0,
         )
         result = await executor.execute([cmd])
         assert result.commands_failed == 1

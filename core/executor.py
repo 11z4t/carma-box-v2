@@ -341,9 +341,11 @@ class CommandExecutor:
     async def _exec_set_export_limit(self, cmd: Command) -> bool:
         """SET_EXPORT_LIMIT: write grid export limit via inverter adapter.
 
-        PLAT-1699: Previously used hardcoded entity template + raw _api access.
-        Now delegates to inverter.set_export_limit() — config-driven entity
-        from BatteryEntities.export_limit, kund-agnostisk.
+        Delegates to the injected inverter adapter's ``set_export_limit``
+        coroutine; entity ID comes from BatteryEntities.export_limit in
+        site.yaml so the path is kund-agnostisk (no hardcoded entity names
+        or direct HA API access). Returns the adapter result, or False when
+        the target inverter is not registered / the adapter raises.
         """
         inverter = self._inverters.get(cmd.target_id)
         if inverter is None:

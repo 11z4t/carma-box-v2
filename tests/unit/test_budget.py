@@ -574,6 +574,63 @@ def test_plat1695_only_lower_bat_charges_when_mixed() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "grid_w,soc_k,soc_f,should_kontor_charge",
+    [
+        # Below threshold + heavy export → kontor charges
+        (-4000.0, 50.0, 50.0, True),
+        (-500.0, 50.0, 50.0, True),
+        # Zero grid (model surplus still positive) → charge
+        (0.0, 50.0, 50.0, True),
+        # Slight import (< aggressive deadband) — still charges,
+        # feedback reduces surplus but PV model keeps it positive.
+        (40.0, 50.0, 50.0, True),
+        # Import > aggressive threshold — grid-feedback shrinks surplus but
+        # as long as PV > house by more than the import, bat keeps charging
+        # (just at a lower rate). Convergence to grid=0 happens across
+        # multiple cycles via the closed loop.
+        (3000.0, 50.0, 50.0, True),
+        # Huge import wipes out the model surplus entirely → bat halts.
+        (6000.0, 50.0, 50.0, False),
+        # At SoC stop threshold — no charging regardless of grid
+        (-4000.0, 95.0, 95.0, False),
+        (0.0, 95.0, 95.0, False),
+        # Above stop threshold — no charging
+        (-4000.0, 98.0, 98.0, False),
+    ],
+)
+def test_plat1695_grid_w_variation(
+    grid_w: float, soc_k: float, soc_f: float, should_kontor_charge: bool,
+) -> None:
+    """PLAT-1695 + PLAT-1715: closed-loop surplus × SoC-gate matrix.
+
+    Exercises the grid-feedback correction in `_available_surplus_w`
+    together with the SoC-gate in `_allocate_bat`. Covers exporting,
+    zero, and importing grid across SoC below/at/above the stop
+    threshold.
+    """
+    cfg = BudgetConfig()
+    inp = _inp(
+        hour=14,
+        pv_w=5000.0,
+        house_w=500.0,
+        grid_w=grid_w,
+        bat_k_soc=soc_k,
+        bat_f_soc=soc_f,
+    )
+    result = allocate(inp, cfg)
+    kontor_charge = any(
+        c.command_type == CommandType.SET_EMS_POWER_LIMIT
+        and c.target_id == "kontor"
+        and int(c.value or 0) > 0
+        for c in result.commands
+    )
+    assert kontor_charge is should_kontor_charge, (
+        f"grid={grid_w} soc_k={soc_k} soc_f={soc_f}: "
+        f"expected charge={should_kontor_charge}, got {kontor_charge}"
+    )
+
+
 def test_plat1695_default_stop_matches_state_machine_s8_entry() -> None:
     """PLAT-1695: Default bat_charge_stop_soc_pct must match state machine
     surplus_entry_soc_pct. Prevents reintroducing the 5pp dead zone."""

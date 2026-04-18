@@ -422,3 +422,84 @@ class TestProductionConfig:
     def test_ev_soc_entity(self, config: CarmaConfig) -> None:
         """EV SoC entity should use the real HA entity ID."""
         assert config.ev.entities.soc == "sensor.bil_batteri_soc"
+
+
+# ---------------------------------------------------------------------------
+# PLAT-1700: validate_miner_safety Pydantic validator
+# ---------------------------------------------------------------------------
+
+
+class TestMinerSafetyValidator:
+    """PLAT-1700: ConsumerConfig.validate_miner_safety rejects unsafe configs."""
+
+    def _base(self, **overrides: object) -> dict[str, object]:
+        base: dict[str, object] = {
+            "id": "miner",
+            "name": "Goldshell SC Box II",
+            "type": "on_off",
+            "role": "cold_heater",
+            "adapter": "shelly",
+            "dispatchable": True,
+            "priority": 5,
+            "priority_shed": 1,
+            "power_w": 400,
+            "min_w": 400,
+            "max_w": 400,
+            "entity_switch": "switch.miner_relay",
+            "entity_power": "sensor.miner_power",
+        }
+        base.update(overrides)
+        return base
+
+    def test_miner_id_with_shelly_adapter_is_rejected(self) -> None:
+        """id='miner' + adapter='shelly' + dispatchable=True → ValidationError."""
+        from pydantic import ValidationError  # noqa: PLC0415
+        from config.schema import ConsumerConfig  # noqa: PLC0415
+
+        with pytest.raises(ValidationError) as exc_info:
+            ConsumerConfig.model_validate(self._base())
+        assert "miner" in str(exc_info.value).lower()
+        assert "adapter" in str(exc_info.value).lower()
+
+    def test_miner_role_with_shelly_adapter_is_rejected(self) -> None:
+        """role='miner' + adapter='shelly' + dispatchable=True → ValidationError."""
+        from pydantic import ValidationError  # noqa: PLC0415
+        from config.schema import ConsumerConfig  # noqa: PLC0415
+
+        with pytest.raises(ValidationError):
+            ConsumerConfig.model_validate(self._base(
+                id="buffer_load", role="miner",
+            ))
+
+    def test_miner_with_goldshell_adapter_passes(self) -> None:
+        """adapter='goldshell_miner' → OK, no exception."""
+        from config.schema import ConsumerConfig  # noqa: PLC0415
+
+        c = ConsumerConfig.model_validate(self._base(
+            adapter="goldshell_miner", entity_switch="",
+        ))
+        assert c.adapter == "goldshell_miner"
+
+    def test_miner_with_shelly_but_not_dispatchable_passes(self) -> None:
+        """dispatchable=False lets shelly adapter through (read-only)."""
+        from config.schema import ConsumerConfig  # noqa: PLC0415
+
+        c = ConsumerConfig.model_validate(self._base(dispatchable=False))
+        assert c.dispatchable is False
+
+    def test_non_miner_with_shelly_adapter_passes(self) -> None:
+        """Ordinary consumers (pumps, heaters) keep the default shelly path."""
+        from config.schema import ConsumerConfig  # noqa: PLC0415
+
+        c = ConsumerConfig.model_validate(self._base(
+            id="vp_kontor", name="Heat pump", role="",
+        ))
+        assert c.adapter == "shelly"
+
+    def test_unknown_adapter_is_rejected(self) -> None:
+        """Unknown adapter kinds raise ValidationError (enum guard)."""
+        from pydantic import ValidationError  # noqa: PLC0415
+        from config.schema import ConsumerConfig  # noqa: PLC0415
+
+        with pytest.raises(ValidationError):
+            ConsumerConfig.model_validate(self._base(adapter="tuya"))
