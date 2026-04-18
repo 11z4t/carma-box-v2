@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from core.models import Command, CommandType, ConsumerState, EMSMode
+from core.zero_grid import BatLimits, BatSnapshot, plan_zero_grid
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,11 @@ class BudgetConfig:
     bat_discharge_min_soc_pct: float = 15.0
     # Default bat capacity fallback if caller omits bat_caps
     bat_default_cap_kwh: float = 10.0
+    # PLAT-1718: physical rate limits used by the zero-grid controller when
+    # the caller does not supply per-battery values. 5 kW matches the GoodWe
+    # ET-10 default; override via site.yaml if different hardware is used.
+    bat_default_max_charge_w: int = 5000
+    bat_default_max_discharge_w: int = 5000
 
 
 # ---------------------------------------------------------------------------
@@ -235,122 +241,106 @@ def allocate(
 
     # ----- PRIORITY ALLOCATION -----
 
-    # PLAT-1716: daytime grid target is 0 W. When grid is importing above
-    # the deadband AND we have headroom above the discharge floor, the bat
-    # covers house load — NOT just in the evening window. User rule
-    # (2026-04-18): generalises to "bat keeps grid at 0 both ways".
-    # Requires sustained import (≥3 cycles, ~90 s) to give EV ramp-down and
-    # transient PV drops time to settle before bat starts covering the grid.
-    sustained_import = state.consecutive_import_cycles >= 3
-    before_evening_window = hour < _EVENING_DISCHARGE_START_H
+    # PLAT-1718: The zero-grid controller OWNS bat mode + limit during
+    # the active daytime window (06:00–17:00 by default). It drives
+    # grid → 0 W every cycle using the measured ``grid_power_w`` instead
+    # of the pv-house model (which can lag or go stale). EV and consumer
+    # cascade still run in parallel; their effect on grid feeds back
+    # into the next cycle's zero-grid step.
+    #
+    # Outside this window the legacy branches apply:
+    #   17:00–20:00 → evening_discharge (bat covers house explicitly)
+    #   20:00–22:00 → bat standby (preserve capacity for morning peak)
+    #   22:00–06:00 → night controller takes over in engine
+    zero_grid_active = (
+        daytime
+        and hour < _EVENING_DISCHARGE_START_H
+    )
+    zero_grid_plan = None
+    if zero_grid_active:
+        zg_bats = [
+            BatSnapshot(
+                battery_id=bid,
+                power_w=inp.bat_powers.get(bid, 0.0),
+                soc_pct=soc,
+            )
+            for bid, soc in inp.bat_socs.items()
+        ]
+        zg_limits = {
+            bid: BatLimits(
+                max_charge_w=cfg.bat_default_max_charge_w,
+                max_discharge_w=cfg.bat_default_max_discharge_w,
+                soc_min_pct=cfg.bat_discharge_min_soc_pct,
+                soc_max_pct=cfg.bat_charge_stop_soc_pct,
+            )
+            for bid in inp.bat_socs
+        }
+        zero_grid_plan = plan_zero_grid(
+            grid_power_w=inp.grid_power_w,
+            bats=zg_bats,
+            limits_by_id=zg_limits,
+            spread_aggressive_pct=cfg.bat_aggressive_spread_pct,
+        )
+        bat_alloc = dict(zero_grid_plan.limits_w)
+        bat_discharge = sum(
+            lim for bid, lim in zero_grid_plan.limits_w.items()
+            if zero_grid_plan.modes[bid] == "discharge_pv"
+        )
+        reasons.append(zero_grid_plan.reason)
 
     if not daytime:
         # Night — defers to night controller
         reasons.append("NIGHT: defers to night controller")
 
     elif (
-        before_evening_window
-        and sustained_import
-        and bat_avg_soc > cfg.bat_discharge_min_soc_pct
-    ):
-        # Daytime discharge (PLAT-1716): bat covers house load to drive
-        # grid → 0. Only active before the evening window so the existing
-        # evening-discharge branch handles 17-20.
-        bat_discharge, bat_alloc = _allocate_evening_discharge(
-            inp, cfg, state,
-        )
-        ev_target = 0
-        reasons.append(
-            f"DAYTIME_DISCHARGE: bat {bat_discharge}W covers grid "
-            f"{inp.grid_power_w:.0f}W import (soc_avg={bat_avg_soc:.0f}%)"
-        )
-
-    elif (
         _EVENING_DISCHARGE_START_H <= hour < _EVENING_DISCHARGE_END_H
         and bat_avg_soc > cfg.bat_discharge_min_soc_pct
     ):
-        # Evening discharge 17-20: bat covers house load, grid target 0W
-        # Bat FULL or partial — discharge to cover house load either way
+        # Evening 17-20: explicit discharge to cover house load.
+        # Zero-grid is disabled here (see zero_grid_active); the legacy
+        # allocator delivers predictable proportional-by-capacity shares.
         bat_discharge, bat_alloc = _allocate_evening_discharge(
             inp, cfg, state,
         )
         ev_target = 0
         reasons.append(
             f"EVENING_DISCHARGE: bat_discharge {bat_discharge}W"
-            f" house={inp.house_load_w:.0f}W"
+            f" house={inp.house_load_w:.0f}W",
         )
 
     elif hour >= cfg.evening_cutoff_h:
-        # Evening 20-22: bat standby, NO EV (preserve for morning)
-        bat_alloc, remaining = _allocate_bat(inp, remaining, cfg)
+        # Evening 20-22: bat standby, NO EV (preserve for morning).
+        bat_alloc = {bid: 0 for bid in inp.bat_socs}
         ev_target = 0
-        reasons.append(f"EVENING: bat {sum(bat_alloc.values())}W, EV off")
+        reasons.append("EVENING: bat standby, EV off")
 
     elif fm and ev_wants_charge:
-        # FM 06-12: EV first + bat-discharge-support if needed
+        # FM 06-12: EV wants to charge. Zero-grid already wrote the bat
+        # plan; the EV ramper handles its own ±1 A per cycle.
         ev_target, remaining = _allocate_ev_with_ramp(
             inp, remaining, cfg, state,
         )
-        # Remaining PV → bat
-        bat_charge_alloc, remaining = _allocate_bat(inp, remaining, cfg)
-        # Bat discharge support if EV needs more than PV provides
-        if ev_target > 0 and bat_can_support_ev and cfg.bat_discharge_support:
-            ev_power = _ev_power_at_amps(ev_target)
-            gap = ev_power - surplus
-            if gap > 0:
-                bat_discharge = int(gap)
-                # Discharge overrides charge — set per-bat discharge limits
-                shares = _bat_discharge_shares(inp, cfg)
-                bat_alloc = {
-                    bid: int(bat_discharge * share)
-                    for bid, share in shares.items()
-                }
-            else:
-                bat_alloc = bat_charge_alloc
-        else:
-            bat_alloc = bat_charge_alloc
-        reasons.append(
-            f"FM: EV {ev_target}A bat_charge {sum(bat_charge_alloc.values())}W"
-            f" bat_discharge {bat_discharge}W"
-        )
+        reasons.append(f"FM: EV target {ev_target}A")
 
     else:
-        # EM 12-17: bat first, EV with remainder or bat-support
-        bat_charge_alloc, remaining = _allocate_bat(inp, remaining, cfg)
-        bat_alloc = bat_charge_alloc
-
-        if ev_wants_charge:
-            if _all_bat_full(inp, cfg):
-                # Bat full → EV gets surplus + bat-discharge-support
-                ev_target, remaining = _allocate_ev_with_ramp(
-                    inp, remaining, cfg, state,
-                )
-                if ev_target > 0 and cfg.bat_discharge_support:
-                    ev_power = _ev_power_at_amps(ev_target)
-                    gap = ev_power - surplus
-                    if gap > 0:
-                        bat_discharge = int(gap)
-                        shares = _bat_discharge_shares(inp, cfg)
-                        bat_alloc = {
-                            bid: int(bat_discharge * share)
-                            for bid, share in shares.items()
-                        }
-                reasons.append(f"EM: bat full, EV {ev_target}A discharge {bat_discharge}W")
-            elif bat_can_support_ev:
-                # Bat not full but has margin → EV from PV surplus
-                ev_target, remaining = _allocate_ev_with_ramp(
-                    inp, remaining, cfg, state,
-                )
-                reasons.append(
-                    f"EM: bat {bat_avg_soc:.0f}%>min"
-                    f"{bat_min_soc_dynamic:.0f}% EV {ev_target}A"
-                )
-            else:
-                ev_target = 0
-                reasons.append(f"EM: bat {bat_avg_soc:.0f}%≤min{bat_min_soc_dynamic:.0f}% EV off")
+        # EM 12-17: zero-grid owns bat; EV runs when it is capable of
+        # pulling surplus. Either bat has room to support EV discharge,
+        # or the bat is fully charged (in which case EV should consume
+        # the remaining PV directly).
+        if ev_wants_charge and (bat_can_support_ev or _all_bat_full(inp, cfg)):
+            ev_target, remaining = _allocate_ev_with_ramp(
+                inp, remaining, cfg, state,
+            )
+            reasons.append(f"EM: EV {ev_target}A")
         else:
             ev_target = 0
-            reasons.append(f"EM: bat {sum(bat_charge_alloc.values())}W")
+            if ev_wants_charge:
+                reasons.append(
+                    f"EM: bat {bat_avg_soc:.0f}%≤min"
+                    f"{bat_min_soc_dynamic:.0f}% EV off",
+                )
+            else:
+                reasons.append("EM: EV idle")
 
     # ----- EMIT COMMANDS -----
 
@@ -375,68 +365,55 @@ def allocate(
             reason=f"Budget: EV {inp.ev_current_amps}→{ev_target}A",
         ))
 
-    # Bat commands — charge or discharge
-    if bat_discharge > 0:
-        # Discharge mode — either EV support or evening discharge
-        # bat_alloc already has per-battery discharge limits
-        for bid, discharge_w in bat_alloc.items():
-            if discharge_w > 0:
-                cmds.append(Command(
-                    command_type=CommandType.SET_EMS_MODE,
-                    target_id=bid,
-                    value=EMSMode.DISCHARGE_PV.value,
-                    rule_id=_RULE_ID,
-                    reason=f"Budget: discharge_pv {discharge_w}W",
-                ))
-                cmds.append(Command(
-                    command_type=CommandType.SET_EMS_POWER_LIMIT,
-                    target_id=bid, value=discharge_w,
-                    rule_id=_RULE_ID,
-                    reason=f"Budget: limit {discharge_w}W",
-                ))
+    # Bat commands — per-battery mode + limit.
+    # PLAT-1718: when the zero-grid controller ran (daytime), its plan is
+    # the source of truth — each bat may be charging, discharging, or
+    # standing by independently. Night paths fall back to the legacy
+    # 'all-discharge' / 'all-charge' collective decision.
+    bat_modes_target: dict[str, str] = {}
+    if zero_grid_plan is not None:
+        # zero-grid plan returns: "charge_battery" / "discharge_pv" / "battery_standby"
+        bat_modes_target.update(zero_grid_plan.modes)
     else:
-        # PLAT-1714: Charge via charge_battery (mode 11) which RESPECTS
-        # ems_power_limit. Previous charge_pv is UNCONTROLLABLE in peak_shaving
-        # firmware mode → caused 800W grid import during PV absorption.
-        #
-        # PLAT-1715: Only emit SET_EMS_MODE when the current mode differs from
-        # the target. Each SET_EMS_MODE request runs the 5-step mode-change
-        # protocol whose Step 1 PREPARE clears ems_power_limit to 0 —
-        # if we re-emit the same mode every 30s cycle the limit resets to 0
-        # and the inverter stops charging (PLAT-1715 live root cause: 4.9 kW
-        # export because limit was repeatedly nulled).
         for bid, limit_w in bat_alloc.items():
-            current_mode = inp.bat_modes.get(bid, "")
-            target_mode = (
-                EMSMode.CHARGE_BATTERY.value
-                if limit_w > 0
-                else EMSMode.BATTERY_STANDBY.value
-            )
-            if current_mode != target_mode:
-                cmds.append(Command(
-                    command_type=CommandType.SET_EMS_MODE,
-                    target_id=bid,
-                    value=target_mode,
-                    rule_id=_RULE_ID,
-                    reason=(
-                        f"Budget: {target_mode} {limit_w}W"
-                        if limit_w > 0
-                        else "Budget: standby"
-                    ),
-                ))
-            # Always emit the power limit — idempotent writes keep the
-            # inverter converged on the Budget's intended value. Truthy-trap
-            # defense (B9) already guarantees 0 is actually written.
+            if bat_discharge > 0 and limit_w > 0:
+                bat_modes_target[bid] = EMSMode.DISCHARGE_PV.value
+            elif limit_w > 0:
+                bat_modes_target[bid] = EMSMode.CHARGE_BATTERY.value
+            else:
+                bat_modes_target[bid] = EMSMode.BATTERY_STANDBY.value
+
+    # PLAT-1714/1715: idempotent mode emission — only write SET_EMS_MODE when
+    # the inverter is not already in the target mode. The 5-step mode-change
+    # protocol clears the power limit during Step 1 PREPARE, so re-emitting
+    # the same mode every cycle would keep pulling the limit back to 0.
+    for bid, limit_w in bat_alloc.items():
+        target_mode = bat_modes_target.get(
+            bid, EMSMode.BATTERY_STANDBY.value,
+        )
+        current_mode = inp.bat_modes.get(bid, "")
+        if current_mode != target_mode:
             cmds.append(Command(
-                command_type=CommandType.SET_EMS_POWER_LIMIT,
-                target_id=bid, value=limit_w,
+                command_type=CommandType.SET_EMS_MODE,
+                target_id=bid,
+                value=target_mode,
                 rule_id=_RULE_ID,
                 reason=(
-                    f"Budget: limit {limit_w}W"
+                    f"Budget: {target_mode} {limit_w}W"
                     if limit_w > 0
-                    else "Budget: standby limit=0"
+                    else "Budget: standby"
                 ),
             ))
+        cmds.append(Command(
+            command_type=CommandType.SET_EMS_POWER_LIMIT,
+            target_id=bid, value=limit_w,
+            rule_id=_RULE_ID,
+            reason=(
+                f"Budget: limit {limit_w}W"
+                if limit_w > 0
+                else "Budget: standby limit=0"
+            ),
+        ))
 
     # PLAT-1715: unified consumer cascade runs after bat + EV allocation.
     cmds.extend(_cascade_consumers(inp, bat_alloc, state))
