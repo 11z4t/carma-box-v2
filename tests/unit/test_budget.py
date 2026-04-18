@@ -952,3 +952,55 @@ def test_plat1715_cascade_no_start_without_sustained_export() -> None:
         if c.command_type == CommandType.TURN_ON_CONSUMER
     ]
     assert len(starts) == 0
+
+
+# -------------------------------------------------------------------
+# PLAT-1696 step 1: grid-sensor smoothing (median-of-N)
+# -------------------------------------------------------------------
+
+
+def test_grid_smoothing_window_filled_over_cycles(cfg: BudgetConfig) -> None:
+    """allocate() pushes grid_power_w into state.grid_history_w each cycle."""
+    state = BudgetState()
+    for gw in (500.0, 600.0, 700.0):
+        inp = _inp(hour=14, pv_w=1000, house_w=500, grid_w=gw)
+        allocate(inp, cfg, state)
+    assert state.grid_history_w == [500.0, 600.0, 700.0]
+
+
+def test_grid_smoothing_window_bounded(cfg: BudgetConfig) -> None:
+    """Window size is bounded by cfg.grid_smoothing_window."""
+    cfg3 = BudgetConfig(grid_smoothing_window=3)
+    state = BudgetState()
+    for gw in (100.0, 200.0, 300.0, 400.0, 500.0):
+        inp = _inp(hour=14, pv_w=1000, house_w=500, grid_w=gw)
+        allocate(inp, cfg3, state)
+    # Only the last 3 remain.
+    assert state.grid_history_w == [300.0, 400.0, 500.0]
+
+
+def test_grid_spike_rejected_by_median(cfg: BudgetConfig) -> None:
+    """A single 12.9 kW spike in a quiet stream does NOT drive the bat.
+
+    Simulates the live observation (23:26-23:27): real grid ≈ 2.5 kW,
+    sensor reported 12.9 kW for one cycle. With median-of-3 the spike
+    is rejected and bat allocation follows the real value.
+    """
+    state = BudgetState()
+    # Prime the history with two quiet readings, then inject a spike.
+    for gw in (2500.0, 2500.0):
+        allocate(
+            _inp(hour=14, pv_w=0, house_w=2500, grid_w=gw,
+                 bat_k_soc=60.0, bat_f_soc=60.0),
+            cfg, state,
+        )
+    # Spike cycle — sorted history = [2500, 2500, 12900] → median = 2500.
+    spike_inp = _inp(
+        hour=14, pv_w=0, house_w=2500, grid_w=12900.0,
+        bat_k_soc=60.0, bat_f_soc=60.0,
+    )
+    spike_result = allocate(spike_inp, cfg, state)
+    assert state.grid_history_w == [2500.0, 2500.0, 12900.0]
+    # bat_discharge should reflect the 2500 W MEDIAN, not the 12900 W spike.
+    # With gain=0.7: discharge ≈ 0.7 × 2500 = 1750 W.
+    assert spike_result.bat_discharge_w == int(2500.0 * 0.7)

@@ -102,6 +102,13 @@ class BudgetConfig:
     #   before starting the next consumer in the priority list.
     cascade_cooldown_s: float = 60.0
     cascade_sustained_cycles: int = 2
+    # PLAT-1696 step 1 grid-smoothing window. Median-of-N rejects
+    # single-cycle spurious readings from the HA grid sensor (observed
+    # live: alternating 12.9 kW ↔ 2.5 kW every 15 s). Median (not mean)
+    # so one outlier in N is fully filtered. 3 is a good default — large
+    # enough to reject isolated spikes, small enough to react to real
+    # load shifts within ~2 cycles.
+    grid_smoothing_window: int = 3
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +150,11 @@ class BudgetState:
     # PLAT-1715: cooldown per consumer (monotonic seconds) to prevent flapping.
     # Key = consumer_id, value = monotonic timestamp of last switch.
     consumer_last_switch_ts: dict[str, float] = field(default_factory=dict)
+    # PLAT-1696 step 1: rolling window of recent grid-power readings.
+    # ``allocate()`` pushes the raw grid_power_w into this deque each
+    # cycle, then feeds the MEDIAN of the window to zero_grid so single
+    # spurious spikes (HA sensor glitch) are rejected.
+    grid_history_w: list[float] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -271,6 +283,16 @@ def allocate(
     zero_grid_active = True
     zero_grid_plan = None
     if zero_grid_active:
+        # PLAT-1696 step 1: grid-sensor smoothing. Push raw reading into
+        # the rolling window and feed the MEDIAN to zero_grid. One-cycle
+        # spikes (e.g. HA sensor glitch) are rejected, real load shifts
+        # pass through after window//2 + 1 cycles.
+        state.grid_history_w.append(inp.grid_power_w)
+        if len(state.grid_history_w) > cfg.grid_smoothing_window:
+            state.grid_history_w.pop(0)
+        sorted_history = sorted(state.grid_history_w)
+        grid_smoothed_w = sorted_history[len(sorted_history) // 2]
+
         zg_bats = [
             BatSnapshot(
                 battery_id=bid,
@@ -289,7 +311,7 @@ def allocate(
             for bid in inp.bat_socs
         }
         zero_grid_plan = plan_zero_grid(
-            grid_power_w=inp.grid_power_w,
+            grid_power_w=grid_smoothed_w,
             bats=zg_bats,
             limits_by_id=zg_limits,
             spread_aggressive_pct=cfg.bat_aggressive_spread_pct,
