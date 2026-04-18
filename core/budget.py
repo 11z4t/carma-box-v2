@@ -291,23 +291,26 @@ def allocate(
         reasons.append("NIGHT: defers to night controller")
 
     elif (
-        _EVENING_DISCHARGE_START_H <= hour < _EVENING_DISCHARGE_END_H
+        not zero_grid_active
+        and _EVENING_DISCHARGE_START_H <= hour < _EVENING_DISCHARGE_END_H
         and bat_avg_soc > cfg.bat_discharge_min_soc_pct
     ):
-        # Evening 17-20: explicit discharge to cover house load.
-        # Zero-grid is disabled here (see zero_grid_active); the legacy
-        # allocator delivers predictable proportional-by-capacity shares.
+        # Fallback legacy evening_discharge — only reachable when the
+        # zero-grid controller is disabled (feature flag / night branch).
+        # Kept as a safety net; emits proportional-by-capacity shares.
         bat_discharge, bat_alloc = _allocate_evening_discharge(
             inp, cfg, state,
         )
         ev_target = 0
         reasons.append(
-            f"EVENING_DISCHARGE: bat_discharge {bat_discharge}W"
+            f"EVENING_DISCHARGE(legacy): bat_discharge {bat_discharge}W"
             f" house={inp.house_load_w:.0f}W",
         )
 
-    elif hour >= cfg.evening_cutoff_h:
-        # Evening 20-22: bat standby, NO EV (preserve for morning).
+    elif not zero_grid_active and hour >= cfg.evening_cutoff_h:
+        # Evening 20-22 when zero-grid is off: bat standby, NO EV
+        # (preserve for morning). During zero_grid_active the controller
+        # holds the bat at grid=0 on its own — no override here.
         bat_alloc = {bid: 0 for bid in inp.bat_socs}
         ev_target = 0
         reasons.append("EVENING: bat standby, EV off")

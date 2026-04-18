@@ -295,7 +295,12 @@ _EVENING_BAT_LOW_SOC: float = 15.0  # exactly at min_soc floor
 
 
 def test_evening_discharge_covers_house_load(cfg: BudgetConfig) -> None:
-    """17-20: bat discharge = house_load, targeting grid 0W."""
+    """17-20: zero-grid discharges the bat to cover grid import (target 0 W).
+
+    PLAT-1718 owns the evening window — zero_grid produces the same
+    net result as the legacy allocator (total discharge ≈ grid import)
+    while being closed-loop on the measured bat + grid state.
+    """
     inp = _inp(
         hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
         grid_w=_EVENING_GRID_IMPORT_W,
@@ -304,11 +309,16 @@ def test_evening_discharge_covers_house_load(cfg: BudgetConfig) -> None:
     state = BudgetState()
     result = allocate(inp, cfg, state)
     assert result.bat_discharge_w == int(_EVENING_GRID_IMPORT_W)
-    assert "EVENING_DISCHARGE" in result.reason
+    assert "zero_grid" in result.reason
 
 
 def test_evening_discharge_proportional(cfg: BudgetConfig) -> None:
-    """Evening discharge proportional by available energy (like FM/EM)."""
+    """Evening discharge proportional by max_discharge_w (zero-grid).
+
+    Both default bats have the same max_discharge_w → 50/50 split.
+    Previously (legacy) used bat_caps-weighted split; zero-grid uses
+    inverter rate capacity because that is the real physical constraint.
+    """
     inp = _inp(
         hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
         grid_w=_EVENING_GRID_IMPORT_W,
@@ -318,7 +328,9 @@ def test_evening_discharge_proportional(cfg: BudgetConfig) -> None:
     result = allocate(inp, cfg, state)
     k = result.bat_allocations.get("kontor", 0)
     f = result.bat_allocations.get("forrad", 0)
-    assert k > f, "Kontor (15kWh) should get more than Förråd (5kWh)"
+    # Equal split with default max_discharge_w (5000 each).
+    assert k == f
+    assert k + f == int(_EVENING_GRID_IMPORT_W)
 
 
 def test_evening_discharge_discharge_pv_commands(cfg: BudgetConfig) -> None:
@@ -366,7 +378,7 @@ def test_evening_discharge_skipped_bat_low(cfg: BudgetConfig) -> None:
 
 
 def test_evening_discharge_bat_full_still_discharges(cfg: BudgetConfig) -> None:
-    """Evening discharge: bat at 100% → STILL discharge to cover house load."""
+    """Evening discharge: bat at 100% → zero_grid still discharges to grid=0."""
     inp = _inp(
         hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
         grid_w=_EVENING_GRID_IMPORT_W,
@@ -374,7 +386,7 @@ def test_evening_discharge_bat_full_still_discharges(cfg: BudgetConfig) -> None:
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
-    assert "EVENING_DISCHARGE" in result.reason
+    assert "zero_grid" in result.reason
     assert result.bat_discharge_w > 0
 
 
