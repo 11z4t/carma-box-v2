@@ -323,7 +323,13 @@ control:
   # SET_EMS_MODE (PLAT-1715) we only actually write when the mode
   # differs, so the cooldown protects against genuine direction changes.
   mode_change_cooldown_s: 60
-  standby_intermediate_s: 300
+  # PLAT-1696 step 1: standby_intermediate_s lowered 300 → 30. The 5-step
+  # protocol parks the bat in ``battery_standby`` between mode changes so
+  # the inverter cleanly cleans its internal state before flipping charge
+  # ↔ discharge. 300 s was a very conservative hold that left the bat
+  # idle for 5 minutes while grid kept importing multi-kW at night.
+  # GoodWe ET survives a 30 s standby just fine — verified live.
+  standby_intermediate_s: 30
   scenario_transition_s: 300
   measurement_stale_s: 300
 
