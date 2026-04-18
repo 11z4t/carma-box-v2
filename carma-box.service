@@ -16,7 +16,7 @@ ExecStart=/opt/carma-box/venv/bin/python -m main \
     --config /etc/carma-box/site.yaml
 Restart=on-failure
 RestartSec=30
-WatchdogSec=120
+UMask=0002
 
 # Security hardening
 NoNewPrivileges=true
