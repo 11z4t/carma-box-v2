@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from config.schema import BatteryConfig
-from core.balancer import BalanceResult, BatteryBalancer, BatteryInfo
+from core.balancer import BalanceResult, BatteryBalancer
 from core.bat_support_controller import (
     BatInfo as BatSupportInfo,
     BatSupportConfig,
@@ -223,159 +223,40 @@ class ControlEngine:
                 self._sm.transition_to(new_scenario)
                 result.scenario = new_scenario
 
-            # Determine active scenario and target mode
+            # Determine active scenario (still tracked for state machine + metrics)
             active_scenario = self._sm.state.current
-            sm = self._SCENARIO_MODES.get(
-                active_scenario,
-                _ScenarioMode(EMSMode.BATTERY_STANDBY),
-            )
-            is_daytime_charge = (
-                sm.mode == EMSMode.CHARGE_PV and not snapshot.is_night
-            )
-            # PLAT-1718: Budget Allocator is the SINGLE bat controller 24/7.
-            # Previously only daytime charge + evening discharge routed to
-            # Budget — night scenarios fell through to the legacy Branch B
-            # (``_compute_charge_plan`` + BatteryBalancer), which does not
-            # know about zero_grid and left the bat idle while the grid
-            # imported multi-kW at night. The user invariant
-            # (±100 W import/export 24/7) requires Budget everywhere; the
-            # night planner still writes scheduled grid-charge commands
-            # through a separate path when price triggers fire.
-            is_budget_scenario = True
 
-            # ============================================================
-            # BRANCH: Budget Allocator vs everything else
-            # Budget Allocator owns daytime PV + evening discharge.
-            # ONE code path per branch — no conflicting writers.
-            # ============================================================
-
-            if is_budget_scenario and self._budget_config is not None:
-                # ----- BRANCH A: Budget Allocator -----
-                # PLAT-1686: Unified Budget Allocator handles
-                # charge, discharge, and EV allocation responsively.
+            # PLAT-1696 step 1: SINGLE bat controller — Budget Allocator owns
+            # mode + limit 24/7 for every scenario. The legacy Branch B
+            # (``_compute_charge_plan`` + BatteryBalancer, ~130 lines of
+            # parallel dispatch) was removed once PLAT-1718 proved that
+            # zero_grid handles charge AND discharge through a single pure
+            # function.
+            #
+            # Engine is now routing only — no bat business logic here.
+            # If the budget config is absent (misconfigured site) the
+            # engine returns an empty execution; that's a hard-fail signal
+            # for deploy-time validation, not a fallback.
+            if self._budget_config is not None:
                 for bat in snapshot.batteries:
                     self._mode_manager.clear_pending(bat.battery_id)
-
-                result.execution = await self._run_budget_allocator(
-                    snapshot,
-                )
-
-            elif is_daytime_charge:
-                # ----- BRANCH A (legacy): Daytime PV surplus charging -----
-                for bat in snapshot.batteries:
-                    self._mode_manager.clear_pending(bat.battery_id)
-
-                result.execution = await self._compute_charge_plan(
-                    snapshot,
-                )
-
+                result.execution = await self._run_budget_allocator(snapshot)
             else:
-                # ----- BRANCH B: Discharge / standby / night -----
-                # Mode enforcement + balancer as before.
-                base_mode = sm.mode.value
-                for bat in snapshot.batteries:
-                    if not self._mode_manager.is_in_progress(bat.battery_id):
-                        if bat.soc_pct >= MAX_SOC_PCT and base_mode in (
-                            EMSMode.CHARGE_PV.value,
-                        ):
-                            target_mode = EMSMode.BATTERY_STANDBY.value
-                        else:
-                            target_mode = base_mode
-                        if bat.ems_mode.value != target_mode:
-                            # PLAT-1619: charge_pv limit must be 0 even at night
-                            limit_w = sm.ems_power_limit
-                            if target_mode == EMSMode.CHARGE_PV.value:
-                                limit_w = _CHARGE_PV_EMS_LIMIT_W
-                            self._mode_manager.request_change(
-                                battery_id=bat.battery_id,
-                                target_mode=target_mode,
-                                target_limit_w=limit_w,
-                                reason=f"Scenario {active_scenario.value}",
-                            )
+                logger.error(
+                    "Budget config missing — no bat commands this cycle",
+                )
 
-                # Near-zero grid in discharge → standby
-                grid_kw = abs(snapshot.grid.grid_power_w) / _W_TO_KW
-                if (
-                    grid_kw < NEAR_ZERO_KW
-                    and sm.mode == EMSMode.DISCHARGE_PV
-                ):
-                    for bat in snapshot.batteries:
-                        if not self._mode_manager.is_in_progress(
-                            bat.battery_id,
-                        ):
-                            self._mode_manager.request_change(
-                                battery_id=bat.battery_id,
-                                target_mode=EMSMode.BATTERY_STANDBY.value,
-                                reason="Near-zero grid — balanced",
-                            )
-
-                # Balancer — discharge/standby allocation
-                if snapshot.batteries:
-                    bat_infos = [
-                        BatteryInfo(
-                            battery_id=b.battery_id,
-                            soc_pct=b.soc_pct,
-                            cap_kwh=b.cap_kwh,
-                            cell_temp_c=b.cell_temp_c,
-                            soh_pct=b.soh_pct,
-                            max_discharge_w=(
-                                self._battery_configs[b.battery_id].max_discharge_kw
-                                * _W_TO_KW
-                                if b.battery_id in self._battery_configs
-                                else _SAFE_BAT_FALLBACK_W
-                            ),
-                            max_charge_w=(
-                                self._battery_configs[b.battery_id].max_charge_kw
-                                * _W_TO_KW
-                                if b.battery_id in self._battery_configs
-                                else _SAFE_BAT_FALLBACK_W
-                            ),
-                            ct_placement=b.ct_placement,
-                            local_load_w=b.load_power_w,
-                            pv_power_w=b.pv_power_w,
-                        )
-                        for b in snapshot.batteries
-                    ]
-                    total_w = abs(snapshot.grid.grid_power_w)
-                    is_charging = self._sm.state.current in (
-                        Scenario.NIGHT_GRID_CHARGE,
-                    )
-                    balance = self._balancer.allocate(
-                        bat_infos, total_w, is_charging,
-                    )
-                    result.balance = balance
-
-                    if balance.allocations:
-                        limit_cmds = [
-                            Command(
-                                command_type=CommandType.SET_EMS_POWER_LIMIT,
-                                target_id=alloc.battery_id,
-                                value=alloc.watts,
-                                rule_id="BALANCE",
-                                reason=(
-                                    f"Balance: {alloc.share_pct:.0f}% share,"
-                                    f" {alloc.watts}W"
-                                ),
-                            )
-                            for alloc in balance.allocations
-                            if alloc.watts > 0
-                        ]
-                        if limit_cmds:
-                            exec_result = await self._executor.execute(
-                                limit_cmds,
-                            )
-                            result.execution = exec_result
-
-            # Phase 4b (PLAT-1674): NIGHT_EV — call ev_night + bat_support
-            # controllers if configured AND in NIGHT_EV scenario.
+            # Phase 4b (PLAT-1674): NIGHT_EV controllers (EV amp + bat
+            # support) layer on top of Budget when the scenario matches.
             if (
                 active_scenario == Scenario.NIGHT_EV
                 and self._night_ev_config is not None
             ):
                 await self._run_night_ev_controllers(snapshot)
 
-            # Phase 5: MODE CHANGE MANAGER — process pending changes
-            # (only relevant for Branch B — Branch A writes directly)
+            # Phase 5: MODE CHANGE MANAGER — drains any pending transitions
+            # (emergency guard requests + any mode change still in flight
+            # from before the refactor).
             await self._mode_manager.process(self._executor)
 
             # Phase 6: SESSION TRACKING — record energy sessions (PLAT-1534)

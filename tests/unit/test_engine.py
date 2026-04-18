@@ -233,23 +233,17 @@ class TestGuardCommandsExecute:
 class TestExceptionCapture:
     """Exceptions inside the cycle are captured and returned (line 156-160)."""
 
+    @pytest.mark.skip(
+        reason=(
+            "PLAT-1696: balancer no longer on the hot path — "
+            "engine routes all scenarios to Budget."
+        ),
+    )
     async def test_balancer_exception_captured(self) -> None:
-        """If an exception is raised during the cycle, it is captured."""
-        engine = _make_engine()
-        engine._sm.state.current = Scenario.EVENING_DISCHARGE
-        snap = make_snapshot(hour=_TEST_EVENING_HOUR, batteries=[make_battery_state()])
-
-        with patch.object(
-            engine._balancer,
-            "allocate",
-            side_effect=RuntimeError("balancer failure"),
-        ):
-            result = await engine.run_cycle(snap)
-
-        # Error captured, not raised
-        assert result.error is not None
-        assert "balancer failure" in result.error
-        assert result.elapsed_s >= 0
+        """Superseded: budget-allocator exceptions are covered by
+        test_budget.py; run_cycle still catches them because the whole
+        cycle body is inside a try/except."""
+        pass
 
 
 # ===========================================================================
@@ -342,40 +336,15 @@ class TestForenoonPvEvLimit:
 class TestPerBatteryModeChange:
     """AC1: request_change per battery_id, not hardcoded 'scenario'."""
 
+    @pytest.mark.skip(
+        reason=(
+            "PLAT-1696: scenario→mode_manager path removed. Budget emits "
+            "commands per-battery directly to the executor; see "
+            "test_budget.py::test_plat1714_standby_emits_limit_zero."
+        ),
+    )
     async def test_scenario_change_calls_per_battery(self) -> None:
-        """2 batteries + scenario transition → 2 request_change calls."""
-        engine = _make_engine()
-        # Add second inverter mock
-        inv_mock2 = AsyncMock()
-        inv_mock2.set_ems_mode = AsyncMock(return_value=True)
-        inv_mock2.set_ems_power_limit = AsyncMock(return_value=True)
-        inv_mock2.set_fast_charging = AsyncMock(return_value=True)
-        inv_mock2.get_fast_charging = AsyncMock(return_value=False)
-        inv_mock2.get_ems_mode = AsyncMock(return_value="battery_standby")
-        engine._executor._inverters["forrad"] = inv_mock2
-
-        engine._sm.state.current = Scenario.PV_SURPLUS_DAY
-        engine._sm.state.entry_time = datetime(2026, 4, 12, 11, 0, tzinfo=timezone.utc)
-
-        snap = make_snapshot(
-            hour=17,
-            batteries=[
-                make_battery_state(battery_id="kontor", soc_pct=60.0),
-                make_battery_state(battery_id="forrad", soc_pct=55.0),
-            ],
-        )
-
-        with patch.object(
-            engine._mode_manager, "request_change",
-            wraps=engine._mode_manager.request_change,
-        ) as mock_rc:
-            await engine.run_cycle(snap)
-
-        calls = mock_rc.call_args_list
-        battery_ids = [c.kwargs.get("battery_id") for c in calls]
-        assert "kontor" in battery_ids
-        assert "forrad" in battery_ids
-        assert len(calls) == 2
+        pass
 
 
 class TestNoHardcodedScenarioString:
@@ -463,37 +432,15 @@ class TestNearZeroConstant:
 class TestNearZeroBalance:
     """AC1: Near-zero grid triggers standby."""
 
+    @pytest.mark.skip(
+        reason=(
+            "PLAT-1696: near-zero balance replaced by zero_grid deadband "
+            "(±50 W holds bat at current state). See test_zero_grid.py::"
+            "test_grid_inside_deadband_holds_current_state."
+        ),
+    )
     async def test_near_zero_grid_triggers_standby(self) -> None:
-        """grid_kw < NEAR_ZERO_KW in discharge mode → BATTERY_STANDBY."""
-        engine = _make_engine()
-        engine._sm.state.current = Scenario.EVENING_DISCHARGE
-        engine._sm.state.entry_time = datetime(
-            _TEST_ENTRY_YEAR, _TEST_ENTRY_MONTH, _TEST_ENTRY_DAY,
-            _TEST_ENTRY_HOUR_EVENING, 0, tzinfo=timezone.utc,
-        )
-
-        from tests.conftest import make_grid_state
-
-        # grid_power_w = 30W → 0.03 kW < NEAR_ZERO_KW (0.05)
-        snap = make_snapshot(
-            hour=_TEST_EVENING_HOUR,
-            batteries=[make_battery_state(soc_pct=_TEST_SOC_NOMINAL_PCT)],
-            grid=make_grid_state(grid_power_w=30.0),
-        )
-
-        with patch.object(
-            engine._mode_manager, "request_change",
-            wraps=engine._mode_manager.request_change,
-        ) as mock_rc:
-            await engine.run_cycle(snap)
-
-        # Should have standby request for near-zero balance
-        standby_calls = [
-            c for c in mock_rc.call_args_list
-            if c.kwargs.get("target_mode") == "battery_standby"
-            and "Near-zero" in c.kwargs.get("reason", "")
-        ]
-        assert len(standby_calls) >= 1
+        pass
 
 
 @pytest.mark.asyncio
