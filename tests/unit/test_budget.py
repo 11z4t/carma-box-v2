@@ -38,7 +38,13 @@ def _inp(
     ev_target: float = 100.0,
     bat_k_soc: float = 70.0,
     bat_f_soc: float = 70.0,
+    bat_k_mode: str = "charge_pv",
+    bat_f_mode: str = "charge_pv",
 ) -> BudgetInput:
+    """Default bat_modes set to 'charge_pv' (not target 'charge_battery') so
+    transition-testing triggers the SET_EMS_MODE emission path (PLAT-1715
+    idempotency: mode is only emitted when current differs from target).
+    """
     return BudgetInput(
         now=datetime(2026, 4, 17, hour, 0, 0),
         grid_power_w=grid_w,
@@ -52,7 +58,7 @@ def _inp(
         bat_socs={"kontor": bat_k_soc, "forrad": bat_f_soc},
         bat_caps={"kontor": 15.0, "forrad": 5.0},
         bat_powers={"kontor": 0.0, "forrad": 0.0},
-        bat_modes={"kontor": "battery_standby", "forrad": "battery_standby"},
+        bat_modes={"kontor": bat_k_mode, "forrad": bat_f_mode},
     )
 
 
