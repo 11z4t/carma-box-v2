@@ -56,7 +56,8 @@ def test_success_resets_failure_count() -> None:
 
 def test_open_transitions_to_half_open_after_cooldown() -> None:
     cb, clock = _cb(failure_threshold=2, cooldown_s=10.0)
-    cb.on_failure(); cb.on_failure()
+    cb.on_failure()
+    cb.on_failure()
     assert cb.state == "open"
     assert cb.allow() is False
 
@@ -69,7 +70,8 @@ def test_open_transitions_to_half_open_after_cooldown() -> None:
 
 def test_half_open_success_closes_breaker() -> None:
     cb, clock = _cb(failure_threshold=2, cooldown_s=5.0)
-    cb.on_failure(); cb.on_failure()
+    cb.on_failure()
+    cb.on_failure()
     clock.t = 5.0
     cb.allow()                    # → half_open
     cb.on_success()
@@ -79,7 +81,8 @@ def test_half_open_success_closes_breaker() -> None:
 
 def test_half_open_failure_reopens_with_fresh_cooldown() -> None:
     cb, clock = _cb(failure_threshold=2, cooldown_s=5.0)
-    cb.on_failure(); cb.on_failure()
+    cb.on_failure()
+    cb.on_failure()
     clock.t = 5.0
     cb.allow()
     cb.on_failure()               # probe fails
