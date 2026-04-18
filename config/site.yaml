@@ -299,7 +299,13 @@ control:
   # emits SET_EMS_MODE idempotently (only on mode change).
   cycle_interval_s: 15
   plan_interval_s: 300
-  mode_change_cooldown_s: 300
+  # PLAT-1696 step 1: lowered from 300 → 60 so zero_grid can flip bat
+  # between charge / discharge / standby within 1 min when grid tips.
+  # GoodWe firmware accepts it — the 300 s figure was from the old
+  # hourly-scenario era when mode changes were rare. With idempotent
+  # SET_EMS_MODE (PLAT-1715) we only actually write when the mode
+  # differs, so the cooldown protects against genuine direction changes.
+  mode_change_cooldown_s: 60
   standby_intermediate_s: 300
   scenario_transition_s: 300
   measurement_stale_s: 300
