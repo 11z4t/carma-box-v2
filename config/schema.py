@@ -297,6 +297,25 @@ class ConsumerConfig(BaseModel):
     id: str = Field(..., min_length=1)
     name: str = Field(..., min_length=1)
     type: str = Field(default="on_off", description="on_off, variable, or climate")
+    # PLAT-1700: adapter dictates HOW we talk to the hardware.
+    #   "shelly"          — Shelly relay via HA switch.turn_on/off (default, safe for
+    #                        simple loads: pumps, heaters, rads, generic appliances).
+    #   "goldshell_miner" — Goldshell SC Box II via /mcb/newconfig REST modes 0/1/2.
+    #                        NEVER power-cycle via relay (hardware damage).
+    #   "read_only"       — No write path; v2 only reads entity_power.
+    adapter: str = Field(
+        default="shelly",
+        description="Adapter kind: 'shelly', 'goldshell_miner', or 'read_only'.",
+    )
+    dispatchable: bool = Field(
+        default=True,
+        description=(
+            "Whether v2 may turn this consumer on/off. Must be False for "
+            "consumers behind adapters that are not yet implemented or that "
+            "would be damaged by power cycling (e.g. mining hardware with a "
+            "pending CGMinerAdapter)."
+        ),
+    )
     priority: int = Field(..., ge=1, le=100)
     priority_shed: int = Field(..., ge=1, le=100)
     power_w: int = Field(..., ge=0, le=50000)
@@ -318,6 +337,32 @@ class ConsumerConfig(BaseModel):
         if v not in allowed:
             raise ValueError(f"type must be one of {allowed}, got '{v}'")
         return v
+
+    @field_validator("adapter")
+    @classmethod
+    def validate_adapter(cls, v: str) -> str:
+        """Ensure adapter is one of the supported adapter kinds."""
+        allowed = {"shelly", "goldshell_miner", "read_only"}
+        if v not in allowed:
+            raise ValueError(f"adapter must be one of {allowed}, got '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def validate_miner_safety(self) -> "ConsumerConfig":
+        """PLAT-1700: Miners MUST NOT be controlled via shelly (power cycling
+        damages ASIC hardware). If role=miner or id contains 'miner', require
+        adapter != 'shelly' OR dispatchable=False.
+        """
+        looks_like_miner = self.role == "miner" or "miner" in self.id.lower()
+        if looks_like_miner and self.adapter == "shelly" and self.dispatchable:
+            raise ValueError(
+                f"Consumer '{self.id}' looks like a miner (role='{self.role}', "
+                f"id='{self.id}') but is configured with adapter='shelly' and "
+                f"dispatchable=True. This would power-cycle the miner via relay "
+                f"and damage hardware. Set adapter='goldshell_miner' OR "
+                f"dispatchable=False (read-only until proper adapter wired)."
+            )
+        return self
 
 
 # ---------------------------------------------------------------------------

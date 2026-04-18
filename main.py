@@ -248,10 +248,31 @@ class CarmaBoxService:
                 config.ev_charger.charger_id,
             )
 
-        # Dispatchable consumers — ShellyAdapter per consumer in config
+        # PLAT-1700: Dispatchable consumers — factory per consumer.adapter.
+        # read_only + dispatchable=False consumers are skipped → v2 cannot
+        # control them (safety: prevents miner power-cycling via Shelly relay).
+        from adapters.goldshell import GoldshellMinerAdapter
         from core.executor import LoadPort
         consumers: dict[str, LoadPort] = {}
+        skipped: list[str] = []
         for consumer_cfg in config.consumers:
+            if not consumer_cfg.dispatchable:
+                skipped.append(f"{consumer_cfg.id}(dispatchable=False)")
+                continue
+            if consumer_cfg.adapter == "read_only":
+                skipped.append(f"{consumer_cfg.id}(read_only)")
+                continue
+            if consumer_cfg.adapter == "goldshell_miner":
+                consumers[consumer_cfg.id] = GoldshellMinerAdapter(
+                    ha_api=ha_api,
+                    consumer_id=consumer_cfg.id,
+                    entity_power=consumer_cfg.entity_power,
+                )
+                logger.info(
+                    "GoldshellMinerAdapter wired (stub): %s", consumer_cfg.id,
+                )
+                continue
+            # Default: Shelly relay
             if consumer_cfg.entity_switch:
                 consumers[consumer_cfg.id] = ShellyAdapter(
                     ha_api=ha_api,
@@ -261,10 +282,9 @@ class CarmaBoxService:
                     load_type_str=consumer_cfg.type,
                 )
         if consumers:
-            logger.info(
-                "ShellyAdapters wired: %s",
-                ", ".join(consumers.keys()),
-            )
+            logger.info("Consumer adapters wired: %s", ", ".join(consumers.keys()))
+        if skipped:
+            logger.info("Consumers SKIPPED (read-only): %s", ", ".join(skipped))
 
         executor = CommandExecutor(
             inverters=dict(inverters),
@@ -1162,12 +1182,12 @@ class CarmaBoxService:
         batch = await self._ha_api.get_states_batch(entity_ids)
 
         consumers: list[ConsumerState] = []
+        # PLAT-1700: consumers without an entity_switch (e.g. goldshell_miner,
+        # read_only adapters) derive `active` from measured power instead.
+        _ACTIVE_POWER_THRESHOLD_W: float = 10.0
         for cc in self._consumer_configs:
             active = False
             power = 0.0
-            if cc.entity_switch:
-                switch_state = batch.get(cc.entity_switch, {})
-                active = switch_state.get("state") == "on"
             if cc.entity_power:
                 power_state = batch.get(cc.entity_power, {})
                 power_str = power_state.get("state")
@@ -1181,6 +1201,12 @@ class CarmaBoxService:
                         power = float(power_str)
                     except (ValueError, TypeError):
                         power = 0.0
+            if cc.entity_switch:
+                switch_state = batch.get(cc.entity_switch, {})
+                active = switch_state.get("state") == "on"
+            else:
+                # No switch — fall back to measured power.
+                active = power > _ACTIVE_POWER_THRESHOLD_W
 
             consumers.append(ConsumerState(
                 consumer_id=cc.id,

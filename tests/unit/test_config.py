@@ -368,10 +368,21 @@ class TestProductionConfig:
         """Production config should have consumers."""
         assert len(config.consumers) >= 2
 
-    def test_miner_is_first_priority(self, config: CarmaConfig) -> None:
-        """Miner should have priority 1 (activated first in surplus)."""
+    def test_miner_is_last_priority(self, config: CarmaConfig) -> None:
+        """PLAT-1715: Miner (cold_heater) must be LAST in surplus cascade.
+
+        User rule: "miner kan inte köras förrän alla före kör på max".
+        Lower number = higher priority; miner must have the highest number
+        among consumers so it is only started when everything else is full.
+        """
         miner = next(c for c in config.consumers if c.id == "miner")
-        assert miner.priority == 1
+        other_priorities = [
+            c.priority for c in config.consumers if c.id != "miner"
+        ]
+        assert miner.priority > max(other_priorities), (
+            f"Miner priority={miner.priority} must be greater than all others "
+            f"({other_priorities}) so miner is last in the surplus cascade."
+        )
 
     def test_goodwe_device_ids(self, config: CarmaConfig) -> None:
         """GoodWe device IDs should match the physical hardware."""

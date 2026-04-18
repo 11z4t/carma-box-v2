@@ -162,14 +162,21 @@ ev:
 consumers:
   - id: "miner"
     name: "Goldshell SC Box II"
+    # PLAT-1700: miners MUST use goldshell_miner adapter (not Shelly).
+    # Shelly relay power-cycling damages ASIC. Adapter is a stub today —
+    # reads power, ignores dispatch writes — until /mcb/newconfig is wired.
+    adapter: "goldshell_miner"
     type: "on_off"
     role: "cold_heater"
-    priority: 1
+    # PLAT-1715: user rule — miner is LAST dispatchable (cold_heater).
+    # Priority cascade: bat → EV → VP kontor → VP pool → pool_heater → miner.
+    # Lower number = higher priority (starts first with surplus).
+    priority: 99
     priority_shed: 1
     power_w: 400
     min_w: 400
     max_w: 400
-    entity_switch: "switch.shelly1pmg4_a085e3bd1e60"
+    # entity_switch deliberately omitted — no relay fallback.
     entity_power: "sensor.appliance_total_effekt"
     start_export_w: 200
     stop_import_w: 500
