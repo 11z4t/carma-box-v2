@@ -361,8 +361,9 @@ class TestProductionConfig:
         assert config.grid.ellevio.tak_kw == 3.0
 
     def test_cycle_interval(self, config: CarmaConfig) -> None:
-        """Control loop cycle should be 30 seconds."""
-        assert config.control.cycle_interval_s == 30
+        """Control loop cycle is 15 s (PLAT-1718: fast enough for the
+        ±100 W grid invariant, slow enough for HA + inverter ramp)."""
+        assert config.control.cycle_interval_s == 15
 
     def test_consumers_exist(self, config: CarmaConfig) -> None:
         """Production config should have consumers."""

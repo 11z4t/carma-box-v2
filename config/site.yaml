@@ -289,7 +289,11 @@ evening_plan:
 
 # Control loop timing
 control:
-  cycle_interval_s: 30
+  # PLAT-1718: 15 s cycle so zero-grid correction hits every PV transient
+  # within the ±100 W invariant. mode_change_cooldown stays at 300 s —
+  # the Step 1 PREPARE no longer runs each cycle because the budget
+  # emits SET_EMS_MODE idempotently (only on mode change).
+  cycle_interval_s: 15
   plan_interval_s: 300
   mode_change_cooldown_s: 300
   standby_intermediate_s: 300
