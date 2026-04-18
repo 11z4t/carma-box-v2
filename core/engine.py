@@ -232,11 +232,16 @@ class ControlEngine:
             is_daytime_charge = (
                 sm.mode == EMSMode.CHARGE_PV and not snapshot.is_night
             )
-            # Budget Allocator handles daytime charge + evening discharge
-            is_budget_scenario = (
-                is_daytime_charge
-                or active_scenario == Scenario.EVENING_DISCHARGE
-            )
+            # PLAT-1718: Budget Allocator is the SINGLE bat controller 24/7.
+            # Previously only daytime charge + evening discharge routed to
+            # Budget — night scenarios fell through to the legacy Branch B
+            # (``_compute_charge_plan`` + BatteryBalancer), which does not
+            # know about zero_grid and left the bat idle while the grid
+            # imported multi-kW at night. The user invariant
+            # (±100 W import/export 24/7) requires Budget everywhere; the
+            # night planner still writes scheduled grid-charge commands
+            # through a separate path when price triggers fire.
+            is_budget_scenario = True
 
             # ============================================================
             # BRANCH: Budget Allocator vs everything else
