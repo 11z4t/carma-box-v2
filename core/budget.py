@@ -138,6 +138,11 @@ class BudgetInput:
     # PLAT-1715: consumer list for unified priority cascade.
     # Empty tuple (default) → no cascade, legacy behaviour.
     consumers: tuple[ConsumerState, ...] = ()
+    # PLAT-1724: Nordpool spot + forecast horizon for the arbitrage planner.
+    # current_price_ore is the spot at ``now`` hour; future_prices_ore starts
+    # at the NEXT hour (index 0 = now+1h). Empty tuple → planner skipped.
+    current_price_ore: float = 0.0
+    future_prices_ore: tuple[float, ...] = ()
 
 
 @dataclass
@@ -435,6 +440,7 @@ def allocate(
         zero_grid_plan.emergency_recovery if zero_grid_plan is not None
         else frozenset()
     )
+
     for bid, limit_w in bat_alloc.items():
         target_mode = bat_modes_target.get(
             bid, EMSMode.BATTERY_STANDBY.value,
