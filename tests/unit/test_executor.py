@@ -34,6 +34,7 @@ _EMS_POWER_LIMIT_ZERO_W: int = 0   # SET_EMS_POWER_LIMIT: guard clamp / grid imp
 def _make_inverter(
     ems_mode: str = "battery_standby",
     fast_charging: bool = False,
+    ems_power_limit: int = 0,
 ) -> AsyncMock:
     mock = AsyncMock()
     mock.set_ems_mode = AsyncMock(return_value=True)
@@ -41,6 +42,7 @@ def _make_inverter(
     mock.set_fast_charging = AsyncMock(return_value=True)
     mock.get_fast_charging = AsyncMock(return_value=fast_charging)
     mock.get_ems_mode = AsyncMock(return_value=ems_mode)
+    mock.get_ems_power_limit = AsyncMock(return_value=ems_power_limit)
     return mock
 
 

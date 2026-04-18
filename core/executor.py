@@ -27,6 +27,10 @@ from core.models import Command, CommandType, EMSMode
 
 logger = logging.getLogger(__name__)
 
+# PLAT-1709: tolerate a tiny non-zero limit (firmware noise) before alerting.
+# Any limit above this with charge_pv mode is the uncontrolled-charging risk.
+_CHARGE_PV_UNCONTROLLED_LIMIT_W: int = 50
+
 
 # ---------------------------------------------------------------------------
 # Protocols (avoid circular imports)
@@ -42,6 +46,7 @@ class InverterPort(Protocol):
     async def set_export_limit(self, watts: int) -> bool: ...
     async def get_fast_charging(self) -> bool: ...
     async def get_ems_mode(self) -> str: ...
+    async def get_ems_power_limit(self) -> int: ...
 
 
 class EVChargerPort(Protocol):
@@ -271,6 +276,23 @@ class CommandExecutor:
                         cmd.target_id,
                     )
                     await inverter.set_fast_charging(False)
+
+        # PLAT-1709: charge_pv + high ems_power_limit is uncontrollable in
+        # peak_shaving firmware (INV-4). Log a CRITICAL alert when a caller
+        # asks for this combination so operators can trace the regression.
+        if target_mode == EMSMode.CHARGE_PV.value:
+            inverter = self._inverters.get(cmd.target_id)
+            if inverter:
+                current_limit = await inverter.get_ems_power_limit()
+                if current_limit > _CHARGE_PV_UNCONTROLLED_LIMIT_W:
+                    logger.critical(
+                        "PLAT-1709: charge_pv requested on %s while "
+                        "ems_power_limit=%dW (>%dW). charge_pv + non-zero "
+                        "limit is UNCONTROLLABLE in peak_shaving (INV-4). "
+                        "Use charge_battery (mode 11) for controlled PV absorb.",
+                        cmd.target_id, current_limit,
+                        _CHARGE_PV_UNCONTROLLED_LIMIT_W,
+                    )
 
         # Route through mode change protocol
         accepted = self._mode_manager.request_change(

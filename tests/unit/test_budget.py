@@ -631,6 +631,40 @@ def test_plat1695_grid_w_variation(
     )
 
 
+def test_plat1708_bat_full_soc100_goes_to_standby() -> None:
+    """PLAT-1708: Full battery (SoC=100) → standby mode + limit=0.
+
+    Guards against a regression where the SoC-stop threshold accidentally
+    lets 100 % batteries keep charging (mode/limit drift).
+    """
+    cfg = BudgetConfig()
+    inp = _inp(
+        hour=14,
+        pv_w=5000.0,
+        house_w=500.0,
+        grid_w=-4000.0,
+        bat_k_soc=100.0,
+        bat_f_soc=100.0,
+    )
+    result = allocate(inp, cfg)
+    standby_cmds = [
+        c for c in result.commands
+        if c.command_type == CommandType.SET_EMS_MODE
+        and c.value == "battery_standby"
+    ]
+    limit_cmds = {
+        c.target_id: c.value for c in result.commands
+        if c.command_type == CommandType.SET_EMS_POWER_LIMIT
+    }
+    assert {c.target_id for c in standby_cmds} >= {"kontor", "forrad"}, (
+        "Both full bats must be commanded to battery_standby"
+    )
+    for bid in ("kontor", "forrad"):
+        assert limit_cmds.get(bid) == 0, (
+            f"{bid} limit should be 0 when SoC=100, got {limit_cmds.get(bid)}"
+        )
+
+
 def test_plat1695_default_stop_matches_state_machine_s8_entry() -> None:
     """PLAT-1695: Default bat_charge_stop_soc_pct must match state machine
     surplus_entry_soc_pct. Prevents reintroducing the 5pp dead zone."""
