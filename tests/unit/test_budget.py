@@ -308,7 +308,12 @@ def test_evening_discharge_covers_house_load(cfg: BudgetConfig) -> None:
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
-    assert result.bat_discharge_w == int(_EVENING_GRID_IMPORT_W)
+    # PLAT-1696 proportional gain 0.7 → cycle closes 70 % of the gap.
+    expected = int(_EVENING_GRID_IMPORT_W * 0.7)
+    assert result.bat_discharge_w == expected, (
+        f"discharge={result.bat_discharge_w}, expected gain-damped "
+        f"{expected} (0.7 × {_EVENING_GRID_IMPORT_W})"
+    )
     assert "zero_grid" in result.reason
 
 
@@ -328,9 +333,9 @@ def test_evening_discharge_proportional(cfg: BudgetConfig) -> None:
     result = allocate(inp, cfg, state)
     k = result.bat_allocations.get("kontor", 0)
     f = result.bat_allocations.get("forrad", 0)
-    # Equal split with default max_discharge_w (5000 each).
+    # Equal split with default max_discharge_w (5000 each), gain=0.7.
     assert k == f
-    assert k + f == int(_EVENING_GRID_IMPORT_W)
+    assert k + f == int(_EVENING_GRID_IMPORT_W * 0.7)
 
 
 def test_evening_discharge_discharge_pv_commands(cfg: BudgetConfig) -> None:
