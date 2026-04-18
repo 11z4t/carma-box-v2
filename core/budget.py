@@ -69,11 +69,14 @@ class BudgetConfig:
     # state machine says "surplus mode" but budget keeps charging → export grows.
     bat_soc_full_pct: float = 100.0
     bat_charge_stop_soc_pct: float = 95.0
-    # bat_spread_max_pct: above this SoC diff (pp), use 80/20 unbalanced split.
-    # bat_aggressive_spread_pct (PLAT-1715 user rule): above this diff, lower bat
-    # charges 100% and higher stays in standby — fast SoC convergence.
+    # bat_spread_max_pct: user-invariant for SoC spread across batteries.
+    # Above this diff zero-grid uses the aggressive primary/secondary split
+    # (full charge to lower-SoC, full discharge from higher-SoC, with
+    # overflow spill). 1.0 pp matches the user rule "SoC diff > 1 % = P1".
+    # bat_aggressive_spread_pct kept for backward-compat API; both default
+    # to the same value so tests keep their boundary semantics clear.
     bat_spread_max_pct: float = 1.0
-    bat_aggressive_spread_pct: float = 5.0
+    bat_aggressive_spread_pct: float = 1.0
     bat_lower_ratio: float = 0.8
     bat_higher_ratio: float = 0.2
     # EV ramp tröghet: ramp UP kräver N konsekutiva export-cykler
