@@ -44,6 +44,7 @@ def test_grid_inside_deadband_holds_current_state() -> None:
     """|grid| < deadband → bat keeps its current power (no command shift)."""
     bats = [_snap("kontor", power_w=-1000, soc_pct=50)]
     plan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=30.0,
         bats=bats,
         limits_by_id={"kontor": _DEFAULT_LIMITS},
@@ -56,6 +57,7 @@ def test_grid_export_increases_charge() -> None:
     """Export of 500 W with bat already charging 1000 W → charge 1500 W."""
     bats = [_snap("kontor", power_w=-1000, soc_pct=50)]
     plan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=-500.0,
         bats=bats,
         limits_by_id={"kontor": _DEFAULT_LIMITS},
@@ -68,6 +70,7 @@ def test_grid_import_reduces_charge() -> None:
     """Import of 400 W while charging 1000 W → drop charge to 600 W."""
     bats = [_snap("kontor", power_w=-1000, soc_pct=50)]
     plan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=400.0,
         bats=bats,
         limits_by_id={"kontor": _DEFAULT_LIMITS},
@@ -80,6 +83,7 @@ def test_grid_import_above_charge_triggers_discharge() -> None:
     """Import larger than current charge flips the bat to discharge_pv."""
     bats = [_snap("kontor", power_w=-200, soc_pct=50)]
     plan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=1500.0,
         bats=bats,
         limits_by_id={"kontor": _DEFAULT_LIMITS},
@@ -92,6 +96,7 @@ def test_grid_export_with_bat_discharging_reduces_discharge() -> None:
     """Export while bat is discharging → reduce discharge (300 W less)."""
     bats = [_snap("kontor", power_w=800, soc_pct=50)]
     plan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=-300.0,
         bats=bats,
         limits_by_id={"kontor": _DEFAULT_LIMITS},
@@ -110,6 +115,7 @@ def test_charge_is_blocked_at_soc_max() -> None:
     """SoC at/above soc_max_pct → no charging, fallback standby."""
     bats = [_snap("kontor", power_w=0, soc_pct=95.0)]
     plan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=-2000.0,  # big export, would want charge
         bats=bats,
         limits_by_id={"kontor": _DEFAULT_LIMITS},
@@ -122,6 +128,7 @@ def test_discharge_is_blocked_at_soc_min() -> None:
     """SoC at/below soc_min_pct → no discharging, fallback standby."""
     bats = [_snap("kontor", power_w=0, soc_pct=15.0)]
     plan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=1500.0,  # big import, would want discharge
         bats=bats,
         limits_by_id={"kontor": _DEFAULT_LIMITS},
@@ -133,6 +140,7 @@ def test_charge_is_clamped_at_max_charge_w() -> None:
     """Target above physical cap is clamped."""
     bats = [_snap("kontor", power_w=0, soc_pct=50)]
     plan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=-10_000.0,
         bats=bats,
         limits_by_id={"kontor": _DEFAULT_LIMITS},
@@ -144,6 +152,7 @@ def test_charge_is_clamped_at_max_charge_w() -> None:
 def test_discharge_is_clamped_at_max_discharge_w() -> None:
     bats = [_snap("kontor", power_w=0, soc_pct=50)]
     plan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=10_000.0,
         bats=bats,
         limits_by_id={"kontor": _DEFAULT_LIMITS},
@@ -168,6 +177,7 @@ def test_two_bats_large_spread_aggressive_on_charge() -> None:
         "forrad": _DEFAULT_LIMITS,
     }
     plan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=-3000.0, bats=bats, limits_by_id=limits,
     )
     assert plan.modes["kontor"] == "charge_battery"
@@ -187,6 +197,7 @@ def test_two_bats_large_spread_aggressive_on_discharge() -> None:
         "forrad": _DEFAULT_LIMITS,
     }
     plan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=2000.0, bats=bats, limits_by_id=limits,
     )
     assert plan.modes["forrad"] == "discharge_pv"
@@ -212,6 +223,7 @@ def test_aggressive_charge_spills_overflow_to_secondary_bat() -> None:
         "forrad": _DEFAULT_LIMITS,
     }
     plan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=-7000.0, bats=bats, limits_by_id=limits,
     )
     assert plan.limits_w["kontor"] == _DEFAULT_LIMITS.max_charge_w
@@ -233,6 +245,7 @@ def test_aggressive_discharge_spills_overflow_to_secondary_bat() -> None:
         "forrad": _DEFAULT_LIMITS,  # max_discharge_w = 5000
     }
     plan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=6500.0, bats=bats, limits_by_id=limits,
     )
     assert plan.limits_w["forrad"] == _DEFAULT_LIMITS.max_discharge_w
@@ -258,6 +271,7 @@ def test_two_bats_small_spread_proportional_by_capacity() -> None:
         ),
     }
     plan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=-3000.0, bats=bats, limits_by_id=limits,
     )
     # 2:1 split → 2000 kontor / 1000 forrad
@@ -287,6 +301,7 @@ def test_convergence_to_zero_grid_within_three_cycles() -> None:
         grid_w = house_w - pv_w - bat_power_w  # import minus export
         grids.append(grid_w)
         plan = plan_zero_grid(
+        gain=1.0,
             grid_power_w=grid_w,
             bats=[BatSnapshot("k", bat_power_w, soc)],
             limits_by_id={"k": limits},
@@ -308,6 +323,7 @@ def test_plan_contains_reason_for_logging() -> None:
     """Plan reason must expose grid + net target for operator diagnostics."""
     bats = [_snap("kontor", power_w=-500, soc_pct=50)]
     plan: ZeroGridPlan = plan_zero_grid(
+        gain=1.0,
         grid_power_w=-1000.0, bats=bats,
         limits_by_id={"kontor": _DEFAULT_LIMITS},
     )

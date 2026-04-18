@@ -35,6 +35,13 @@ from dataclasses import dataclass
 _TARGET_GRID_W: float = 0.0
 _DEAD_BAND_W: float = 50.0  # below this deviation, hold (avoid chatter)
 
+# PLAT-1696 step 1 — underdamp the correction so one cycle closes ~70 %
+# of the gap instead of 100 %. At cycle=15 s + GoodWe internal ramp ~
+# 10 s, full-gain 1.0 overshot live (grid ±1.5 kW oscillation). P=0.7
+# gives a geometric series: after 3 cycles (45 s) we're within 3 % of
+# the set-point without ringing.
+_CORRECTION_GAIN: float = 0.7
+
 
 @dataclass(frozen=True)
 class BatLimits:
@@ -69,6 +76,7 @@ def _target_net_w(
     current_bat_net_w: float,
     grid_power_w: float,
     deadband_w: float = _DEAD_BAND_W,
+    gain: float = _CORRECTION_GAIN,
 ) -> float:
     """Compute target bat net power to drive grid to zero.
 
@@ -92,7 +100,9 @@ def _target_net_w(
     deviation = grid_power_w - _TARGET_GRID_W
     if abs(deviation) < deadband_w:
         return current_bat_net_w  # stay inside the deadband
-    return current_bat_net_w + deviation
+    # Proportional-only underdamped: shift bat ``gain`` of the way toward
+    # the full correction (default 70 % — see _CORRECTION_GAIN docstring).
+    return current_bat_net_w + deviation * gain
 
 
 def _clamp_for_soc(
@@ -216,6 +226,7 @@ def plan_zero_grid(
     limits_by_id: dict[str, BatLimits],
     deadband_w: float = _DEAD_BAND_W,
     spread_aggressive_pct: float = 5.0,
+    gain: float = _CORRECTION_GAIN,
 ) -> ZeroGridPlan:
     """Compute the per-battery plan that drives ``grid_power_w`` to 0.
 
@@ -232,7 +243,7 @@ def plan_zero_grid(
     summary of the total net target used for logging / diagnostics.
     """
     current_net = sum(b.power_w for b in bats)
-    target_net = _target_net_w(current_net, grid_power_w, deadband_w)
+    target_net = _target_net_w(current_net, grid_power_w, deadband_w, gain)
     per_bat = _distribute(target_net, bats, limits_by_id, spread_aggressive_pct)
 
     modes: dict[str, str] = {}
