@@ -263,7 +263,12 @@ def allocate(
     # Outside this window:
     #   20:00–22:00 → bat standby (preserve capacity for morning peak)
     #   22:00–06:00 → night controller takes over in engine
-    zero_grid_active = daytime and hour < _EVENING_DISCHARGE_END_H
+    # User invariant 2026-04-18: grid must stay within ±100 W 24/7.
+    # Zero-grid controller therefore OWNS bat mode/limit every cycle,
+    # day or night. Night grid-charge decisions still flow through the
+    # NightPlanner → PlanExecutor path and can override via explicit
+    # commands when price triggers fire (PLAT-1722 candidate in scope).
+    zero_grid_active = True
     zero_grid_plan = None
     if zero_grid_active:
         zg_bats = [

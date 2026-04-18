@@ -403,8 +403,12 @@ def test_evening_discharge_grid_responsive(cfg: BudgetConfig) -> None:
     assert result.bat_discharge_w == 0
 
 
-def test_evening_20h_no_discharge(cfg: BudgetConfig) -> None:
-    """After 20:00 → evening standby, not discharge."""
+def test_evening_20h_covers_grid_import(cfg: BudgetConfig) -> None:
+    """After 20:00 zero_grid owns the bat 24/7 (user invariant:
+    max 100 W import/export). If the grid is importing, the bat MUST
+    discharge to close the gap — the legacy "evening standby" behaviour
+    leaked multi-kW imports during expensive hours.
+    """
     inp = _inp(
         hour=20, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
         grid_w=_EVENING_GRID_IMPORT_W,
@@ -412,8 +416,8 @@ def test_evening_20h_no_discharge(cfg: BudgetConfig) -> None:
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
-    assert "EVENING_DISCHARGE" not in result.reason
-    assert result.bat_discharge_w == 0
+    assert result.bat_discharge_w > 0
+    assert "zero_grid" in result.reason
 
 
 # -------------------------------------------------------------------
