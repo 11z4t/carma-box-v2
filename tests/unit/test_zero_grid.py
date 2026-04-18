@@ -185,6 +185,81 @@ def test_soc_min_buffer_is_configurable() -> None:
     assert plan.modes["kontor"] == "battery_standby"
 
 
+# -------------------------------------------------------------------
+# Emergency recovery — SoC below floor → force grid-charge
+# -------------------------------------------------------------------
+
+
+def test_emergency_recovery_flag_set_when_below_floor() -> None:
+    """A bat with SoC < soc_min_pct must be listed in emergency_recovery."""
+    bats = [_snap("kontor", power_w=0, soc_pct=14.2)]
+    plan = plan_zero_grid(
+        gain=1.0,
+        grid_power_w=-2000.0,     # export — normally would charge anyway
+        bats=bats,
+        limits_by_id={"kontor": _DEFAULT_LIMITS},
+    )
+    assert "kontor" in plan.emergency_recovery
+    assert plan.modes["kontor"] == "charge_battery"
+    assert plan.limits_w["kontor"] == _DEFAULT_LIMITS.max_charge_w
+    assert "emergency_recovery" in plan.reason
+
+
+def test_emergency_recovery_overrides_grid_target() -> None:
+    """SoC below floor forces charge even if grid is importing.
+
+    The caller pairs this with fast_charging=True so the bat pulls the
+    deficit from the grid regardless of PV/house balance — the floor
+    safety trumps grid=0.
+    """
+    bats = [_snap("kontor", power_w=0, soc_pct=12.0)]
+    plan = plan_zero_grid(
+        gain=1.0,
+        grid_power_w=3000.0,     # big import — would normally discharge
+        bats=bats,
+        limits_by_id={"kontor": _DEFAULT_LIMITS},
+    )
+    assert plan.modes["kontor"] == "charge_battery"
+    assert plan.limits_w["kontor"] == _DEFAULT_LIMITS.max_charge_w
+    assert plan.emergency_recovery == frozenset({"kontor"})
+
+
+def test_emergency_recovery_per_bat_only() -> None:
+    """Only the bat below floor is in emergency mode; the other runs normal."""
+    bats = [
+        _snap("kontor", power_w=0, soc_pct=14.0),   # below
+        _snap("forrad", power_w=0, soc_pct=60.0),   # healthy
+    ]
+    limits = {
+        "kontor": _DEFAULT_LIMITS,
+        "forrad": _DEFAULT_LIMITS,
+    }
+    plan = plan_zero_grid(
+        gain=1.0,
+        grid_power_w=2000.0,
+        bats=bats,
+        limits_by_id=limits,
+    )
+    # kontor forced into charge_battery at max; forrad still handles the grid.
+    assert plan.emergency_recovery == frozenset({"kontor"})
+    assert plan.modes["kontor"] == "charge_battery"
+    assert plan.limits_w["kontor"] == _DEFAULT_LIMITS.max_charge_w
+    assert plan.modes["forrad"] == "discharge_pv"  # covers the import
+
+
+def test_emergency_recovery_clears_once_above_floor() -> None:
+    """SoC exactly at soc_min_pct → NOT in emergency (buffer-standby only)."""
+    bats = [_snap("kontor", power_w=0, soc_pct=15.0)]
+    plan = plan_zero_grid(
+        gain=1.0,
+        grid_power_w=1500.0,
+        bats=bats,
+        limits_by_id={"kontor": _DEFAULT_LIMITS},
+    )
+    assert plan.emergency_recovery == frozenset()
+    assert plan.modes["kontor"] == "battery_standby"
+
+
 def test_charge_is_clamped_at_max_charge_w() -> None:
     """Target above physical cap is clamped."""
     bats = [_snap("kontor", power_w=0, soc_pct=50)]

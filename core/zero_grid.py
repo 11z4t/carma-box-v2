@@ -73,12 +73,23 @@ class BatSnapshot:
 
 @dataclass(frozen=True)
 class ZeroGridPlan:
-    """Output: per-battery mode + limit."""
+    """Output: per-battery mode + limit.
+
+    ``emergency_recovery`` flags batteries whose SoC dropped BELOW the
+    absolute floor (e.g. because a guard failed or a manual override
+    slipped past). For those bats the caller MUST emit:
+      - SET_EMS_MODE = charge_battery (mode 11)
+      - SET_FAST_CHARGING = ON
+      - SET_EMS_POWER_LIMIT = max_charge_w
+    so the bat is force-charged from the grid back to floor ASAP.
+    Once SoC ≥ soc_min_pct the flag clears and normal operation resumes.
+    """
 
     modes: dict[str, str]
     limits_w: dict[str, int]
     total_target_net_w: int  # + discharge, - charge
     reason: str
+    emergency_recovery: frozenset[str] = frozenset()  # battery_ids below floor
 
 
 def _target_net_w(
@@ -254,14 +265,39 @@ def plan_zero_grid(
     Returns a full plan: mode + limit for every bat in ``bats``, and a
     summary of the total net target used for logging / diagnostics.
     """
-    current_net = sum(b.power_w for b in bats)
+    # Emergency recovery detection — any bat BELOW the absolute floor is
+    # force-charged independently of the grid target. This overrides the
+    # zero-grid distribution for the affected batteries; the grid may
+    # briefly import while the floor is restored.
+    below_floor: set[str] = set()
+    forced_modes: dict[str, str] = {}
+    forced_limits: dict[str, int] = {}
+    for b in bats:
+        limits = limits_by_id[b.battery_id]
+        if b.soc_pct < limits.soc_min_pct:
+            below_floor.add(b.battery_id)
+            forced_modes[b.battery_id] = "charge_battery"
+            forced_limits[b.battery_id] = int(limits.max_charge_w)
+
+    # Normal path — only runs for bats NOT in emergency recovery.
+    current_net = sum(
+        b.power_w for b in bats if b.battery_id not in below_floor
+    )
+    normal_bats = [b for b in bats if b.battery_id not in below_floor]
     target_net = _target_net_w(current_net, grid_power_w, deadband_w, gain)
-    per_bat = _distribute(target_net, bats, limits_by_id, spread_aggressive_pct)
+    per_bat = _distribute(
+        target_net, normal_bats, limits_by_id, spread_aggressive_pct,
+    )
 
     modes: dict[str, str] = {}
-    limits: dict[str, int] = {}
+    limits_out: dict[str, int] = {}
     final_net_total = 0.0
     for b in bats:
+        if b.battery_id in below_floor:
+            modes[b.battery_id] = forced_modes[b.battery_id]
+            limits_out[b.battery_id] = forced_limits[b.battery_id]
+            final_net_total -= float(forced_limits[b.battery_id])
+            continue
         clamped = _clamp_for_soc(
             per_bat.get(b.battery_id, 0.0),
             b.soc_pct,
@@ -269,17 +305,21 @@ def plan_zero_grid(
         )
         mode, limit_w = _plan_for_net(clamped)
         modes[b.battery_id] = mode
-        limits[b.battery_id] = limit_w
+        limits_out[b.battery_id] = limit_w
         final_net_total += clamped
 
+    reason_suffix = (
+        f" emergency_recovery={sorted(below_floor)}" if below_floor else ""
+    )
     reason = (
         f"zero_grid: grid={grid_power_w:.0f}W "
         f"bat_now={current_net:.0f}W target={target_net:.0f}W "
-        f"applied={final_net_total:.0f}W"
+        f"applied={final_net_total:.0f}W{reason_suffix}"
     )
     return ZeroGridPlan(
         modes=modes,
-        limits_w=limits,
+        limits_w=limits_out,
         total_target_net_w=int(final_net_total),
         reason=reason,
+        emergency_recovery=frozenset(below_floor),
     )

@@ -431,6 +431,10 @@ def allocate(
     # the inverter is not already in the target mode. The 5-step mode-change
     # protocol clears the power limit during Step 1 PREPARE, so re-emitting
     # the same mode every cycle would keep pulling the limit back to 0.
+    emergency_bats: frozenset[str] = (
+        zero_grid_plan.emergency_recovery if zero_grid_plan is not None
+        else frozenset()
+    )
     for bid, limit_w in bat_alloc.items():
         target_mode = bat_modes_target.get(
             bid, EMSMode.BATTERY_STANDBY.value,
@@ -456,6 +460,22 @@ def allocate(
                 f"Budget: limit {limit_w}W"
                 if limit_w > 0
                 else "Budget: standby limit=0"
+            ),
+        ))
+        # Emergency-recovery override: SoC fell below the absolute floor
+        # → force grid-charge via charge_battery + fast_charging ON until
+        # SoC climbs back above soc_min_pct. Explicit fast_charging=False
+        # on all other bats to keep INV-3 intact (no fast_charging +
+        # discharge_pv combos).
+        cmds.append(Command(
+            command_type=CommandType.SET_FAST_CHARGING,
+            target_id=bid,
+            value=True if bid in emergency_bats else False,
+            rule_id=_RULE_ID,
+            reason=(
+                "EMERGENCY recovery: SoC < floor, force grid-charge"
+                if bid in emergency_bats
+                else "INV-3: ensure fast_charging OFF"
             ),
         ))
 
