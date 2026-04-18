@@ -39,7 +39,10 @@ _EVENING_DISCHARGE_START_H: int = 17
 _EVENING_DISCHARGE_END_H: int = 20
 
 _GRID_TARGET_W: float = 0.0
+# PLAT-1715: max allowed grid deviation. User rule: ±100W max, aggressive
+# correction above ±50W.
 _GRID_TOLERANCE_W: float = 100.0
+_GRID_AGGRESSIVE_W: float = 50.0
 _PCT_FACTOR: float = 100.0
 
 # EV power per amp (3-phase 230V)
@@ -65,7 +68,11 @@ class BudgetConfig:
     # state machine says "surplus mode" but budget keeps charging → export grows.
     bat_soc_full_pct: float = 100.0
     bat_charge_stop_soc_pct: float = 95.0
+    # bat_spread_max_pct: above this SoC diff (pp), use 80/20 unbalanced split.
+    # bat_aggressive_spread_pct (PLAT-1715 user rule): above this diff, lower bat
+    # charges 100% and higher stays in standby — fast SoC convergence.
     bat_spread_max_pct: float = 1.0
+    bat_aggressive_spread_pct: float = 5.0
     bat_lower_ratio: float = 0.8
     bat_higher_ratio: float = 0.2
     # EV ramp tröghet: ramp UP kräver N konsekutiva export-cykler
@@ -144,6 +151,13 @@ def _available_surplus_w(inp: BudgetInput) -> float:
     """Calculate available PV surplus (W). NEVER negative during daytime."""
     surplus = inp.pv_power_w - inp.house_load_w
     if _is_daytime(inp.now.hour):
+        # Closed-loop grid-feedback correction (PLAT-1715).
+        # grid_power_w < 0 → exporting → bump surplus so bat absorbs more.
+        # grid_power_w > 0 → importing → lower surplus so bat limit shrinks.
+        if inp.grid_power_w < 0:
+            surplus += -inp.grid_power_w
+        elif inp.grid_power_w > _GRID_AGGRESSIVE_W:
+            surplus -= inp.grid_power_w
         return max(0.0, surplus)
     return surplus
 
@@ -352,37 +366,45 @@ def allocate(
         # PLAT-1714: Charge via charge_battery (mode 11) which RESPECTS
         # ems_power_limit. Previous charge_pv is UNCONTROLLABLE in peak_shaving
         # firmware mode → caused 800W grid import during PV absorption.
-        # charge_battery + limit = "absorb up to limit W of PV surplus only,
-        # never grid import". Must emit BOTH mode AND limit each cycle.
+        #
+        # PLAT-1715: Only emit SET_EMS_MODE when the current mode differs from
+        # the target. Each SET_EMS_MODE request runs the 5-step mode-change
+        # protocol whose Step 1 PREPARE clears ems_power_limit to 0 —
+        # if we re-emit the same mode every 30s cycle the limit resets to 0
+        # and the inverter stops charging (PLAT-1715 live root cause: 4.9 kW
+        # export because limit was repeatedly nulled).
         for bid, limit_w in bat_alloc.items():
-            if limit_w > 0:
+            current_mode = inp.bat_modes.get(bid, "")
+            target_mode = (
+                EMSMode.CHARGE_BATTERY.value
+                if limit_w > 0
+                else EMSMode.BATTERY_STANDBY.value
+            )
+            if current_mode != target_mode:
                 cmds.append(Command(
                     command_type=CommandType.SET_EMS_MODE,
                     target_id=bid,
-                    value=EMSMode.CHARGE_BATTERY.value,
+                    value=target_mode,
                     rule_id=_RULE_ID,
-                    reason=f"Budget: charge_battery {limit_w}W",
+                    reason=(
+                        f"Budget: {target_mode} {limit_w}W"
+                        if limit_w > 0
+                        else "Budget: standby"
+                    ),
                 ))
-                cmds.append(Command(
-                    command_type=CommandType.SET_EMS_POWER_LIMIT,
-                    target_id=bid, value=limit_w,
-                    rule_id=_RULE_ID,
-                    reason=f"Budget: limit {limit_w}W",
-                ))
-            else:
-                cmds.append(Command(
-                    command_type=CommandType.SET_EMS_MODE,
-                    target_id=bid,
-                    value=EMSMode.BATTERY_STANDBY.value,
-                    rule_id=_RULE_ID,
-                    reason="Budget: standby",
-                ))
-                cmds.append(Command(
-                    command_type=CommandType.SET_EMS_POWER_LIMIT,
-                    target_id=bid, value=0,
-                    rule_id=_RULE_ID,
-                    reason="Budget: standby limit=0",
-                ))
+            # Always emit the power limit — idempotent writes keep the
+            # inverter converged on the Budget's intended value. Truthy-trap
+            # defense (B9) already guarantees 0 is actually written.
+            cmds.append(Command(
+                command_type=CommandType.SET_EMS_POWER_LIMIT,
+                target_id=bid, value=limit_w,
+                rule_id=_RULE_ID,
+                reason=(
+                    f"Budget: limit {limit_w}W"
+                    if limit_w > 0
+                    else "Budget: standby limit=0"
+                ),
+            ))
 
     # Update state
     state.ev_current_amps = ev_target
@@ -585,6 +607,18 @@ def _allocate_bat(
     default_cap = cfg.bat_default_cap_kwh
     socs = [active[bid] for bid in active_bids]
     spread = max(socs) - min(socs)
+
+    # PLAT-1715: aggressive rebalance — when spread is large, route ALL surplus
+    # to the bottom half so SoC catches up fast. User rule: "1 bat ska ladda max".
+    if spread > cfg.bat_aggressive_spread_pct:
+        sorted_bids = sorted(active_bids, key=lambda b: active[b])
+        mid = max(1, len(sorted_bids) // 2)
+        lower_bids = sorted_bids[:mid]
+        # Split total_alloc equally across the bottom half; top half = 0.
+        share_per = 1.0 / len(lower_bids)
+        for bid in lower_bids:
+            alloc[bid] = int(total_alloc * share_per)
+        return alloc, 0.0
 
     # Kund-agnostisk: scale to N batteries, not hardcoded to 2.
     if spread > cfg.bat_spread_max_pct:
