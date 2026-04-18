@@ -602,15 +602,12 @@ def _cascade_consumers(
     grid_w = inp.grid_power_w
     cmds: list[Command] = []
 
-    # Bat at max if every active bat is charging within 50 W of its limit.
-    bat_at_max = False
-    if bat_alloc:
-        bat_at_max = all(
-            abs(inp.bat_powers.get(bid, 0.0)) >= max(0.0, float(limit_w) - 50.0)
-            for bid, limit_w in bat_alloc.items() if limit_w > 0
-        )
+    # Sustained export signal: bat couldn't absorb the surplus in the
+    # previous cycle(s) → consumers needed. consecutive_export_cycles is
+    # updated in allocate() before the cascade runs.
+    sustained_export = state.consecutive_export_cycles >= 2
 
-    if grid_w < -_GRID_TOLERANCE_W and bat_at_max:
+    if grid_w < -_GRID_TOLERANCE_W and sustained_export:
         inactive = sorted(
             (c for c in inp.consumers if not c.active),
             key=lambda c: c.priority,
