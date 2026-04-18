@@ -238,8 +238,13 @@ class ControlEngine:
             # engine returns an empty execution; that's a hard-fail signal
             # for deploy-time validation, not a fallback.
             if self._budget_config is not None:
-                for bat in snapshot.batteries:
-                    self._mode_manager.clear_pending(bat.battery_id)
+                # PLAT-1696 step 1 followup: clearing pending mode changes
+                # before Budget used to guard against Branch B leftover
+                # requests. With Branch B gone, clearing here ABORTS the
+                # 5-step protocol every cycle — it never gets past
+                # Step 1 PREPARE (observed live 22:55, bat stuck standby
+                # while grid imported 1.6 kW). The idempotent mode emit
+                # in Budget already handles re-requests without thrash.
                 result.execution = await self._run_budget_allocator(snapshot)
             else:
                 logger.error(
