@@ -158,34 +158,55 @@ def _distribute(
     spread = sorted_by_soc[-1].soc_pct - sorted_by_soc[0].soc_pct
     alloc: dict[str, float] = {b.battery_id: 0.0 for b in bats}
 
+    def _cap(b: BatSnapshot, *, charging: bool) -> float:
+        lim = limits_by_id[b.battery_id]
+        return float(lim.max_charge_w if charging else lim.max_discharge_w)
+
     if spread > spread_aggressive_pct:
+        # PLAT-1718 grid-zero > PLAT-1715 SoC-balance. The primary half
+        # (lower-SoC for charging, higher-SoC for discharging) runs at
+        # its physical cap; any unmet demand spills to the secondary
+        # half so the ±100 W grid invariant holds even when a single
+        # battery cannot absorb/supply the full target.
         mid = max(1, len(sorted_by_soc) // 2)
-        # Charging: lower half absorbs, upper half standby.
-        # Discharging: upper half discharges, lower half holds.
-        if total_target_net_w < 0:
-            movers = sorted_by_soc[:mid]
+        charging = total_target_net_w < 0
+        if charging:
+            primary = sorted_by_soc[:mid]
+            secondary = sorted_by_soc[mid:]
         else:
-            movers = sorted_by_soc[-mid:]
-        share = total_target_net_w / len(movers)
-        for b in movers:
-            alloc[b.battery_id] = share
+            primary = sorted_by_soc[-mid:]
+            secondary = sorted_by_soc[:-mid]
+
+        target_mag = abs(total_target_net_w)
+        sign = -1.0 if charging else 1.0
+
+        primary_cap = sum(_cap(b, charging=charging) for b in primary)
+        primary_mag = min(target_mag, primary_cap)
+        if primary:
+            share = primary_mag / len(primary)
+            for b in primary:
+                alloc[b.battery_id] = sign * share
+
+        overflow = target_mag - primary_mag
+        if overflow > 0 and secondary:
+            secondary_cap = sum(_cap(b, charging=charging) for b in secondary)
+            secondary_mag = min(overflow, secondary_cap)
+            share = secondary_mag / len(secondary)
+            for b in secondary:
+                alloc[b.battery_id] = sign * share
         return alloc
 
     # Balanced — proportional by capacity against each bat's relevant cap.
-    # For charging: weight = max_charge_w; for discharging: max_discharge_w.
-    if total_target_net_w < 0:
-        weights = {
-            b.battery_id: float(limits_by_id[b.battery_id].max_charge_w)
-            for b in bats
-        }
-    else:
-        weights = {
-            b.battery_id: float(limits_by_id[b.battery_id].max_discharge_w)
-            for b in bats
-        }
+    charging_balanced = total_target_net_w < 0
+    weights = {
+        b.battery_id: _cap(b, charging=charging_balanced)
+        for b in bats
+    }
     total_weight = sum(weights.values()) or 1.0
     for b in bats:
-        alloc[b.battery_id] = total_target_net_w * weights[b.battery_id] / total_weight
+        alloc[b.battery_id] = (
+            total_target_net_w * weights[b.battery_id] / total_weight
+        )
     return alloc
 
 

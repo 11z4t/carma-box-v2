@@ -194,6 +194,53 @@ def test_two_bats_large_spread_aggressive_on_discharge() -> None:
     assert plan.modes["kontor"] == "battery_standby"
 
 
+def test_aggressive_charge_spills_overflow_to_secondary_bat() -> None:
+    """PLAT-1718 live incident regression: target exceeds primary cap →
+    secondary MUST also charge so grid stays ≤ 100 W.
+
+    Scenario: 10 pp SoC spread makes kontor the primary charger; 7 kW
+    export puts the target at -7 kW, but kontor can only absorb its
+    5 kW cap. Without spill the grid kept exporting 2 kW (observed
+    live: ``zero_grid: grid=-636W target=-5625W applied=-5000W``).
+    """
+    bats = [
+        _snap("kontor", power_w=0, soc_pct=55),
+        _snap("forrad", power_w=0, soc_pct=65),
+    ]
+    limits = {
+        "kontor": _DEFAULT_LIMITS,  # max_charge_w = 5000
+        "forrad": _DEFAULT_LIMITS,
+    }
+    plan = plan_zero_grid(
+        grid_power_w=-7000.0, bats=bats, limits_by_id=limits,
+    )
+    assert plan.limits_w["kontor"] == _DEFAULT_LIMITS.max_charge_w
+    assert plan.modes["kontor"] == "charge_battery"
+    # The overflow (2 kW) MUST spill into forrad so grid converges to 0.
+    assert plan.modes["forrad"] == "charge_battery"
+    assert plan.limits_w["forrad"] == 2000
+
+
+def test_aggressive_discharge_spills_overflow_to_secondary_bat() -> None:
+    """Mirror of the charge spill: large import, higher-SoC primary
+    saturates at max_discharge_w → lower-SoC secondary fills the gap."""
+    bats = [
+        _snap("kontor", power_w=0, soc_pct=40),
+        _snap("forrad", power_w=0, soc_pct=55),
+    ]
+    limits = {
+        "kontor": _DEFAULT_LIMITS,
+        "forrad": _DEFAULT_LIMITS,  # max_discharge_w = 5000
+    }
+    plan = plan_zero_grid(
+        grid_power_w=6500.0, bats=bats, limits_by_id=limits,
+    )
+    assert plan.limits_w["forrad"] == _DEFAULT_LIMITS.max_discharge_w
+    assert plan.modes["forrad"] == "discharge_pv"
+    assert plan.modes["kontor"] == "discharge_pv"
+    assert plan.limits_w["kontor"] == 1500
+
+
 def test_two_bats_small_spread_proportional_by_capacity() -> None:
     """Inside 5 pp spread → split proportional by capacity."""
     bats = [
