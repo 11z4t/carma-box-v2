@@ -116,7 +116,11 @@ ev_charger:
   name: "Easee Home"
   type: "easee"
   charger_id: "EH128405"
-  max_amps: 10
+  # User directive 2026-04-18 22:00: cap at 6 A overnight because the
+  # car SoC is already >90 % and the BMS is pulsing in CV-taper. A fixed
+  # 6 A trickle is lugnt/quiet, avoids oscillation, and leaves battery
+  # capacity for the morning peak. Revert to 10 when SoC is lower.
+  max_amps: 6
   min_amps: 6
   phases: 3
   voltage_v: 230
@@ -125,7 +129,7 @@ ev_charger:
     start_amps: 6
     step_amps: 1
     step_interval_s: 300
-    steps: [6, 8, 10]
+    steps: [6]
     cooldown_after_start_s: 120
     cooldown_after_stop_s: 180
     emergency_cut_amps: 6
