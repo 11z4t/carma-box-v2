@@ -284,6 +284,23 @@ night_plan:
   grid_charge_price_threshold_ore: 60
   grid_charge_max_soc_pct: 90
 
+# NightEVController (PLAT-1674) — overnight EV ramp
+# User directive 2026-04-18 22:00: max_amps capped at 6 to match the
+# ev_charger.max_amps invariant. Without this block the schema default
+# (10) lets NightEV ramp past the user's 6 A rule.
+night_ev:
+  enabled: true
+  night_start_hour: 22
+  night_end_hour: 6
+  start_amps: 6
+  max_amps: 6
+  min_amps: 6
+  ramp_step_amps: 1
+  ramp_interval_s: 60
+  tak_weighted_kw: 2.7
+  grid_safety_margin_up: 0.9
+  grid_safety_margin_down: 0.95
+
 # Evening planning
 evening_plan:
   start_hour: 17
