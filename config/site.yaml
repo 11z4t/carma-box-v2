@@ -206,15 +206,18 @@ consumers:
 
   - id: "pool_heater"
     name: "Pool Heater"
+    # PLAT-1698: Shelly 1PM controlling the pool heater has been offline
+    # since 2026-04-12 → no real relay to drive. Marked dispatchable=false
+    # so v2 never attempts to turn_on/off a dead switch (and never spams
+    # the input_boolean proxy). Re-enable once the Shelly is replaced.
+    adapter: "read_only"
+    dispatchable: false
     type: "on_off"
     priority: 5
     priority_shed: 4
     power_w: 3000
     min_w: 3000
     max_w: 3000
-    # Poolvärmaren styrs via Shelly 1PM — device offline 2026-04-12
-    # Switch-entity saknas i HA (Shelly 1PM utan relay). Placeholder tills device online.
-    entity_switch: "input_boolean.surplus_dispatch_pool_heater"
     entity_power: "sensor.poolvarmare_shelly_1pm_power"
     requires_active: "pump_pool"
 

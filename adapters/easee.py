@@ -172,7 +172,28 @@ class EaseeAdapter(EVChargerAdapter):
             logger.info("waiting_in_fully fix already in progress")
             return False
         self._fix_in_progress = True
-        self._fix_task = asyncio.create_task(self._run_fix_sequence())
+        # PLAT-1704: bound the whole sequence so a hung charger/HA cannot
+        # leave the task running forever. Budget for all three sleeps + a
+        # safety margin. `_run_fix_sequence` swallows CancelledError via
+        # the try/except Exception so wait_for's cancellation is handled
+        # cleanly and `_fix_in_progress` always resets in the `finally`.
+        total_s = (
+            float(self._config.easee.fix_off_delay_s)
+            + float(self._config.easee.fix_override_delay_s)
+            + float(self._config.easee.fix_on_delay_s)
+            + 10.0  # margin for HA service-call round trips
+        )
+
+        async def _bounded() -> None:
+            try:
+                await asyncio.wait_for(self._run_fix_sequence(), timeout=total_s)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "waiting_in_fully fix timed out after %.0fs; "
+                    "resetting state", total_s,
+                )
+
+        self._fix_task = asyncio.create_task(_bounded())
         self._fix_task.add_done_callback(self._on_fix_done)
         return True
 

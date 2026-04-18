@@ -361,13 +361,24 @@ class HAApiClient:
         """Check if Home Assistant is reachable.
 
         Returns True if /api/ responds with 200, False otherwise.
+        Logs context (error type + message) on failure so operators can tell
+        connection errors from auth/protocol errors (PLAT-1703).
         """
+        url = f"{self._base_url}/api/"
         try:
             session = await self._ensure_session()
-            url = f"{self._base_url}/api/"
             async with session.get(url) as resp:
                 return resp.status == HTTPStatus.OK
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            logger.warning(
+                "HA health_check failed: %s: %s (url=%s)",
+                type(exc).__name__, exc, url,
+            )
+            return False
         except Exception:
+            logger.exception(
+                "HA health_check raised unexpected error (url=%s)", url,
+            )
             return False
 
     async def close(self) -> None:
