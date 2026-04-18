@@ -360,26 +360,32 @@ def allocate(
 
     # ----- EMIT COMMANDS -----
 
-    # EV commands
-    if ev_target > 0 and not inp.ev_charging:
-        cmds.append(Command(
-            command_type=CommandType.START_EV_CHARGING,
-            target_id="ev", value=None,
-            rule_id=_RULE_ID, reason="Budget: EV start",
-        ))
-    if ev_target == 0 and inp.ev_charging:
-        cmds.append(Command(
-            command_type=CommandType.STOP_EV_CHARGING,
-            target_id="ev", value=None,
-            rule_id=_RULE_ID, reason="Budget: EV stop",
-        ))
-    if ev_target > 0 and ev_target != inp.ev_current_amps:
-        cmds.append(Command(
-            command_type=CommandType.SET_EV_CURRENT,
-            target_id="ev", value=ev_target,
-            rule_id=_RULE_ID,
-            reason=f"Budget: EV {inp.ev_current_amps}→{ev_target}A",
-        ))
+    # EV commands — ONLY during daytime. At night the NightEVController
+    # owns EV (weighted-peak shaving, ramp-hold windows, etc). If Budget
+    # also emits here, the two controllers fight: observed live as
+    # "stop_ev_charging (BUDGET)" → "Setting EV current 6A (NIGHT_EV)"
+    # loop in the 22:46 cycles. Budget staying out of EV at night leaves
+    # ev_target=0 but emits no START/STOP/SET commands.
+    if daytime:
+        if ev_target > 0 and not inp.ev_charging:
+            cmds.append(Command(
+                command_type=CommandType.START_EV_CHARGING,
+                target_id="ev", value=None,
+                rule_id=_RULE_ID, reason="Budget: EV start",
+            ))
+        if ev_target == 0 and inp.ev_charging:
+            cmds.append(Command(
+                command_type=CommandType.STOP_EV_CHARGING,
+                target_id="ev", value=None,
+                rule_id=_RULE_ID, reason="Budget: EV stop",
+            ))
+        if ev_target > 0 and ev_target != inp.ev_current_amps:
+            cmds.append(Command(
+                command_type=CommandType.SET_EV_CURRENT,
+                target_id="ev", value=ev_target,
+                rule_id=_RULE_ID,
+                reason=f"Budget: EV {inp.ev_current_amps}→{ev_target}A",
+            ))
 
     # Bat commands — per-battery mode + limit.
     # PLAT-1718: when the zero-grid controller ran (daytime), its plan is
