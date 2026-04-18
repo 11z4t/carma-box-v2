@@ -45,12 +45,21 @@ _CORRECTION_GAIN: float = 0.7
 
 @dataclass(frozen=True)
 class BatLimits:
-    """Physical limits for one battery — all from site.yaml."""
+    """Physical limits for one battery — all from site.yaml.
+
+    ``soc_min_pct`` is the absolute floor; discharge is blocked at or
+    below this value. ``soc_min_buffer_pct`` adds a safety margin on top
+    so the in-flight discharge between cycles cannot dip below the
+    floor — without it a 2.5 kW discharge + 15 s cycle can drain up to
+    ~0.5 pp between the check and the next read (SoC = 15.1 % → 14.6 %
+    before we react).
+    """
 
     max_charge_w: int
     max_discharge_w: int
     soc_min_pct: float
     soc_max_pct: float  # charge-stop threshold (matches S8 PV_SURPLUS entry)
+    soc_min_buffer_pct: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -123,7 +132,10 @@ def _clamp_for_soc(
             return 0.0
         return max(target_net_w, -float(limits.max_charge_w))
     if target_net_w > 0:
-        if soc_pct <= limits.soc_min_pct:
+        # Block discharge at ``soc_min_pct + soc_min_buffer_pct`` so the
+        # in-flight drain between cycles cannot cross the absolute floor.
+        # The buffer protects against the blackout at 10 % physical SoC.
+        if soc_pct <= limits.soc_min_pct + limits.soc_min_buffer_pct:
             return 0.0
         return min(target_net_w, float(limits.max_discharge_w))
     return 0.0

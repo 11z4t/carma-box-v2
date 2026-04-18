@@ -136,6 +136,55 @@ def test_discharge_is_blocked_at_soc_min() -> None:
     assert plan.modes["kontor"] == "battery_standby"
 
 
+def test_discharge_blocked_inside_soc_min_buffer() -> None:
+    """SoC within soc_min_buffer_pct of the floor → still standby.
+
+    Protects the in-flight drain between cycles: at SoC 15.8 % (inside
+    the default 1 pp buffer) zero_grid must already say standby so the
+    next-cycle sensor read does not catch the bat below 15 %.
+    """
+    bats = [_snap("kontor", power_w=0, soc_pct=15.8)]
+    plan = plan_zero_grid(
+        gain=1.0,
+        grid_power_w=3000.0,
+        bats=bats,
+        limits_by_id={"kontor": _DEFAULT_LIMITS},
+    )
+    assert plan.modes["kontor"] == "battery_standby"
+    assert plan.limits_w["kontor"] == 0
+
+
+def test_discharge_allowed_above_soc_min_buffer() -> None:
+    """SoC > soc_min_pct + buffer → discharge allowed normally."""
+    bats = [_snap("kontor", power_w=0, soc_pct=16.5)]
+    plan = plan_zero_grid(
+        gain=1.0,
+        grid_power_w=1500.0,
+        bats=bats,
+        limits_by_id={"kontor": _DEFAULT_LIMITS},
+    )
+    assert plan.modes["kontor"] == "discharge_pv"
+    assert plan.limits_w["kontor"] == 1500
+
+
+def test_soc_min_buffer_is_configurable() -> None:
+    """Customer sites can override the buffer (e.g. larger hardware lag)."""
+    strict_limits = BatLimits(
+        max_charge_w=5000, max_discharge_w=5000,
+        soc_min_pct=15.0, soc_max_pct=95.0,
+        soc_min_buffer_pct=3.0,  # bigger margin
+    )
+    bats = [_snap("kontor", power_w=0, soc_pct=17.5)]
+    plan = plan_zero_grid(
+        gain=1.0,
+        grid_power_w=1500.0,
+        bats=bats,
+        limits_by_id={"kontor": strict_limits},
+    )
+    # 17.5 <= 15 + 3 → standby
+    assert plan.modes["kontor"] == "battery_standby"
+
+
 def test_charge_is_clamped_at_max_charge_w() -> None:
     """Target above physical cap is clamped."""
     bats = [_snap("kontor", power_w=0, soc_pct=50)]
