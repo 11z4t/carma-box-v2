@@ -95,6 +95,13 @@ class BudgetConfig:
     # ET-10 default; override via site.yaml if different hardware is used.
     bat_default_max_charge_w: int = 5000
     bat_default_max_discharge_w: int = 5000
+    # PLAT-1715 R7: consumer cascade tunables (no magic numbers).
+    # cascade_cooldown_s: minimum seconds between two switches of the same
+    #   consumer — prevents flapping when the grid signal is noisy.
+    # cascade_sustained_cycles: how many consecutive export cycles must pass
+    #   before starting the next consumer in the priority list.
+    cascade_cooldown_s: float = 60.0
+    cascade_sustained_cycles: int = 2
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +427,7 @@ def allocate(
         ))
 
     # PLAT-1715: unified consumer cascade runs after bat + EV allocation.
-    cmds.extend(_cascade_consumers(inp, bat_alloc, state))
+    cmds.extend(_cascade_consumers(inp, bat_alloc, state, cfg))
 
     # Update state
     state.ev_current_amps = ev_target
@@ -589,6 +596,7 @@ def _cascade_consumers(
     inp: BudgetInput,
     bat_alloc: dict[str, int],
     state: BudgetState,
+    cfg: BudgetConfig,
 ) -> list[Command]:
     """PLAT-1715: Unified consumer cascade.
 
@@ -596,7 +604,8 @@ def _cascade_consumers(
       - grid export > 100 W AND bat at max → turn ON lowest-priority-number
         inactive consumer.
       - grid import > 100 W → turn OFF highest priority_shed active consumer.
-    One switch per cycle + 60 s per-consumer cooldown to prevent flapping.
+    One switch per cycle + ``cfg.cascade_cooldown_s`` per-consumer cooldown
+    to prevent flapping.
 
     Pure function: reads inp, writes only to state.consumer_last_switch_ts.
     """
@@ -605,14 +614,16 @@ def _cascade_consumers(
     import time as _time  # noqa: PLC0415
 
     now_ts = _time.monotonic()
-    cooldown_s = 60.0
+    cooldown_s = cfg.cascade_cooldown_s
     grid_w = inp.grid_power_w
     cmds: list[Command] = []
 
     # Sustained export signal: bat couldn't absorb the surplus in the
     # previous cycle(s) → consumers needed. consecutive_export_cycles is
     # updated in allocate() before the cascade runs.
-    sustained_export = state.consecutive_export_cycles >= 2
+    sustained_export = (
+        state.consecutive_export_cycles >= cfg.cascade_sustained_cycles
+    )
 
     if grid_w < -_GRID_TOLERANCE_W and sustained_export:
         inactive = sorted(

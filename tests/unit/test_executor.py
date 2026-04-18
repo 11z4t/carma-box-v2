@@ -782,3 +782,53 @@ class TestDispatchTableAsync:
         )
         result = await executor.execute([cmd])
         assert result.commands_failed == 1
+
+    async def test_plat1709_charge_pv_with_high_limit_logs_critical(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """PLAT-1709: asking for charge_pv while ems_power_limit > 50 W is
+        uncontrollable in peak_shaving firmware — executor must emit a
+        CRITICAL log so operators can trace the regression.
+        """
+        import logging
+        inverter = _make_inverter(ems_mode="battery_standby", ems_power_limit=3000)
+        executor = CommandExecutor(inverters={"kontor": inverter})
+        cmd = Command(
+            command_type=CommandType.SET_EMS_MODE,
+            target_id="kontor",
+            value="charge_pv",
+            rule_id="TEST",
+            reason="PLAT-1709 guard probe",
+        )
+        with caplog.at_level(logging.CRITICAL):
+            await executor.execute([cmd])
+        critical_msgs = [r for r in caplog.records if r.levelno == logging.CRITICAL]
+        assert any("PLAT-1709" in r.getMessage() for r in critical_msgs), (
+            f"Expected PLAT-1709 CRITICAL log, got: "
+            f"{[r.getMessage() for r in critical_msgs]}"
+        )
+
+    async def test_plat1709_charge_pv_with_zero_limit_is_silent(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """PLAT-1709: charge_pv + limit=0 is a valid legacy fallback
+        (PV-only absorption); no CRITICAL alert should fire."""
+        import logging
+        inverter = _make_inverter(ems_mode="battery_standby", ems_power_limit=0)
+        executor = CommandExecutor(inverters={"kontor": inverter})
+        cmd = Command(
+            command_type=CommandType.SET_EMS_MODE,
+            target_id="kontor",
+            value="charge_pv",
+            rule_id="TEST",
+            reason="legacy PV-only",
+        )
+        with caplog.at_level(logging.CRITICAL):
+            await executor.execute([cmd])
+        critical_msgs = [
+            r for r in caplog.records
+            if r.levelno == logging.CRITICAL and "PLAT-1709" in r.getMessage()
+        ]
+        assert critical_msgs == [], (
+            "charge_pv + limit=0 should be silent (valid legacy pattern)"
+        )

@@ -809,3 +809,137 @@ def test_plat1714_standby_emits_limit_zero() -> None:
         f"PLAT-1714: Every standby bat must also emit limit=0. "
         f"standby={standby_targets}, limit_zero={limit_zero_targets}"
     )
+
+
+# -------------------------------------------------------------------
+# PLAT-1715: consumer cascade (unified priority — bat → EV → consumers)
+# -------------------------------------------------------------------
+
+
+from core.models import ConsumerState  # noqa: E402
+
+
+def _c(cid: str, active: bool, priority: int, priority_shed: int) -> ConsumerState:
+    return ConsumerState(
+        consumer_id=cid,
+        name=cid,
+        active=active,
+        power_w=400.0 if active else 0.0,
+        priority=priority,
+        priority_shed=priority_shed,
+        load_type="on_off",
+    )
+
+
+def test_plat1715_cascade_turn_on_lowest_priority_on_sustained_export() -> None:
+    """grid exporting > 100 W for ≥ cascade_sustained_cycles → turn on
+    the LOWEST-priority-number inactive consumer."""
+    cfg = BudgetConfig(cascade_cooldown_s=0.0, cascade_sustained_cycles=2)
+    inp = _inp(
+        hour=14, pv_w=6000, house_w=500, grid_w=-1500,
+        bat_k_soc=50, bat_f_soc=50,
+    )
+    inp_with_consumers = BudgetInput(
+        now=inp.now,
+        grid_power_w=inp.grid_power_w,
+        pv_power_w=inp.pv_power_w,
+        house_load_w=inp.house_load_w,
+        ev_connected=False, ev_charging=False,
+        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        bat_socs=inp.bat_socs, bat_caps=inp.bat_caps,
+        bat_powers=inp.bat_powers, bat_modes=inp.bat_modes,
+        consumers=(
+            _c("vp", active=False, priority=2, priority_shed=2),
+            _c("miner", active=False, priority=99, priority_shed=1),
+        ),
+    )
+    # 2 consecutive export cycles required
+    state = BudgetState(consecutive_export_cycles=2)
+    result = allocate(inp_with_consumers, cfg, state)
+    starts = [
+        c for c in result.commands
+        if c.command_type == CommandType.TURN_ON_CONSUMER
+    ]
+    assert len(starts) == 1
+    assert starts[0].target_id == "vp"  # lowest priority number wins
+
+
+def test_plat1715_cascade_turn_off_highest_priority_shed_on_import() -> None:
+    """grid importing > 100 W → turn off the highest-priority_shed ACTIVE
+    consumer (shed the most expendable load first)."""
+    cfg = BudgetConfig(cascade_cooldown_s=0.0, cascade_sustained_cycles=2)
+    inp_with_consumers = BudgetInput(
+        now=_inp().now,
+        grid_power_w=400.0,  # import
+        pv_power_w=500.0, house_load_w=1200.0,
+        ev_connected=False, ev_charging=False,
+        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        bat_socs={"k": 60.0, "f": 60.0},
+        bat_caps={"k": 15.0, "f": 5.0},
+        bat_powers={"k": 0.0, "f": 0.0},
+        bat_modes={"k": "charge_pv", "f": "charge_pv"},
+        consumers=(
+            _c("vp", active=True, priority=2, priority_shed=2),
+            _c("pool_heater", active=True, priority=4, priority_shed=4),
+        ),
+    )
+    state = BudgetState()
+    result = allocate(inp_with_consumers, cfg, state)
+    stops = [
+        c for c in result.commands
+        if c.command_type == CommandType.TURN_OFF_CONSUMER
+    ]
+    assert len(stops) == 1
+    # pool_heater has priority_shed=4 — highest → first to shed
+    assert stops[0].target_id == "pool_heater"
+
+
+def test_plat1715_cascade_cooldown_prevents_immediate_reswitch() -> None:
+    """A consumer that was just switched is not touched again inside the
+    cooldown window, even if the grid signal would justify it."""
+    cfg = BudgetConfig(cascade_cooldown_s=60.0, cascade_sustained_cycles=2)
+    import time as _time
+    now = _time.monotonic()
+    state = BudgetState(
+        consecutive_import_cycles=5,
+        consumer_last_switch_ts={"vp": now},  # just switched
+    )
+    inp_with_consumers = BudgetInput(
+        now=_inp().now,
+        grid_power_w=500.0, pv_power_w=0.0, house_load_w=500.0,
+        ev_connected=False, ev_charging=False,
+        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        bat_socs={"k": 60.0}, bat_caps={"k": 15.0},
+        bat_powers={"k": 0.0}, bat_modes={"k": "charge_pv"},
+        consumers=(_c("vp", active=True, priority=2, priority_shed=2),),
+    )
+    result = allocate(inp_with_consumers, cfg, state)
+    # vp is in cooldown → no turn_off should be emitted for it
+    turn_offs_for_vp = [
+        c for c in result.commands
+        if c.command_type == CommandType.TURN_OFF_CONSUMER
+        and c.target_id == "vp"
+    ]
+    assert len(turn_offs_for_vp) == 0
+
+
+def test_plat1715_cascade_no_start_without_sustained_export() -> None:
+    """A single export cycle is not enough; user rule requires sustain."""
+    cfg = BudgetConfig(cascade_cooldown_s=0.0, cascade_sustained_cycles=2)
+    inp_with_consumers = BudgetInput(
+        now=_inp().now,
+        grid_power_w=-500.0,
+        pv_power_w=5000.0, house_load_w=500.0,
+        ev_connected=False, ev_charging=False,
+        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        bat_socs={"k": 60.0}, bat_caps={"k": 15.0},
+        bat_powers={"k": 0.0}, bat_modes={"k": "charge_pv"},
+        consumers=(_c("vp", active=False, priority=2, priority_shed=2),),
+    )
+    state = BudgetState(consecutive_export_cycles=0)
+    result = allocate(inp_with_consumers, cfg, state)
+    starts = [
+        c for c in result.commands
+        if c.command_type == CommandType.TURN_ON_CONSUMER
+    ]
+    assert len(starts) == 0

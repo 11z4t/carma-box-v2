@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 # kW to W conversion factor.
 _KWH_TO_W: float = 1000.0
 
+# PLAT-1704: safety margin added to the sum of fix-sequence sleeps so
+# the ``asyncio.wait_for`` cap covers HA service-call round-trip time
+# without cancelling a legitimately in-progress fix.
+_FIX_TIMEOUT_MARGIN_S: float = 10.0
+
 
 class EaseeAdapter(EVChargerAdapter):
     """Easee Home charger adapter.
@@ -181,7 +186,7 @@ class EaseeAdapter(EVChargerAdapter):
             float(self._config.easee.fix_off_delay_s)
             + float(self._config.easee.fix_override_delay_s)
             + float(self._config.easee.fix_on_delay_s)
-            + 10.0  # margin for HA service-call round trips
+            + _FIX_TIMEOUT_MARGIN_S
         )
 
         async def _bounded() -> None:
