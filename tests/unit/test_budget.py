@@ -521,7 +521,7 @@ def test_plat1695_bat_charge_stops_at_config_threshold(
 
     bat_charge_cmds = [
         c for c in result.commands
-        if c.command_type == CommandType.SET_EMS_MODE and c.value == "charge_pv"
+        if c.command_type == CommandType.SET_EMS_MODE and c.value == "charge_battery"
     ]
     if expect_bat_cmds:
         assert bat_charge_cmds, (
@@ -552,7 +552,7 @@ def test_plat1695_only_lower_bat_charges_when_mixed() -> None:
 
     charge_targets = {
         c.target_id for c in result.commands
-        if c.command_type == CommandType.SET_EMS_MODE and c.value == "charge_pv"
+        if c.command_type == CommandType.SET_EMS_MODE and c.value == "charge_battery"
     }
     standby_targets = {
         c.target_id for c in result.commands
@@ -580,4 +580,101 @@ def test_plat1695_default_stop_matches_state_machine_s8_entry() -> None:
         f"BudgetConfig.bat_charge_stop_soc_pct ({cfg.bat_charge_stop_soc_pct}) "
         f"must equal StateMachineConfig.surplus_entry_soc_pct "
         f"({sm_cfg.surplus_entry_soc_pct}) to avoid PV_SURPLUS dead zone."
+    )
+
+
+# -------------------------------------------------------------------
+# PLAT-1714: Budget Allocator MUST use charge_battery (mode 11) + limit
+# -------------------------------------------------------------------
+# Regression for "800W grid import during PV absorption":
+# charge_pv + ems_power_limit is UNCONTROLLABLE in peak_shaving firmware
+# (GoodWe absorbs from grid too). charge_battery (mode 11) RESPECTS the
+# limit and absorbs PV-surplus only, no grid import.
+
+
+def test_plat1714_bat_charge_uses_charge_battery_not_charge_pv() -> None:
+    """PLAT-1714: Budget charge must emit charge_battery (mode 11), not charge_pv."""
+    cfg = BudgetConfig()
+    inp = _inp(
+        hour=14,           # EM
+        pv_w=5000.0,
+        house_w=500.0,
+        grid_w=-4000.0,
+        bat_k_soc=50.0,
+        bat_f_soc=50.0,
+    )
+
+    result = allocate(inp, cfg)
+    mode_cmds = [c for c in result.commands
+                 if c.command_type == CommandType.SET_EMS_MODE]
+    charge_pv_cmds = [c for c in mode_cmds if c.value == "charge_pv"]
+    charge_bat_cmds = [c for c in mode_cmds if c.value == "charge_battery"]
+
+    assert not charge_pv_cmds, (
+        f"PLAT-1714: Budget must NOT emit charge_pv (uncontrollable in peak_shaving). "
+        f"Offending cmds: {[(c.target_id, c.reason) for c in charge_pv_cmds]}"
+    )
+    assert charge_bat_cmds, (
+        "PLAT-1714: Budget must emit charge_battery for PV-surplus absorption"
+    )
+
+
+def test_plat1714_bat_charge_emits_matching_power_limit() -> None:
+    """PLAT-1714: charge_battery must be paired with SET_EMS_POWER_LIMIT.
+
+    Without the limit, GoodWe firmware defaults to uncontrolled behaviour.
+    """
+    cfg = BudgetConfig()
+    inp = _inp(
+        hour=14,
+        pv_w=5000.0,
+        house_w=500.0,
+        grid_w=-4000.0,
+        bat_k_soc=50.0,
+        bat_f_soc=50.0,
+    )
+
+    result = allocate(inp, cfg)
+    # Group mode + limit commands by target_id
+    modes = {c.target_id: c.value for c in result.commands
+             if c.command_type == CommandType.SET_EMS_MODE}
+    limits = {c.target_id: c.value for c in result.commands
+              if c.command_type == CommandType.SET_EMS_POWER_LIMIT}
+
+    for bid, mode in modes.items():
+        if mode == "charge_battery":
+            assert bid in limits, (
+                f"PLAT-1714: bat {bid} in charge_battery mode but no "
+                f"SET_EMS_POWER_LIMIT emitted"
+            )
+            assert limits[bid] > 0, (
+                f"PLAT-1714: bat {bid} charge_battery limit must be > 0, "
+                f"got {limits[bid]}"
+            )
+
+
+def test_plat1714_standby_emits_limit_zero() -> None:
+    """PLAT-1714: standby bats should also get SET_EMS_POWER_LIMIT=0 to
+    defeat the truthy-trap (B9) and prevent stale limits leaking."""
+    cfg = BudgetConfig(bat_charge_stop_soc_pct=95.0)
+    inp = _inp(
+        hour=14,
+        pv_w=5000.0,
+        house_w=500.0,
+        grid_w=-4000.0,
+        bat_k_soc=96.0,   # above threshold → standby
+        bat_f_soc=97.0,
+    )
+
+    result = allocate(inp, cfg)
+    standby_targets = {c.target_id for c in result.commands
+                       if c.command_type == CommandType.SET_EMS_MODE
+                       and c.value == "battery_standby"}
+    limit_zero_targets = {c.target_id for c in result.commands
+                          if c.command_type == CommandType.SET_EMS_POWER_LIMIT
+                          and c.value == 0}
+
+    assert standby_targets == limit_zero_targets, (
+        f"PLAT-1714: Every standby bat must also emit limit=0. "
+        f"standby={standby_targets}, limit_zero={limit_zero_targets}"
     )

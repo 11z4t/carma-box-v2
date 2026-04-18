@@ -27,9 +27,6 @@ from core.models import Command, CommandType, EMSMode
 
 logger = logging.getLogger(__name__)
 
-# Entity template for GoodWe grid export limit — configurable per inverter.
-_GOODWE_EXPORT_LIMIT_ENTITY = "number.goodwe_grid_export_limit_{}"
-
 
 # ---------------------------------------------------------------------------
 # Protocols (avoid circular imports)
@@ -42,6 +39,7 @@ class InverterPort(Protocol):
     async def set_ems_mode(self, mode: str) -> bool: ...
     async def set_ems_power_limit(self, watts: int) -> bool: ...
     async def set_fast_charging(self, on: bool) -> bool: ...
+    async def set_export_limit(self, watts: int) -> bool: ...
     async def get_fast_charging(self) -> bool: ...
     async def get_ems_mode(self) -> str: ...
 
@@ -341,30 +339,24 @@ class CommandExecutor:
     # ------------------------------------------------------------------
 
     async def _exec_set_export_limit(self, cmd: Command) -> bool:
-        """SET_EXPORT_LIMIT: write grid export limit via HA number entity."""
+        """SET_EXPORT_LIMIT: write grid export limit via inverter adapter.
+
+        PLAT-1699: Previously used hardcoded entity template + raw _api access.
+        Now delegates to inverter.set_export_limit() — config-driven entity
+        from BatteryEntities.export_limit, kund-agnostisk.
+        """
         inverter = self._inverters.get(cmd.target_id)
-        if not inverter:
+        if inverter is None:
             logger.error("No inverter for export limit %s", cmd.target_id)
             return False
         limit_w = int(cmd.value or 0)
-        entity_id = _GOODWE_EXPORT_LIMIT_ENTITY.format(cmd.target_id)
-        logger.info(
-            "Setting export limit → %d W on %s", limit_w, cmd.target_id,
-        )
         try:
-            # Use set_ems_power_limit as proxy — writes to number entity.
-            # Export limit entity naming follows same pattern.
-            api = getattr(inverter, "_api", None)
-            if api is None:
-                logger.error("No API on inverter %s", cmd.target_id)
-                return False
-            result: bool = await api.call_service(
-                "number", "set_value",
-                {"entity_id": entity_id, "value": limit_w},
+            return await inverter.set_export_limit(limit_w)
+        except Exception:
+            logger.exception(
+                "Export limit write failed on %s (limit=%d W)",
+                cmd.target_id, limit_w,
             )
-            return result
-        except Exception as exc:
-            logger.error("Export limit write failed: %s", exc)
             return False
 
     async def _exec_no_op(self, cmd: Command) -> bool:

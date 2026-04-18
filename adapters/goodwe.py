@@ -29,10 +29,14 @@ _SOH_DEFAULT_PCT: float = 100.0
 
 # EMS mode strings as used by the GoodWe HACS integration
 # Allowed EMS modes — "auto" intentionally excluded (B10/B14)
+# PLAT-1714: charge_battery (mode 11) + discharge_battery added — RESPECT ems_power_limit
+# (charge_pv in peak_shaving is UNCONTROLLABLE; charge_battery is correct for PV surplus)
 _VALID_EMS_MODES = frozenset({
     "charge_pv",
     "discharge_pv",
     "battery_standby",
+    "charge_battery",
+    "discharge_battery",
     "import_ac",
     "export_ac",
     "conserve",

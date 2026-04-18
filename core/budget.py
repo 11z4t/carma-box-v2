@@ -349,15 +349,25 @@ def allocate(
                     reason=f"Budget: limit {discharge_w}W",
                 ))
     else:
-        # Charge or standby
+        # PLAT-1714: Charge via charge_battery (mode 11) which RESPECTS
+        # ems_power_limit. Previous charge_pv is UNCONTROLLABLE in peak_shaving
+        # firmware mode → caused 800W grid import during PV absorption.
+        # charge_battery + limit = "absorb up to limit W of PV surplus only,
+        # never grid import". Must emit BOTH mode AND limit each cycle.
         for bid, limit_w in bat_alloc.items():
             if limit_w > 0:
                 cmds.append(Command(
                     command_type=CommandType.SET_EMS_MODE,
                     target_id=bid,
-                    value=EMSMode.CHARGE_PV.value,
+                    value=EMSMode.CHARGE_BATTERY.value,
                     rule_id=_RULE_ID,
-                    reason=f"Budget: charge_pv {limit_w}W",
+                    reason=f"Budget: charge_battery {limit_w}W",
+                ))
+                cmds.append(Command(
+                    command_type=CommandType.SET_EMS_POWER_LIMIT,
+                    target_id=bid, value=limit_w,
+                    rule_id=_RULE_ID,
+                    reason=f"Budget: limit {limit_w}W",
                 ))
             else:
                 cmds.append(Command(
@@ -366,6 +376,12 @@ def allocate(
                     value=EMSMode.BATTERY_STANDBY.value,
                     rule_id=_RULE_ID,
                     reason="Budget: standby",
+                ))
+                cmds.append(Command(
+                    command_type=CommandType.SET_EMS_POWER_LIMIT,
+                    target_id=bid, value=0,
+                    rule_id=_RULE_ID,
+                    reason="Budget: standby limit=0",
                 ))
 
     # Update state
