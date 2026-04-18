@@ -323,13 +323,12 @@ control:
   # SET_EMS_MODE (PLAT-1715) we only actually write when the mode
   # differs, so the cooldown protects against genuine direction changes.
   mode_change_cooldown_s: 60
-  # PLAT-1696 step 1: all mode-change waits shortened to ~15 s each so
-  # the bat can flip charge↔discharge within ~45 s total. Historical
+  # PLAT-1696 step 1: mode-change waits shortened so bat flips
+  # charge↔discharge in ~60 s total instead of ~450 s. Historical
   # defaults (60/300/60/30) were tuned for hourly scenario changes;
-  # zero_grid needs sub-minute reaction time per user invariant. Values
-  # at the schema minimum (5 s ≤ x ≤ 300) leave headroom; 15 s is a
-  # conservative pick for GoodWe ET's internal settle time.
-  standby_intermediate_s: 15
+  # zero_grid needs sub-minute reaction time per user invariant.
+  # standby_intermediate_s min is 30 in the schema (hardware settle time).
+  standby_intermediate_s: 30
   mode_change_clear_wait_s: 15
   mode_change_set_wait_s: 15
   mode_change_verify_wait_s: 15
