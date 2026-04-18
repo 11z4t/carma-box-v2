@@ -242,20 +242,18 @@ def allocate(
     # ----- PRIORITY ALLOCATION -----
 
     # PLAT-1718: The zero-grid controller OWNS bat mode + limit during
-    # the active daytime window (06:00–17:00 by default). It drives
+    # the whole active daytime window (06:00–20:00). It drives
     # grid → 0 W every cycle using the measured ``grid_power_w`` instead
-    # of the pv-house model (which can lag or go stale). EV and consumer
-    # cascade still run in parallel; their effect on grid feeds back
-    # into the next cycle's zero-grid step.
+    # of the pv-house model (which can lag or go stale). The legacy
+    # evening_discharge branch was a one-shot ``target = max(0, grid)``
+    # that ignored the current bat power — this caused a ±2.8 kW
+    # oscillation in the 17-20 window. Zero-grid is closed-loop on the
+    # measured bat + grid state, so it converges within the deadband.
     #
-    # Outside this window the legacy branches apply:
-    #   17:00–20:00 → evening_discharge (bat covers house explicitly)
+    # Outside this window:
     #   20:00–22:00 → bat standby (preserve capacity for morning peak)
     #   22:00–06:00 → night controller takes over in engine
-    zero_grid_active = (
-        daytime
-        and hour < _EVENING_DISCHARGE_START_H
-    )
+    zero_grid_active = daytime and hour < _EVENING_DISCHARGE_END_H
     zero_grid_plan = None
     if zero_grid_active:
         zg_bats = [
