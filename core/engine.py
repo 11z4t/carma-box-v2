@@ -468,6 +468,7 @@ class ControlEngine:
             bat_powers=bat_powers,
             bat_modes=bat_modes,
             pv_remaining_kwh=snapshot.grid.pv_forecast_today_kwh,
+            consumers=tuple(snapshot.consumers),
         )
 
         budget_result = budget_allocate(budget_input, cfg, self._budget_state)

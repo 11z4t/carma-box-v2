@@ -21,10 +21,10 @@ Pure module — no I/O. Caller (engine) executes returned commands.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
-from core.models import Command, CommandType, EMSMode
+from core.models import Command, CommandType, ConsumerState, EMSMode
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +112,9 @@ class BudgetInput:
     bat_modes: dict[str, str]    # battery_id → current EMS mode
     pv_remaining_kwh: float = 0.0  # Solcast remaining today
     house_remaining_kwh: float = 0.0  # estimated house consumption remaining
+    # PLAT-1715: consumer list for unified priority cascade.
+    # Empty tuple (default) → no cascade, legacy behaviour.
+    consumers: tuple[ConsumerState, ...] = ()
 
 
 @dataclass
@@ -121,6 +124,9 @@ class BudgetState:
     consecutive_export_cycles: int = 0
     consecutive_import_cycles: int = 0
     ev_current_amps: int = 0
+    # PLAT-1715: cooldown per consumer (monotonic seconds) to prevent flapping.
+    # Key = consumer_id, value = monotonic timestamp of last switch.
+    consumer_last_switch_ts: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -406,6 +412,9 @@ def allocate(
                 ),
             ))
 
+    # PLAT-1715: unified consumer cascade runs after bat + EV allocation.
+    cmds.extend(_cascade_consumers(inp, bat_alloc, state))
+
     # Update state
     state.ev_current_amps = ev_target
 
@@ -567,6 +576,83 @@ def _allocate_ev(
         used = _ev_power_at_amps(target)
 
     return target, used, remaining_w - used
+
+
+def _cascade_consumers(
+    inp: BudgetInput,
+    bat_alloc: dict[str, int],
+    state: BudgetState,
+) -> list[Command]:
+    """PLAT-1715: Unified consumer cascade.
+
+    User rules (2026-04-18):
+      - grid export > 100 W AND bat at max → turn ON lowest-priority-number
+        inactive consumer.
+      - grid import > 100 W → turn OFF highest priority_shed active consumer.
+    One switch per cycle + 60 s per-consumer cooldown to prevent flapping.
+
+    Pure function: reads inp, writes only to state.consumer_last_switch_ts.
+    """
+    if not inp.consumers:
+        return []
+    import time as _time  # noqa: PLC0415
+
+    now_ts = _time.monotonic()
+    cooldown_s = 60.0
+    grid_w = inp.grid_power_w
+    cmds: list[Command] = []
+
+    # Bat at max if every active bat is charging within 50 W of its limit.
+    bat_at_max = False
+    if bat_alloc:
+        bat_at_max = all(
+            abs(inp.bat_powers.get(bid, 0.0)) >= max(0.0, float(limit_w) - 50.0)
+            for bid, limit_w in bat_alloc.items() if limit_w > 0
+        )
+
+    if grid_w < -_GRID_TOLERANCE_W and bat_at_max:
+        inactive = sorted(
+            (c for c in inp.consumers if not c.active),
+            key=lambda c: c.priority,
+        )
+        for c in inactive:
+            last = state.consumer_last_switch_ts.get(c.consumer_id, 0.0)
+            if now_ts - last < cooldown_s:
+                continue
+            cmds.append(Command(
+                command_type=CommandType.TURN_ON_CONSUMER,
+                target_id=c.consumer_id,
+                value=None,
+                rule_id=_RULE_ID,
+                reason=(
+                    f"Cascade: grid export {-grid_w:.0f}W > "
+                    f"{_GRID_TOLERANCE_W:.0f}W, bat at max"
+                ),
+            ))
+            state.consumer_last_switch_ts[c.consumer_id] = now_ts
+            break
+    elif grid_w > _GRID_TOLERANCE_W:
+        active = sorted(
+            (c for c in inp.consumers if c.active),
+            key=lambda c: -c.priority_shed,
+        )
+        for c in active:
+            last = state.consumer_last_switch_ts.get(c.consumer_id, 0.0)
+            if now_ts - last < cooldown_s:
+                continue
+            cmds.append(Command(
+                command_type=CommandType.TURN_OFF_CONSUMER,
+                target_id=c.consumer_id,
+                value=None,
+                rule_id=_RULE_ID,
+                reason=(
+                    f"Cascade: grid import {grid_w:.0f}W > "
+                    f"{_GRID_TOLERANCE_W:.0f}W"
+                ),
+            ))
+            state.consumer_last_switch_ts[c.consumer_id] = now_ts
+            break
+    return cmds
 
 
 def _allocate_bat(
