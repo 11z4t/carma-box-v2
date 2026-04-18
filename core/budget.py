@@ -235,9 +235,35 @@ def allocate(
 
     # ----- PRIORITY ALLOCATION -----
 
+    # PLAT-1716: daytime grid target is 0 W. When grid is importing above
+    # the deadband AND we have headroom above the discharge floor, the bat
+    # covers house load — NOT just in the evening window. User rule
+    # (2026-04-18): generalises to "bat keeps grid at 0 both ways".
+    # Requires sustained import (≥3 cycles, ~90 s) to give EV ramp-down and
+    # transient PV drops time to settle before bat starts covering the grid.
+    sustained_import = state.consecutive_import_cycles >= 3
+    before_evening_window = hour < _EVENING_DISCHARGE_START_H
+
     if not daytime:
         # Night — defers to night controller
         reasons.append("NIGHT: defers to night controller")
+
+    elif (
+        before_evening_window
+        and sustained_import
+        and bat_avg_soc > cfg.bat_discharge_min_soc_pct
+    ):
+        # Daytime discharge (PLAT-1716): bat covers house load to drive
+        # grid → 0. Only active before the evening window so the existing
+        # evening-discharge branch handles 17-20.
+        bat_discharge, bat_alloc = _allocate_evening_discharge(
+            inp, cfg, state,
+        )
+        ev_target = 0
+        reasons.append(
+            f"DAYTIME_DISCHARGE: bat {bat_discharge}W covers grid "
+            f"{inp.grid_power_w:.0f}W import (soc_avg={bat_avg_soc:.0f}%)"
+        )
 
     elif (
         _EVENING_DISCHARGE_START_H <= hour < _EVENING_DISCHARGE_END_H
