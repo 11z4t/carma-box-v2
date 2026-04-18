@@ -470,3 +470,114 @@ def test_balance_ratios_are_named_constants() -> None:
                 f"engine.py:{i}: Raw 0.8/0.2 in allocation. "
                 f"Use _SOC_BALANCE_LOWER/HIGHER_RATIO. Line: {stripped}"
             )
+
+
+# -------------------------------------------------------------------
+# PLAT-1695: Regulator convergence — SoC-gate at bat_charge_stop_soc_pct
+# -------------------------------------------------------------------
+# Regression for the 5pp dead zone: state machine enters S8 PV_SURPLUS at
+# SoC >= surplus_entry_soc_pct (95%) but budget previously kept charging
+# up to bat_soc_full_pct (100%). Result: at SoC 95-99% the regulator kept
+# adding PV to bat → grid export grew instead of shrinking.
+# Fix: filter in _allocate_bat uses bat_charge_stop_soc_pct (default 95).
+
+
+@pytest.mark.parametrize(
+    "soc_k,soc_f,stop_pct,expect_bat_cmds",
+    [
+        # Both below threshold → charge both
+        (90.0, 88.0, 95.0, True),
+        # Both at threshold → no charging
+        (95.0, 95.0, 95.0, False),
+        # Both above threshold → no charging
+        (96.0, 97.0, 95.0, False),
+        # Mixed (one below, one above) → lower bat still gets allocation
+        (94.0, 96.0, 95.0, True),
+        # Both at legacy full (100%) → no charging (previous behaviour)
+        (100.0, 100.0, 95.0, False),
+        # Kund-agnostisk: different threshold (e.g. 90%) — verify config-driven
+        (91.0, 92.0, 90.0, False),
+        (89.0, 89.0, 90.0, True),
+    ],
+)
+def test_plat1695_bat_charge_stops_at_config_threshold(
+    soc_k: float, soc_f: float, stop_pct: float, expect_bat_cmds: bool,
+) -> None:
+    """PLAT-1695: Stop charging at bat_charge_stop_soc_pct (config-driven).
+
+    Must match state_machine.surplus_entry_soc_pct to eliminate dead zone.
+    """
+    cfg = BudgetConfig(bat_charge_stop_soc_pct=stop_pct)
+    inp = _inp(
+        hour=14,            # EM path (bat-prio)
+        pv_w=5000.0,        # plenty of PV
+        house_w=500.0,
+        grid_w=-4000.0,     # exporting
+        bat_k_soc=soc_k,
+        bat_f_soc=soc_f,
+    )
+
+    result = allocate(inp, cfg)
+
+    bat_charge_cmds = [
+        c for c in result.commands
+        if c.command_type == CommandType.SET_EMS_MODE and c.value == "charge_pv"
+    ]
+    if expect_bat_cmds:
+        assert bat_charge_cmds, (
+            f"SoC kontor={soc_k}% forrad={soc_f}% stop={stop_pct}%: "
+            f"expected at least one bat to charge (lower SoC)"
+        )
+    else:
+        assert not bat_charge_cmds, (
+            f"SoC kontor={soc_k}% forrad={soc_f}% stop={stop_pct}%: "
+            f"bat should NOT charge above stop threshold. "
+            f"Got cmds: {[(c.target_id, c.reason) for c in bat_charge_cmds]}"
+        )
+
+
+def test_plat1695_only_lower_bat_charges_when_mixed() -> None:
+    """PLAT-1695: Mixed SoC — only the below-threshold bat gets allocation."""
+    cfg = BudgetConfig(bat_charge_stop_soc_pct=95.0)
+    inp = _inp(
+        hour=14,
+        pv_w=5000.0,
+        house_w=500.0,
+        grid_w=-4000.0,
+        bat_k_soc=94.0,   # below threshold
+        bat_f_soc=96.0,   # above threshold
+    )
+
+    result = allocate(inp, cfg)
+
+    charge_targets = {
+        c.target_id for c in result.commands
+        if c.command_type == CommandType.SET_EMS_MODE and c.value == "charge_pv"
+    }
+    standby_targets = {
+        c.target_id for c in result.commands
+        if c.command_type == CommandType.SET_EMS_MODE
+        and c.value == "battery_standby"
+    }
+
+    assert "kontor" in charge_targets, (
+        f"kontor (SoC 94%) should charge. Charge targets: {charge_targets}"
+    )
+    assert "forrad" in standby_targets, (
+        f"forrad (SoC 96%) should be standby. Standby targets: {standby_targets}"
+    )
+
+
+def test_plat1695_default_stop_matches_state_machine_s8_entry() -> None:
+    """PLAT-1695: Default bat_charge_stop_soc_pct must match state machine
+    surplus_entry_soc_pct. Prevents reintroducing the 5pp dead zone."""
+    from core.state_machine import StateMachineConfig  # noqa: PLC0415
+
+    cfg = BudgetConfig()
+    sm_cfg = StateMachineConfig()
+
+    assert cfg.bat_charge_stop_soc_pct == sm_cfg.surplus_entry_soc_pct, (
+        f"BudgetConfig.bat_charge_stop_soc_pct ({cfg.bat_charge_stop_soc_pct}) "
+        f"must equal StateMachineConfig.surplus_entry_soc_pct "
+        f"({sm_cfg.surplus_entry_soc_pct}) to avoid PV_SURPLUS dead zone."
+    )

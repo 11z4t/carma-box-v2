@@ -59,7 +59,12 @@ class BudgetConfig:
 
     ev_min_amps: int = 6
     ev_max_amps: int = 16
+    # bat_soc_full_pct: battery is physically full (stops "bat discharge support" path).
+    # bat_charge_stop_soc_pct: stop charging at this SoC — must match S8 PV_SURPLUS entry
+    # in state_machine.surplus_entry_soc_pct, otherwise a dead zone exists where the
+    # state machine says "surplus mode" but budget keeps charging → export grows.
     bat_soc_full_pct: float = 100.0
+    bat_charge_stop_soc_pct: float = 95.0
     bat_spread_max_pct: float = 1.0
     bat_lower_ratio: float = 0.8
     bat_higher_ratio: float = 0.2
@@ -539,37 +544,52 @@ def _allocate_bat(
     if remaining_w <= 0 or not inp.bat_socs:
         return {bid: 0 for bid in inp.bat_socs}, remaining_w
 
-    # Skip bats already at 100% — they don't need surplus
+    # PLAT-1695: Stop charging at bat_charge_stop_soc_pct (matches S8 entry).
+    # Previously used bat_soc_full_pct (100%) which created a 5pp dead zone where
+    # state machine triggered S8 PV_SURPLUS at 95% but budget kept charging up to
+    # 100% → grid export grew instead of shrinking at high SoC.
+    # NOTE: Allocation only distributed across ACTIVE bats (below threshold);
+    # bats at/above threshold get 0 so they standby in downstream command emit.
     active = {bid: soc for bid, soc in inp.bat_socs.items()
-              if soc < cfg.bat_soc_full_pct}
+              if soc < cfg.bat_charge_stop_soc_pct}
     if not active:
         return {bid: 0 for bid in inp.bat_socs}, remaining_w
 
-    bids = list(inp.bat_socs.keys())
     total_alloc = int(remaining_w)
+    # Initialize all bats to 0; then fill active ones below.
+    alloc: dict[str, int] = {bid: 0 for bid in inp.bat_socs}
+    active_bids = list(active.keys())
 
-    if len(bids) == 1:
-        return {bids[0]: total_alloc}, 0.0
+    if len(active_bids) == 1:
+        alloc[active_bids[0]] = total_alloc
+        return alloc, 0.0
 
-    # Two batteries — check spread
-    soc_a, soc_b = inp.bat_socs[bids[0]], inp.bat_socs[bids[1]]
+    # Multiple active batteries — proportional-by-capacity with SoC-skew
+    # when unbalanced (lower SoC gets more to catch up).
     default_cap = cfg.bat_default_cap_kwh
-    cap_a = inp.bat_caps.get(bids[0], default_cap)
-    cap_b = inp.bat_caps.get(bids[1], default_cap)
-    total_cap = cap_a + cap_b
-    spread = abs(soc_a - soc_b)
+    socs = [active[bid] for bid in active_bids]
+    spread = max(socs) - min(socs)
 
+    # Kund-agnostisk: scale to N batteries, not hardcoded to 2.
     if spread > cfg.bat_spread_max_pct:
-        # Unbalanced — lower gets 80%, higher gets 20%
-        lower = bids[0] if soc_a < soc_b else bids[1]
-        higher = bids[1] if lower == bids[0] else bids[0]
-        return {
-            lower: int(total_alloc * cfg.bat_lower_ratio),
-            higher: int(total_alloc * cfg.bat_higher_ratio),
-        }, 0.0
+        # Unbalanced: split bat_lower_ratio across the bottom half,
+        # bat_higher_ratio across the top half (by SoC).
+        sorted_bids = sorted(active_bids, key=lambda b: active[b])
+        mid = max(1, len(sorted_bids) // 2)
+        lower_bids = sorted_bids[:mid]
+        higher_bids = sorted_bids[mid:]
+        lower_share_per = cfg.bat_lower_ratio / max(1, len(lower_bids))
+        higher_share_per = cfg.bat_higher_ratio / max(1, len(higher_bids)) \
+            if higher_bids else 0.0
+        for bid in lower_bids:
+            alloc[bid] = int(total_alloc * lower_share_per)
+        for bid in higher_bids:
+            alloc[bid] = int(total_alloc * higher_share_per)
+        return alloc, 0.0
 
-    # Balanced — proportional by capacity
-    return {
-        bids[0]: int(total_alloc * cap_a / total_cap),
-        bids[1]: int(total_alloc * cap_b / total_cap),
-    }, 0.0
+    # Balanced — proportional by capacity (only among active bats)
+    active_caps = {bid: inp.bat_caps.get(bid, default_cap) for bid in active_bids}
+    total_cap = sum(active_caps.values()) or 1.0
+    for bid in active_bids:
+        alloc[bid] = int(total_alloc * active_caps[bid] / total_cap)
+    return alloc, 0.0

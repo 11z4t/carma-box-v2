@@ -223,6 +223,7 @@ class CarmaBoxService:
         sm = StateMachine(StateMachineConfig(
             start_scenario=Scenario[config.control.start_scenario],
             min_dwell_s=config.control.scenario_transition_s,
+            surplus_entry_soc_pct=config.control.battery_gate.charge_stop_soc_pct,
         ))
         balancer = BatteryBalancer(BalancerConfig(
             normal_floor_pct=guard_cfg.normal_floor_pct,
@@ -396,9 +397,13 @@ class CarmaBoxService:
             bat_support_config=bat_support_cfg,
         )
         # PLAT-1686: Activate Budget Allocator for daytime PV charging
+        # PLAT-1695: Share charge_stop_soc_pct with state machine via config
         if config.ev_charger:
             self._engine._budget_config = BudgetConfig(
                 ev_min_amps=config.ev_charger.ramp.start_amps,
+                bat_charge_stop_soc_pct=(
+                    config.control.battery_gate.charge_stop_soc_pct
+                ),
             )
 
     @property

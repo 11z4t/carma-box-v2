@@ -487,6 +487,24 @@ class ExportTargetConfig(BaseModel):
     momentary_tolerance_w: int = Field(default=200, ge=0, le=2000)
 
 
+class BatteryGateConfig(BaseModel):
+    """Battery charge/discharge SoC gates.
+
+    `charge_stop_soc_pct` is the single source of truth for the PV_SURPLUS
+    handover. It drives:
+      - StateMachineConfig.surplus_entry_soc_pct (when S8 triggers)
+      - BudgetConfig.bat_charge_stop_soc_pct (when _allocate_bat stops)
+
+    PLAT-1695: if these drift apart a dead zone forms where state machine
+    says "surplus" but budget keeps charging → grid export grows at high SoC.
+    """
+
+    charge_stop_soc_pct: float = Field(
+        default=95.0, ge=50.0, le=100.0,
+        description="Stop bat charging at this SoC (percent). Matches S8 entry.",
+    )
+
+
 class ControlConfig(BaseModel):
     """Control loop timing and behaviour."""
 
@@ -505,6 +523,7 @@ class ControlConfig(BaseModel):
     )
     deadband: DeadbandConfig = Field(default_factory=DeadbandConfig)
     export_target: ExportTargetConfig = Field(default_factory=ExportTargetConfig)
+    battery_gate: BatteryGateConfig = Field(default_factory=BatteryGateConfig)
 
 
 # ---------------------------------------------------------------------------

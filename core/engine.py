@@ -655,9 +655,16 @@ class ControlEngine:
         total_cap = sum(bat_caps.values()) or 1.0
         allocations: dict[str, int] = {}
 
-        # Filter out full batteries
+        # PLAT-1695: Stop charging at bat_charge_stop_soc_pct (matches S8 entry)
+        # when BudgetConfig is wired; otherwise fall back to MAX_SOC_PCT (100%).
+        # Consistent with budget.py:_allocate_bat filter.
+        charge_stop_pct: float = (
+            self._budget_config.bat_charge_stop_soc_pct
+            if self._budget_config is not None
+            else MAX_SOC_PCT
+        )
         active_bats = [
-            b for b in snapshot.batteries if b.soc_pct < MAX_SOC_PCT
+            b for b in snapshot.batteries if b.soc_pct < charge_stop_pct
         ]
         if not active_bats:
             # All full — standby all, then route surplus to EV/dispatch
