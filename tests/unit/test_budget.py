@@ -1041,9 +1041,14 @@ def test_plat1738_cascade_fires_when_bat_at_stop_soc() -> None:
     assert starts[0].target_id == "vp"
 
 
-def test_plat1738_cascade_fires_when_one_bat_full_other_standby() -> None:
-    """Asymmetric: one bat at stop-SoC, other forced standby by aggressive
-    split → neither can absorb more → cascade SHOULD fire."""
+def test_plat1738_cascade_fires_when_both_bats_above_stop_soc() -> None:
+    """Both bats are at/above charge_stop_soc_pct — cascade SHOULD fire.
+
+    Covers the symmetric "all bats hit firmware-stop" path. The asymmetric
+    case (one bat at stop, other with headroom) is NOT covered here because
+    cascade should NOT fire in that case — the low-SoC bat still has
+    capacity to absorb surplus.
+    """
     cfg = BudgetConfig(
         cascade_cooldown_s=0.0,
         cascade_sustained_cycles=2,
@@ -1070,6 +1075,53 @@ def test_plat1738_cascade_fires_when_one_bat_full_other_standby() -> None:
         if c.command_type == CommandType.TURN_ON_CONSUMER
     ]
     assert len(starts) == 1
+
+
+def test_plat1738_cascade_fires_when_bat_alloc_at_physical_max() -> None:
+    """Both bats at SoC 88 % (under stop) but running at physical max
+    charge-rate — firmware hasn't stopped yet but inverter is saturated.
+    Cascade SHOULD fire via the alloc_at_max arm of _bat_at_max.
+
+    Covers 901 QC F1: earlier test suite only exercised the soc_at_stop
+    arm; this case verifies the alloc-based saturation path.
+    """
+    cfg = BudgetConfig(
+        cascade_cooldown_s=0.0,
+        cascade_sustained_cycles=2,
+        bat_charge_stop_soc_pct=95.0,
+        bat_default_max_charge_w=5000,
+        bat_at_max_headroom_w=500,  # alloc ≥ 4500 W counts as saturated
+    )
+    # Massive PV surplus → zero_grid will allocate max charge to both bats
+    inp_with_consumers = BudgetInput(
+        now=_inp().now,
+        grid_power_w=-8000.0,
+        pv_power_w=15000.0, house_load_w=500.0,
+        ev_connected=False, ev_charging=False,
+        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        bat_socs={"k": 88.0, "f": 88.0},  # under stop-SoC
+        bat_caps={"k": 15.0, "f": 5.0},
+        bat_powers={"k": -4800.0, "f": -4800.0},  # each charging near max
+        bat_modes={"k": "charge_battery", "f": "charge_battery"},
+        consumers=(
+            _c("vp", active=False, priority=2, priority_shed=2),
+        ),
+    )
+    state = BudgetState(consecutive_export_cycles=5)
+    result = allocate(inp_with_consumers, cfg, state)
+    starts = [
+        c for c in result.commands
+        if c.command_type == CommandType.TURN_ON_CONSUMER
+    ]
+    assert len(starts) == 1, (
+        f"PLAT-1738 F1: cascade should fire via alloc_at_max arm "
+        f"(bats under stop-SoC but at physical max). Got {len(starts)} starts."
+    )
+    reason = starts[0].reason
+    # Reason must show alloc-max tag (not stop-SoC) — proves alloc-arm triggered
+    assert "alloc-max" in reason, (
+        f"PLAT-1738 F1: reason should mark bats as 'alloc-max', got: {reason!r}"
+    )
 
 
 def test_plat1738_cascade_reason_reflects_soc_state() -> None:

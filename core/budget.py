@@ -665,8 +665,8 @@ def _bat_at_max(
 
     A bat is "at max" if either:
       - SoC is at or above ``bat_charge_stop_soc_pct`` (firmware stops), or
-      - allocated charge-limit is within ``_BAT_AT_MAX_HEADROOM_W`` of the
-        default max charge rate (fysisk mättnad denna cykel).
+      - allocated charge-limit is within ``cfg.bat_at_max_headroom_w`` of
+        ``cfg.bat_default_max_charge_w`` (fysisk mättnad denna cykel).
 
     Returns (all_at_max, reason_fragment). reason_fragment describes
     each bat's state for the cascade log — no more "bat at max" lies.
