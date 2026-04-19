@@ -102,6 +102,11 @@ class BudgetConfig:
     #   before starting the next consumer in the priority list.
     cascade_cooldown_s: float = 60.0
     cascade_sustained_cycles: int = 2
+    # PLAT-1738: a bat counts as "saturated" (for cascade bat-at-max guard)
+    # when its allocated charge-limit is within this many W of the physical
+    # max OR when SoC >= bat_charge_stop_soc_pct. Keep conservative so
+    # transient small allocations don't trigger false-positives.
+    bat_at_max_headroom_w: int = 500
     # PLAT-1696 step 1 grid-smoothing window. Median-of-N rejects
     # single-cycle spurious readings from the HA grid sensor (observed
     # live: alternating 12.9 kW ↔ 2.5 kW every 15 s). Median (not mean)
@@ -651,20 +656,56 @@ def _allocate_ev(
     return target, used, remaining_w - used
 
 
+def _bat_at_max(
+    bat_alloc: dict[str, int],
+    bat_socs: dict[str, float],
+    cfg: BudgetConfig,
+) -> tuple[bool, str]:
+    """PLAT-1738: True if no bat can absorb more charge.
+
+    A bat is "at max" if either:
+      - SoC is at or above ``bat_charge_stop_soc_pct`` (firmware stops), or
+      - allocated charge-limit is within ``_BAT_AT_MAX_HEADROOM_W`` of the
+        default max charge rate (fysisk mättnad denna cykel).
+
+    Returns (all_at_max, reason_fragment). reason_fragment describes
+    each bat's state for the cascade log — no more "bat at max" lies.
+    """
+    if not bat_alloc:
+        return False, ""
+    parts: list[str] = []
+    all_at_max = True
+    for bid, alloc in bat_alloc.items():
+        soc = bat_socs.get(bid, 100.0)
+        max_w = cfg.bat_default_max_charge_w
+        soc_at_stop = soc >= cfg.bat_charge_stop_soc_pct
+        alloc_at_max = alloc >= max_w - cfg.bat_at_max_headroom_w
+        at_max = soc_at_stop or alloc_at_max
+        if not at_max:
+            all_at_max = False
+        state_tag = (
+            "stop-SoC" if soc_at_stop
+            else ("alloc-max" if alloc_at_max else "headroom")
+        )
+        parts.append(f"{bid}: SoC={soc:.0f}% alloc={alloc}W ({state_tag})")
+    return all_at_max, ", ".join(parts)
+
+
 def _cascade_consumers(
     inp: BudgetInput,
     bat_alloc: dict[str, int],
     state: BudgetState,
     cfg: BudgetConfig,
 ) -> list[Command]:
-    """PLAT-1715: Unified consumer cascade.
+    """PLAT-1715 + PLAT-1738: Unified consumer cascade.
 
-    User rules (2026-04-18):
-      - grid export > 100 W AND bat at max → turn ON lowest-priority-number
-        inactive consumer.
+    User rules (2026-04-18 + 2026-04-19):
+      - grid export > 100 W AND bat-at-max (PLAT-1738 check) → turn ON
+        lowest-priority-number inactive consumer.
       - grid import > 100 W → turn OFF highest priority_shed active consumer.
     One switch per cycle + ``cfg.cascade_cooldown_s`` per-consumer cooldown
-    to prevent flapping.
+    to prevent flapping. Bat-at-max guard prevents cascading onto PV-surplus
+    that bat still has headroom to absorb (moln-dip regression, 2026-04-19).
 
     Pure function: reads inp, writes only to state.consumer_last_switch_ts.
     """
@@ -684,7 +725,9 @@ def _cascade_consumers(
         state.consecutive_export_cycles >= cfg.cascade_sustained_cycles
     )
 
-    if grid_w < -_GRID_TOLERANCE_W and sustained_export:
+    all_at_max, bat_state_str = _bat_at_max(bat_alloc, inp.bat_socs, cfg)
+
+    if grid_w < -_GRID_TOLERANCE_W and sustained_export and all_at_max:
         inactive = sorted(
             (c for c in inp.consumers if not c.active),
             key=lambda c: c.priority,
@@ -700,7 +743,8 @@ def _cascade_consumers(
                 rule_id=_RULE_ID,
                 reason=(
                     f"Cascade: grid export {-grid_w:.0f}W > "
-                    f"{_GRID_TOLERANCE_W:.0f}W, bat at max"
+                    f"{_GRID_TOLERANCE_W:.0f}W sustained, bat SoC: "
+                    f"{bat_state_str}"
                 ),
             ))
             state.consumer_last_switch_ts[c.consumer_id] = now_ts

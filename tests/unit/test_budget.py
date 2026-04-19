@@ -842,11 +842,18 @@ def _c(cid: str, active: bool, priority: int, priority_shed: int) -> ConsumerSta
 
 def test_plat1715_cascade_turn_on_lowest_priority_on_sustained_export() -> None:
     """grid exporting > 100 W for ≥ cascade_sustained_cycles → turn on
-    the LOWEST-priority-number inactive consumer."""
-    cfg = BudgetConfig(cascade_cooldown_s=0.0, cascade_sustained_cycles=2)
+    the LOWEST-priority-number inactive consumer.
+
+    PLAT-1738: bats must also be at charge-stop SoC for cascade to fire.
+    """
+    cfg = BudgetConfig(
+        cascade_cooldown_s=0.0,
+        cascade_sustained_cycles=2,
+        bat_charge_stop_soc_pct=95.0,
+    )
     inp = _inp(
         hour=14, pv_w=6000, house_w=500, grid_w=-1500,
-        bat_k_soc=50, bat_f_soc=50,
+        bat_k_soc=96, bat_f_soc=96,  # PLAT-1738: at stop-SoC
     )
     inp_with_consumers = BudgetInput(
         now=inp.now,
@@ -952,6 +959,150 @@ def test_plat1715_cascade_no_start_without_sustained_export() -> None:
         if c.command_type == CommandType.TURN_ON_CONSUMER
     ]
     assert len(starts) == 0
+
+
+# -------------------------------------------------------------------
+# PLAT-1738: cascade must verify bat is truly at max before turning on
+# consumers. Prior behaviour triggered on 2 sustained export cycles
+# regardless of bat headroom — miner turned on during cloud-dip even
+# when both bats were at 50 % SoC with 3 kW charge-headroom each.
+# -------------------------------------------------------------------
+
+
+def test_plat1738_cascade_skips_when_bat_has_headroom() -> None:
+    """Sustained export + both bats at 50 % SoC → cascade must NOT fire.
+
+    Bat still has 3+ kW charge-headroom, so any surplus should be absorbed
+    by the battery, not by dispatchable consumers.
+    """
+    cfg = BudgetConfig(cascade_cooldown_s=0.0, cascade_sustained_cycles=2)
+    inp_with_consumers = BudgetInput(
+        now=_inp().now,
+        grid_power_w=-300.0,
+        pv_power_w=3000.0, house_load_w=500.0,
+        ev_connected=False, ev_charging=False,
+        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        bat_socs={"k": 50.0, "f": 50.0},
+        bat_caps={"k": 15.0, "f": 5.0},
+        bat_powers={"k": -1000.0, "f": -1000.0},  # charging 1 kW each
+        bat_modes={"k": "charge_battery", "f": "charge_battery"},
+        consumers=(
+            _c("miner", active=False, priority=99, priority_shed=1),
+            _c("vp", active=False, priority=2, priority_shed=2),
+        ),
+    )
+    state = BudgetState(consecutive_export_cycles=5)
+    result = allocate(inp_with_consumers, cfg, state)
+    starts = [
+        c for c in result.commands
+        if c.command_type == CommandType.TURN_ON_CONSUMER
+    ]
+    assert not starts, (
+        f"PLAT-1738: cascade fired despite bat headroom (SoC 50 %). "
+        f"Offending reasons: {[c.reason for c in starts]}"
+    )
+
+
+def test_plat1738_cascade_fires_when_bat_at_stop_soc() -> None:
+    """Both bats at or above charge_stop_soc_pct → cascade SHOULD fire.
+
+    Bats cannot absorb more charge (firmware stops at stop-SoC), so
+    surplus must be routed to dispatchable consumers.
+    """
+    cfg = BudgetConfig(
+        cascade_cooldown_s=0.0,
+        cascade_sustained_cycles=2,
+        bat_charge_stop_soc_pct=95.0,
+    )
+    inp_with_consumers = BudgetInput(
+        now=_inp().now,
+        grid_power_w=-300.0,
+        pv_power_w=3000.0, house_load_w=500.0,
+        ev_connected=False, ev_charging=False,
+        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        bat_socs={"k": 95.5, "f": 96.0},  # at/above stop
+        bat_caps={"k": 15.0, "f": 5.0},
+        bat_powers={"k": 0.0, "f": 0.0},
+        bat_modes={"k": "battery_standby", "f": "battery_standby"},
+        consumers=(
+            _c("vp", active=False, priority=2, priority_shed=2),
+        ),
+    )
+    state = BudgetState(consecutive_export_cycles=5)
+    result = allocate(inp_with_consumers, cfg, state)
+    starts = [
+        c for c in result.commands
+        if c.command_type == CommandType.TURN_ON_CONSUMER
+    ]
+    assert len(starts) == 1, (
+        f"PLAT-1738: cascade should fire when both bats at stop-SoC. "
+        f"Got {len(starts)} starts."
+    )
+    assert starts[0].target_id == "vp"
+
+
+def test_plat1738_cascade_fires_when_one_bat_full_other_standby() -> None:
+    """Asymmetric: one bat at stop-SoC, other forced standby by aggressive
+    split → neither can absorb more → cascade SHOULD fire."""
+    cfg = BudgetConfig(
+        cascade_cooldown_s=0.0,
+        cascade_sustained_cycles=2,
+        bat_charge_stop_soc_pct=95.0,
+    )
+    inp_with_consumers = BudgetInput(
+        now=_inp().now,
+        grid_power_w=-300.0,
+        pv_power_w=3000.0, house_load_w=500.0,
+        ev_connected=False, ev_charging=False,
+        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        bat_socs={"k": 96.0, "f": 96.0},  # both at/above stop
+        bat_caps={"k": 15.0, "f": 5.0},
+        bat_powers={"k": 0.0, "f": 0.0},
+        bat_modes={"k": "battery_standby", "f": "battery_standby"},
+        consumers=(
+            _c("vp", active=False, priority=2, priority_shed=2),
+        ),
+    )
+    state = BudgetState(consecutive_export_cycles=5)
+    result = allocate(inp_with_consumers, cfg, state)
+    starts = [
+        c for c in result.commands
+        if c.command_type == CommandType.TURN_ON_CONSUMER
+    ]
+    assert len(starts) == 1
+
+
+def test_plat1738_cascade_reason_reflects_soc_state() -> None:
+    """Reason-string must NOT lie — include actual bat SoC/headroom info."""
+    cfg = BudgetConfig(
+        cascade_cooldown_s=0.0,
+        cascade_sustained_cycles=2,
+        bat_charge_stop_soc_pct=95.0,
+    )
+    inp_with_consumers = BudgetInput(
+        now=_inp().now,
+        grid_power_w=-300.0,
+        pv_power_w=3000.0, house_load_w=500.0,
+        ev_connected=False, ev_charging=False,
+        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        bat_socs={"k": 95.0, "f": 97.0},
+        bat_caps={"k": 15.0, "f": 5.0},
+        bat_powers={"k": 0.0, "f": 0.0},
+        bat_modes={"k": "battery_standby", "f": "battery_standby"},
+        consumers=(_c("vp", active=False, priority=2, priority_shed=2),),
+    )
+    state = BudgetState(consecutive_export_cycles=5)
+    result = allocate(inp_with_consumers, cfg, state)
+    starts = [
+        c for c in result.commands
+        if c.command_type == CommandType.TURN_ON_CONSUMER
+    ]
+    assert starts
+    reason = starts[0].reason
+    # Reason must mention bat SoC state — no more "bat at max" lie
+    assert "SoC" in reason or "soc" in reason, (
+        f"PLAT-1738: reason must describe actual bat state, got: {reason!r}"
+    )
 
 
 # -------------------------------------------------------------------
