@@ -42,6 +42,71 @@ _DEAD_BAND_W: float = 50.0  # below this deviation, hold (avoid chatter)
 # the set-point without ringing.
 _CORRECTION_GAIN: float = 0.7
 
+# PLAT-1758 — SoC momentum dampening.
+# When SoC trends consistently (same sign delta every cycle), the current
+# correction is already working. Reduce gain to prevent overshoot oscillation.
+_MOMENTUM_WINDOW: int = 3          # rolling history length (cycles)
+_MOMENTUM_DAMPING_FACTOR: float = 0.5  # gain multiplier when converging
+
+
+@dataclass(frozen=True)
+class ZeroGridState:
+    """Rolling SoC history for momentum-based gain dampening (PLAT-1758).
+
+    Maintained by the caller across cycles:
+      state = update_zero_grid_state(state, bats)
+      plan  = plan_zero_grid(..., state=state)
+
+    Immutable — each update returns a new instance.
+    """
+
+    soc_history: tuple[float, ...]  # aggregate avg SoC per cycle, oldest first
+
+
+def update_zero_grid_state(
+    state: ZeroGridState | None,
+    bats: list[BatSnapshot],
+) -> ZeroGridState:
+    """Return new state with current-cycle average SoC appended.
+
+    Oldest entry is dropped once history exceeds ``_MOMENTUM_WINDOW``.
+    Call once per cycle, after calling ``plan_zero_grid``.
+    """
+    if not bats:
+        return ZeroGridState(soc_history=())
+    avg_soc = sum(b.soc_pct for b in bats) / len(bats)
+    history: tuple[float, ...] = state.soc_history if state is not None else ()
+    new_history = (history + (avg_soc,))[-_MOMENTUM_WINDOW:]
+    return ZeroGridState(soc_history=new_history)
+
+
+def _momentum_gain(
+    state: ZeroGridState | None,
+    base_gain: float,
+    damping_factor: float = _MOMENTUM_DAMPING_FACTOR,
+) -> float:
+    """Reduce gain when SoC trends consistently in one direction.
+
+    A consistent trend (all inter-cycle deltas share the same sign) means
+    the current correction is already moving the batteries in the right
+    direction — full gain would overshoot and cause oscillation. Dampening
+    by ``damping_factor`` brakes the approach without stopping it.
+
+    Returns ``base_gain`` unchanged when:
+    - ``state`` is None (no history yet)
+    - fewer than 2 readings (insufficient trend data)
+    - SoC trend is oscillating (mixed delta signs)
+    """
+    if state is None or len(state.soc_history) < 2:
+        return base_gain
+    deltas = [
+        state.soc_history[i + 1] - state.soc_history[i]
+        for i in range(len(state.soc_history) - 1)
+    ]
+    if all(d > 0 for d in deltas) or all(d < 0 for d in deltas):
+        return base_gain * damping_factor
+    return base_gain
+
 
 @dataclass(frozen=True)
 class BatLimits:
@@ -264,6 +329,7 @@ def plan_zero_grid(
     deadband_w: float = _DEAD_BAND_W,
     spread_aggressive_pct: float = 5.0,
     gain: float = _CORRECTION_GAIN,
+    state: ZeroGridState | None = None,
 ) -> ZeroGridPlan:
     """Compute the per-battery plan that drives ``grid_power_w`` to 0.
 
@@ -279,6 +345,9 @@ def plan_zero_grid(
     Returns a full plan: mode + limit for every bat in ``bats``, and a
     summary of the total net target used for logging / diagnostics.
     """
+    # PLAT-1758: reduce gain when SoC trends consistently (correction in progress).
+    effective_gain = _momentum_gain(state, gain)
+
     # Emergency recovery detection — any bat BELOW the absolute floor is
     # force-charged independently of the grid target. This overrides the
     # zero-grid distribution for the affected batteries; the grid may
@@ -296,7 +365,7 @@ def plan_zero_grid(
     # Normal path — only runs for bats NOT in emergency recovery.
     current_net = sum(b.power_w for b in bats if b.battery_id not in below_floor)
     normal_bats = [b for b in bats if b.battery_id not in below_floor]
-    target_net = _target_net_w(current_net, grid_power_w, deadband_w, gain)
+    target_net = _target_net_w(current_net, grid_power_w, deadband_w, effective_gain)
     per_bat = _distribute(
         target_net,
         normal_bats,

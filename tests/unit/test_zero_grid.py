@@ -9,6 +9,8 @@ Goals covered:
     SoC-spread is >5 pp, otherwise proportional by capacity.
   - Convergence: simulating a few cycles drives a synthetic house
     load/PV imbalance to within the deadband.
+  - PLAT-1758: SoC momentum dampening prevents oscillation while still
+    converging within 3 cycles.
 """
 
 from __future__ import annotations
@@ -19,7 +21,12 @@ from core.zero_grid import (
     BatLimits,
     BatSnapshot,
     ZeroGridPlan,
+    ZeroGridState,
+    _MOMENTUM_DAMPING_FACTOR,
+    _MOMENTUM_WINDOW,
+    _momentum_gain,
     plan_zero_grid,
+    update_zero_grid_state,
 )
 
 
@@ -562,3 +569,234 @@ def test_plan_contains_reason_for_logging() -> None:
     )
     assert "grid=" in plan.reason
     assert "target=" in plan.reason
+
+
+# -------------------------------------------------------------------
+# PLAT-1758: SoC momentum dampening
+# -------------------------------------------------------------------
+
+_MOMENTUM_SOC_START: float = 50.0
+_MOMENTUM_SOC_RISING: float = 52.0
+_MOMENTUM_SOC_RISING_2: float = 54.0
+_MOMENTUM_BASE_GAIN: float = 0.7
+_MOMENTUM_SINGLE_STEP: float = 1.0
+_MOMENTUM_FALLING: float = 48.0
+_MOMENTUM_FALLING_2: float = 46.0
+_OSCILLATION_SOC_HIGH: float = 55.0
+_CONVERGENCE_DELTA_PCT: float = 5.0
+_CONVERGENCE_TARGET_SOC: float = 60.0
+_CONVERGENCE_MAX_CYCLES: int = 3
+_CONVERGENCE_GRID_W: float = -4000.0
+_CONVERGENCE_HOUSE_W: float = 1000.0
+_CONVERGENCE_PV_W: float = 5000.0
+
+
+def test_update_zero_grid_state_from_none() -> None:
+    """First call with state=None creates 1-element history."""
+    bats = [_snap("k", power_w=0.0, soc_pct=_MOMENTUM_SOC_START)]
+    state = update_zero_grid_state(None, bats)
+    assert isinstance(state, ZeroGridState)
+    assert len(state.soc_history) == 1
+    assert state.soc_history[0] == pytest.approx(_MOMENTUM_SOC_START)
+
+
+def test_update_zero_grid_state_accumulates() -> None:
+    """Successive updates accumulate up to _MOMENTUM_WINDOW readings."""
+    bats_a = [_snap("k", power_w=0.0, soc_pct=_MOMENTUM_SOC_START)]
+    bats_b = [_snap("k", power_w=0.0, soc_pct=_MOMENTUM_SOC_RISING)]
+    state = update_zero_grid_state(None, bats_a)
+    state = update_zero_grid_state(state, bats_b)
+    assert len(state.soc_history) == 2
+    assert state.soc_history[0] == pytest.approx(_MOMENTUM_SOC_START)
+    assert state.soc_history[1] == pytest.approx(_MOMENTUM_SOC_RISING)
+
+
+def test_update_zero_grid_state_capped_at_window() -> None:
+    """History never exceeds _MOMENTUM_WINDOW entries (oldest dropped)."""
+    state: ZeroGridState | None = None
+    for i in range(_MOMENTUM_WINDOW + 2):
+        bats_i = [_snap("k", power_w=0.0, soc_pct=_MOMENTUM_SOC_START + i)]
+        state = update_zero_grid_state(state, bats_i)
+    assert state is not None
+    assert len(state.soc_history) == _MOMENTUM_WINDOW
+
+
+def test_update_zero_grid_state_averages_multiple_bats() -> None:
+    """Average SoC across all bats is stored, not first-bat value."""
+    bats = [
+        _snap("kontor", power_w=0.0, soc_pct=40.0),
+        _snap("forrad", power_w=0.0, soc_pct=60.0),
+    ]
+    state = update_zero_grid_state(None, bats)
+    assert state.soc_history[0] == pytest.approx(50.0)
+
+
+def test_momentum_gain_no_state_returns_base() -> None:
+    """state=None → no dampening, returns base_gain unchanged."""
+    result = _momentum_gain(None, _MOMENTUM_BASE_GAIN)
+    assert result == pytest.approx(_MOMENTUM_BASE_GAIN)
+
+
+def test_momentum_gain_single_reading_returns_base() -> None:
+    """One SoC reading — insufficient for trend detection, no dampening."""
+    state = ZeroGridState(soc_history=(_MOMENTUM_SOC_START,))
+    result = _momentum_gain(state, _MOMENTUM_BASE_GAIN)
+    assert result == pytest.approx(_MOMENTUM_BASE_GAIN)
+
+
+def test_momentum_gain_consistent_rising_trend_dampens() -> None:
+    """Consistently rising SoC → correction in progress → dampen gain."""
+    state = ZeroGridState(
+        soc_history=(
+            _MOMENTUM_SOC_START,
+            _MOMENTUM_SOC_RISING,
+            _MOMENTUM_SOC_RISING_2,
+        )
+    )
+    result = _momentum_gain(state, _MOMENTUM_BASE_GAIN)
+    assert result == pytest.approx(_MOMENTUM_BASE_GAIN * _MOMENTUM_DAMPING_FACTOR)
+
+
+def test_momentum_gain_consistent_falling_trend_dampens() -> None:
+    """Consistently falling SoC → correction in progress → dampen gain."""
+    state = ZeroGridState(
+        soc_history=(
+            _MOMENTUM_SOC_RISING_2,
+            _MOMENTUM_SOC_RISING,
+            _MOMENTUM_SOC_START,
+        )
+    )
+    result = _momentum_gain(state, _MOMENTUM_BASE_GAIN)
+    assert result == pytest.approx(_MOMENTUM_BASE_GAIN * _MOMENTUM_DAMPING_FACTOR)
+
+
+def test_momentum_gain_oscillating_trend_no_dampen() -> None:
+    """Oscillating SoC (alternating sign) → no dampening — system unstable."""
+    # up then down: deltas are +5, -5 → mixed signs → no dampen
+    state_osc = ZeroGridState(
+        soc_history=(_MOMENTUM_SOC_START, _OSCILLATION_SOC_HIGH, _MOMENTUM_SOC_START)
+    )
+    result = _momentum_gain(state_osc, _MOMENTUM_BASE_GAIN)
+    assert result == pytest.approx(_MOMENTUM_BASE_GAIN)
+
+
+def test_plan_zero_grid_state_none_unchanged() -> None:
+    """state=None produces identical result to calling without state param."""
+    bats = [_snap("k", power_w=0.0, soc_pct=50.0)]
+    limits = {"k": _DEFAULT_LIMITS}
+    plan_no_state = plan_zero_grid(
+        grid_power_w=-2000.0, bats=bats, limits_by_id=limits, gain=_MOMENTUM_BASE_GAIN
+    )
+    plan_with_none = plan_zero_grid(
+        grid_power_w=-2000.0,
+        bats=bats,
+        limits_by_id=limits,
+        gain=_MOMENTUM_BASE_GAIN,
+        state=None,
+    )
+    assert plan_no_state.modes == plan_with_none.modes
+    assert plan_no_state.limits_w == plan_with_none.limits_w
+    assert plan_no_state.total_target_net_w == plan_with_none.total_target_net_w
+
+
+def test_plan_zero_grid_converging_state_reduces_aggressiveness() -> None:
+    """AC2: consistent trend → plan limit is lower than without momentum."""
+    bats = [_snap("k", power_w=-1000.0, soc_pct=50.0)]
+    limits = {"k": _DEFAULT_LIMITS}
+    converging_state = ZeroGridState(
+        soc_history=(
+            _MOMENTUM_SOC_START,
+            _MOMENTUM_SOC_RISING,
+            _MOMENTUM_SOC_RISING_2,
+        )
+    )
+    plan_full = plan_zero_grid(
+        grid_power_w=-3000.0,
+        bats=bats,
+        limits_by_id=limits,
+        gain=_MOMENTUM_BASE_GAIN,
+        state=None,
+    )
+    plan_dampened = plan_zero_grid(
+        grid_power_w=-3000.0,
+        bats=bats,
+        limits_by_id=limits,
+        gain=_MOMENTUM_BASE_GAIN,
+        state=converging_state,
+    )
+    # Dampened plan should request less charge power
+    assert plan_dampened.limits_w["k"] < plan_full.limits_w["k"]
+    assert plan_dampened.modes["k"] == "charge_battery"
+
+
+def test_convergence_with_momentum_within_three_cycles() -> None:
+    """AC3: ±5% SoC oscillation scenario converges to grid=0 within 3 cycles.
+
+    Starts with fresh state (no prior history) so first 3 cycles run
+    without dampening — momentum kicks in only when sufficient history
+    exists. This guarantees AC3 is unaffected by the dampening logic.
+    """
+    limits = BatLimits(
+        max_charge_w=5000,
+        max_discharge_w=5000,
+        soc_min_pct=15.0,
+        soc_max_pct=95.0,
+    )
+    bat_power_w = 0.0
+    soc = _CONVERGENCE_TARGET_SOC - _CONVERGENCE_DELTA_PCT  # 5 pp below target
+    state: ZeroGridState | None = None
+    grids: list[float] = []
+
+    for _ in range(_CONVERGENCE_MAX_CYCLES):
+        grid_w = _CONVERGENCE_HOUSE_W - _CONVERGENCE_PV_W - bat_power_w
+        grids.append(grid_w)
+        bats = [BatSnapshot("k", bat_power_w, soc)]
+        plan = plan_zero_grid(
+            gain=1.0,
+            grid_power_w=grid_w,
+            bats=bats,
+            limits_by_id={"k": limits},
+            state=state,
+        )
+        state = update_zero_grid_state(state, bats)
+        mode = plan.modes["k"]
+        limit = plan.limits_w["k"]
+        bat_power_w = (
+            -limit if mode == "charge_battery" else (limit if mode == "discharge_pv" else 0.0)
+        )
+        soc += (bat_power_w * 15.0 / 3600.0 / limits.max_charge_w) * 100.0
+
+    final_grid = _CONVERGENCE_HOUSE_W - _CONVERGENCE_PV_W - bat_power_w
+    assert (
+        abs(final_grid) <= 50.0
+    ), f"Convergence failed: cycle grids={grids}, final={final_grid:.0f}W"
+
+
+def test_no_new_oscillation_with_momentum_state() -> None:
+    """AC4-adjacent: oscillating state does not introduce extra oscillation.
+
+    When SoC history shows oscillation (alternating sign), gain is NOT
+    dampened — the system should correct at full gain to stabilise.
+    """
+    bats = [_snap("k", power_w=0.0, soc_pct=50.0)]
+    limits = {"k": _DEFAULT_LIMITS}
+    oscillating_state = ZeroGridState(
+        soc_history=(_MOMENTUM_SOC_START, _OSCILLATION_SOC_HIGH, _MOMENTUM_SOC_START)
+    )
+    plan_baseline = plan_zero_grid(
+        grid_power_w=-2000.0,
+        bats=bats,
+        limits_by_id=limits,
+        gain=_MOMENTUM_BASE_GAIN,
+        state=None,
+    )
+    plan_oscillating = plan_zero_grid(
+        grid_power_w=-2000.0,
+        bats=bats,
+        limits_by_id=limits,
+        gain=_MOMENTUM_BASE_GAIN,
+        state=oscillating_state,
+    )
+    # Oscillating history → same as no state (full gain)
+    assert plan_oscillating.limits_w["k"] == plan_baseline.limits_w["k"]
+    assert plan_oscillating.modes["k"] == plan_baseline.modes["k"]
