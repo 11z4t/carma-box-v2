@@ -388,6 +388,56 @@ def test_aggressive_discharge_spills_overflow_to_secondary_bat() -> None:
     assert plan.limits_w["kontor"] == 1500
 
 
+def test_aggressive_mode_spill_with_unequal_primaries() -> None:
+    """PLAT-1756: aggressive mode with asymmetric primary caps uses per-bat weighting.
+
+    4-bat scenario (mid=2) → two primaries: kontor (3000 W) and forrad_small
+    (1000 W).  Equal split (bug) gives each 1800 W, which exceeds forrad_small's
+    cap.  Per-cap weighting must give kontor=2700 W and forrad_small=900 W so
+    the total allocation reaches the 3600 W target without overflowing any cap.
+    """
+    bats = [
+        _snap("kontor", power_w=0, soc_pct=30),  # primary (lower SoC)
+        _snap("forrad_small", power_w=0, soc_pct=40),  # primary (lower SoC)
+        _snap("bat_c", power_w=0, soc_pct=50),  # secondary
+        _snap("bat_d", power_w=0, soc_pct=60),  # secondary
+    ]
+    limits = {
+        "kontor": BatLimits(
+            max_charge_w=3000,
+            max_discharge_w=3000,
+            soc_min_pct=15.0,
+            soc_max_pct=95.0,
+        ),
+        "forrad_small": BatLimits(
+            max_charge_w=1000,
+            max_discharge_w=1000,
+            soc_min_pct=15.0,
+            soc_max_pct=95.0,
+        ),
+        "bat_c": _DEFAULT_LIMITS,
+        "bat_d": _DEFAULT_LIMITS,
+    }
+    # 3600 W export → charge target = 3600 W
+    # Primary cap = 3000+1000 = 4000 ≥ 3600 → no overflow to secondary
+    plan = plan_zero_grid(
+        gain=1.0,
+        grid_power_w=-3600.0,
+        bats=bats,
+        limits_by_id=limits,
+    )
+    # Secondary stays idle — primary absorbs the full target
+    assert plan.modes["bat_c"] == "battery_standby"
+    assert plan.modes["bat_d"] == "battery_standby"
+    # Per-cap split: kontor=3600*3000/4000=2700, forrad_small=3600*1000/4000=900
+    assert plan.modes["kontor"] == "charge_battery"
+    assert plan.modes["forrad_small"] == "charge_battery"
+    assert plan.limits_w["kontor"] == pytest.approx(2700, abs=1)
+    assert plan.limits_w["forrad_small"] == pytest.approx(900, abs=1)
+    # Total allocation reaches target
+    assert plan.limits_w["kontor"] + plan.limits_w["forrad_small"] == pytest.approx(3600, abs=1)
+
+
 def test_two_bats_small_spread_proportional_by_capacity() -> None:
     """Inside 5 pp spread → split proportional by capacity."""
     bats = [
