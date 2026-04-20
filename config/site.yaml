@@ -497,9 +497,9 @@ budget:
   evening_cutoff_h: 17
 
   # Grid-sensor tiered fine-tuner (PLAT-1737)
-  # PLAT-1749: enabled after zero_grid stabilised on site (shadow confirmed)
+  # Enable once zero_grid alone is stable on the site (shadow first)
   grid_tuner:
-    enabled: true
+    enabled: false
     tiers_w: [50.0, 75.0, 100.0]      # |grid| thresholds (W)
     corrections_w: [100, 300, 500]     # correction per tier (W)
     rolling_window_s: 300              # anti-flap guard window
@@ -513,12 +513,12 @@ budget:
 
   # Grid-sensor median smoothing
   smoothing:
-    grid_smoothing_window: 1    # PLAT-1749: 1=no smoothing (fastest reaction for ±100 W invariant)
+    grid_smoothing_window: 3    # 1=no smoothing; 3=good default (rejects single spikes)
 
   # Battery SoC spread control
   aggressive_spread:
-    bat_spread_max_pct: 5.0          # PLAT-1749: 5 pp spread before P/S split (was 1.0)
-    bat_aggressive_spread_pct: 5.0   # PLAT-1749: backward-compat alias (kept = bat_spread_max_pct)
+    bat_spread_max_pct: 1.0          # spread > this triggers P/S split
+    bat_aggressive_spread_pct: 1.0   # backward-compat alias (kept = bat_spread_max_pct)
 
   # Emergency + capacity fallbacks
   emergency:
