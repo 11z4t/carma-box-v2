@@ -28,6 +28,7 @@ from datetime import datetime
 from core.grid_tuner import (
     GridRollingState,
     GridTunerConfig,
+    should_block_mode_change,
     tune_grid_delta,
 )
 from core.models import Command, CommandType, ConsumerState, EMSMode
@@ -234,6 +235,57 @@ def _available_surplus_w(inp: BudgetInput) -> float:
 
 def _all_bat_full(inp: BudgetInput, cfg: BudgetConfig) -> bool:
     return all(s >= cfg.bat_soc_full_pct for s in inp.bat_socs.values())
+
+
+def _apply_mode_change_guard(
+    plan_modes: dict[str, str],
+    current_modes: dict[str, str],
+    cfg: BudgetConfig,
+    rolling_avg_w: float,
+) -> dict[str, str]:
+    """Post-process zero_grid modes with anti-flap guard (PLAT-1752).
+
+    When grid_tuner is enabled and |rolling_avg_w| < stability_w, any
+    mode change that does NOT involve battery_standby is suppressed.
+    The 5-min rolling avg being close to zero means the grid signal
+    carries no reliable directional trend — blocking the mode flip
+    prevents charge ↔ discharge oscillation driven by sensor noise.
+
+    Transitions to or from battery_standby always pass through: standby
+    is a safety state and must never be blocked by the guard.
+
+    Args:
+        plan_modes: Per-battery modes from plan_zero_grid().
+        current_modes: Per-battery modes currently reported by inverters.
+        cfg: Budget configuration (grid_tuner sub-config used).
+        rolling_avg_w: Arithmetic mean of the 5-min rolling grid window.
+
+    Returns:
+        Guarded modes dict — same as plan_modes with blocked flips
+        replaced by the corresponding current mode.
+    """
+    if not cfg.grid_tuner.enabled:
+        return dict(plan_modes)
+    if not should_block_mode_change(rolling_avg_w, cfg.grid_tuner):
+        return dict(plan_modes)
+
+    _standby = EMSMode.BATTERY_STANDBY.value
+    result: dict[str, str] = {}
+    for bid, plan_mode in plan_modes.items():
+        current_mode = current_modes.get(bid, "")
+        if plan_mode != current_mode and plan_mode != _standby and current_mode != _standby:
+            # Rolling avg is stable — suppress direction change to prevent flap.
+            result[bid] = current_mode
+            logger.debug(
+                "PLAT-1752 mode-guard: %s suppressed %s→%s (rolling_avg=%.0fW)",
+                bid,
+                current_mode,
+                plan_mode,
+                rolling_avg_w,
+            )
+        else:
+            result[bid] = plan_mode
+    return result
 
 
 def _ev_power_at_amps(amps: int) -> float:
@@ -531,7 +583,16 @@ def allocate(
     bat_modes_target: dict[str, str] = {}
     if zero_grid_plan is not None:
         # zero-grid plan returns: "charge_battery" / "discharge_pv" / "battery_standby"
-        bat_modes_target.update(zero_grid_plan.modes)
+        # PLAT-1752: anti-flap guard — suppress mode changes when 5-min rolling
+        # avg is within ±stability_w of zero (signal too noisy for real trend).
+        # Standby transitions always pass through.
+        guarded_modes = _apply_mode_change_guard(
+            zero_grid_plan.modes,
+            inp.bat_modes,
+            cfg,
+            state.grid_rolling.avg(),
+        )
+        bat_modes_target.update(guarded_modes)
     else:
         for bid, limit_w in bat_alloc.items():
             if bat_discharge > 0 and limit_w > 0:
