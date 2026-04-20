@@ -167,20 +167,26 @@ class ModeChangeManager:
         battery_id: str,
         target_mode: str,
         reason: str = "",
+        target_fast_charging: bool = False,
     ) -> bool:
         """Emergency mode change — skips standby wait (for guards).
 
         Overrides any in-progress request.
+
+        target_fast_charging=True enables fast grid-charge for SoC-floor
+        recovery (PLAT-1751). The manager calls set_fast_charging(True) in
+        _execute_set_target so fast_charging is activated atomically with the
+        mode change, without a separate SET_FAST_CHARGING command from budget.
         """
         logger.warning(
-            "EMERGENCY mode change: %s → %s (reason=%s)",
-            battery_id, target_mode, reason,
+            "EMERGENCY mode change: %s → %s (fast_charging=%s, reason=%s)",
+            battery_id, target_mode, target_fast_charging, reason,
         )
         self._requests[battery_id] = ModeChangeRequest(
             battery_id=battery_id,
             target_mode=target_mode,
             target_limit_w=0,
-            target_fast_charging=False,
+            target_fast_charging=target_fast_charging,
             reason=f"EMERGENCY: {reason}",
             emergency=True,
         )
@@ -355,3 +361,11 @@ class ModeChangeManager:
         # Always write ems_power_limit — even 0 must be written explicitly to avoid
         # truthy-trap (B9): non-zero limit in charge_pv causes autonomous grid charging.
         await executor.set_ems_power_limit(req.battery_id, req.target_limit_w)
+        # PLAT-1751: emergency SoC-floor recovery requests fast_charging=True
+        # to enable grid-charge at full rate. Set it atomically with the mode change.
+        if req.target_fast_charging:
+            logger.info(
+                "EMERGENCY fast_charging ON: %s (SoC-floor recovery)",
+                req.battery_id,
+            )
+            await executor.set_fast_charging(req.battery_id, True)

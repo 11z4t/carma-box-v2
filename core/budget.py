@@ -199,6 +199,9 @@ class BudgetResult:
     bat_allocations: dict[str, int]  # battery_id → charge limit W
     bat_discharge_w: int = 0  # total bat discharge for support
     reason: str = ""
+    # PLAT-1751: batteries whose SoC < floor — engine calls
+    # mode_change_manager.emergency_mode_change() for each.
+    emergency_recovery: frozenset[str] = field(default_factory=frozenset)
 
 
 # ---------------------------------------------------------------------------
@@ -550,7 +553,9 @@ def allocate(
             EMSMode.BATTERY_STANDBY.value,
         )
         current_mode = inp.bat_modes.get(bid, "")
-        if current_mode != target_mode:
+        # PLAT-1751: Emergency bats are handled by mode_change_manager.emergency_mode_change()
+        # in the engine — budget must NOT emit SET_EMS_MODE for them (single-writer).
+        if bid not in emergency_bats and current_mode != target_mode:
             cmds.append(
                 Command(
                     command_type=CommandType.SET_EMS_MODE,
@@ -571,24 +576,19 @@ def allocate(
                 reason=(f"Budget: limit {limit_w}W" if limit_w > 0 else "Budget: standby limit=0"),
             )
         )
-        # Emergency-recovery override: SoC fell below the absolute floor
-        # → force grid-charge via charge_battery + fast_charging ON until
-        # SoC climbs back above soc_min_pct. Explicit fast_charging=False
-        # on all other bats to keep INV-3 intact (no fast_charging +
-        # discharge_pv combos).
-        cmds.append(
-            Command(
-                command_type=CommandType.SET_FAST_CHARGING,
-                target_id=bid,
-                value=True if bid in emergency_bats else False,
-                rule_id=_RULE_ID,
-                reason=(
-                    "EMERGENCY recovery: SoC < floor, force grid-charge"
-                    if bid in emergency_bats
-                    else "INV-3: ensure fast_charging OFF"
-                ),
+        # PLAT-1751: Emergency bats get fast_charging=True via emergency_mode_change()
+        # (mode_change_manager owns fast_charging for recovery path). Only emit
+        # SET_FAST_CHARGING=False for non-emergency bats to keep INV-3 intact.
+        if bid not in emergency_bats:
+            cmds.append(
+                Command(
+                    command_type=CommandType.SET_FAST_CHARGING,
+                    target_id=bid,
+                    value=False,
+                    rule_id=_RULE_ID,
+                    reason="INV-3: ensure fast_charging OFF",
+                )
             )
-        )
 
     # PLAT-1715: unified consumer cascade runs after bat + EV allocation.
     cmds.extend(_cascade_consumers(inp, bat_alloc, state, cfg))
@@ -607,6 +607,7 @@ def allocate(
         bat_allocations=bat_alloc,
         bat_discharge_w=bat_discharge,
         reason=reason,
+        emergency_recovery=emergency_bats,
     )
 
 

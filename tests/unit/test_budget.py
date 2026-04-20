@@ -1102,9 +1102,14 @@ def test_plat1715_cascade_no_start_without_sustained_export() -> None:
 
 
 def test_emergency_bat_gets_fast_charging_true_via_allocate() -> None:
-    """SoC below floor → allocate() emits SET_FAST_CHARGING=True for that
-    bat. The twin bat (healthy SoC) must get SET_FAST_CHARGING=False in
-    the same cycle (INV-3 invariant — no fast_charging outside recovery).
+    """SoC below floor → allocate() routes emergency bat through
+    emergency_recovery (not direct SET_FAST_CHARGING=True command).
+
+    PLAT-1751: emergency recovery uses mode_change_manager.emergency_mode_change()
+    — budget.py no longer emits SET_FAST_CHARGING=True directly for emergency bats.
+    The manager handles fast_charging=True as part of the mode change.
+
+    Non-emergency bat must still get SET_FAST_CHARGING=False (INV-3 invariant).
     """
     cfg = BudgetConfig(bat_discharge_min_soc_pct=15.0)
     # Need a scenario where zero_grid_active and daytime so bat emit path
@@ -1119,27 +1124,81 @@ def test_emergency_bat_gets_fast_charging_true_via_allocate() -> None:
     )
     result = allocate(inp, cfg)
 
+    # PLAT-1751: emergency bat is reported via emergency_recovery, NOT via
+    # a direct SET_FAST_CHARGING=True command (mode_change_manager handles it).
+    assert "kontor" in result.emergency_recovery, (
+        "Emergency bat (SoC=10 < floor=15) must appear in BudgetResult.emergency_recovery"
+    )
+    assert "forrad" not in result.emergency_recovery, (
+        "Healthy bat must NOT be in emergency_recovery"
+    )
+
     fc_cmds = [c for c in result.commands if c.command_type == CommandType.SET_FAST_CHARGING]
     fc_map = {c.target_id: c.value for c in fc_cmds}
 
-    assert "kontor" in fc_map, "Expected SET_FAST_CHARGING emitted for emergency bat 'kontor'"
-    assert fc_map["kontor"] is True, (
-        f"Emergency bat (SoC=10 < floor=15) must get fast_charging=True, "
-        f"got {fc_map['kontor']!r}"
+    # Emergency bat: no direct SET_FAST_CHARGING=True from budget (manager handles)
+    assert fc_map.get("kontor") is not True, (
+        "Budget must NOT emit SET_FAST_CHARGING=True for emergency bat — "
+        "mode_change_manager.emergency_mode_change() owns that (PLAT-1751)"
     )
+
+    # Non-emergency bat: still gets explicit False (INV-3)
     assert "forrad" in fc_map, (
         "Expected SET_FAST_CHARGING also emitted for non-emergency bat "
         "(INV-3: explicit OFF elsewhere)"
     )
     assert fc_map["forrad"] is False, (
-        f"Non-emergency bat must get fast_charging=False (INV-3), " f"got {fc_map['forrad']!r}"
+        f"Non-emergency bat must get fast_charging=False (INV-3), got {fc_map['forrad']!r}"
     )
-
-    # Reason-string sanity: emergency reason is explicit
-    emergency_cmd = next(c for c in fc_cmds if c.target_id == "kontor")
-    assert "EMERGENCY" in emergency_cmd.reason or "floor" in emergency_cmd.reason
     normal_cmd = next(c for c in fc_cmds if c.target_id == "forrad")
     assert "INV-3" in normal_cmd.reason or "OFF" in normal_cmd.reason
+
+
+def test_emergency_recovery_not_emitted_as_direct_mode_command() -> None:
+    """PLAT-1751: emergency bat must NOT receive a direct SET_EMS_MODE command
+    from budget — mode_change_manager.emergency_mode_change() is the sole owner.
+    """
+    cfg = BudgetConfig(bat_discharge_min_soc_pct=15.0)
+    inp = _inp(
+        hour=14,
+        pv_w=3000,
+        house_w=500,
+        grid_w=-500,
+        bat_k_soc=10.0,  # below floor
+        bat_f_soc=60.0,
+    )
+    result = allocate(inp, cfg)
+
+    assert "kontor" in result.emergency_recovery
+
+    # No direct SET_EMS_MODE for the emergency bat (manager owns it)
+    mode_cmds = {
+        c.target_id: c.value
+        for c in result.commands
+        if c.command_type == CommandType.SET_EMS_MODE and c.target_id == "kontor"
+    }
+    assert not mode_cmds, (
+        f"Budget must NOT emit SET_EMS_MODE for emergency bat 'kontor', "
+        f"got {mode_cmds}"
+    )
+
+
+def test_budget_result_has_empty_emergency_recovery_when_no_emergency() -> None:
+    """No bat below floor → BudgetResult.emergency_recovery is empty."""
+    cfg = BudgetConfig(bat_discharge_min_soc_pct=15.0)
+    inp = _inp(
+        hour=14,
+        pv_w=3000,
+        house_w=500,
+        grid_w=-500,
+        bat_k_soc=60.0,
+        bat_f_soc=60.0,
+    )
+    result = allocate(inp, cfg)
+
+    assert result.emergency_recovery == frozenset(), (
+        f"No emergency → emergency_recovery must be empty, got {result.emergency_recovery}"
+    )
 
 
 def test_normal_bat_gets_fast_charging_false_via_allocate() -> None:

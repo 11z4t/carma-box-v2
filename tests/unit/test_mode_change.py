@@ -159,6 +159,71 @@ class TestEmergencyBypass:
         manager.emergency_mode_change("kontor", "battery_standby", "G0")
         assert manager.get_state("kontor") == ModeChangeState.IDLE
 
+    @pytest.mark.asyncio
+    async def test_emergency_with_fast_charging_sets_fast_charging_on(
+        self, manager: ModeChangeManager
+    ) -> None:
+        """PLAT-1751: emergency_mode_change(target_fast_charging=True) must call
+        set_fast_charging(True) on the executor during _execute_set_target.
+
+        This is the fast path for SoC-floor recovery: budget signals emergency_recovery
+        → engine calls emergency_mode_change with fast_charging=True → hardware gets
+        charge_battery + fast_charging ON in a single cycle (< 30 s).
+        """
+        executor = _make_executor()
+        executor.get_ems_mode.return_value = "charge_battery"
+
+        manager.emergency_mode_change(
+            "kontor",
+            "charge_battery",
+            reason="SoC < floor",
+            target_fast_charging=True,
+        )
+
+        # Cycle 1: IDLE → SETTING_TARGET (emergency skips clear+standby)
+        await manager.process(executor)
+
+        assert manager.get_state("kontor") == ModeChangeState.SETTING_TARGET
+        # set_fast_charging must have been called with True
+        calls = [
+            call.args
+            for call in executor.set_fast_charging.call_args_list
+            if call.args[0] == "kontor"
+        ]
+        assert any(args[1] is True for args in calls), (
+            "emergency_mode_change(target_fast_charging=True) must call "
+            f"set_fast_charging('kontor', True); calls: {calls}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_emergency_without_fast_charging_does_not_force_on(
+        self, manager: ModeChangeManager
+    ) -> None:
+        """PLAT-1751: emergency without target_fast_charging=True must NOT
+        call set_fast_charging(True) — default is False (existing behaviour).
+        """
+        executor = _make_executor()
+        executor.get_ems_mode.return_value = "battery_standby"
+
+        manager.emergency_mode_change(
+            "kontor",
+            "battery_standby",
+            reason="G0 guard",
+            # target_fast_charging defaults to False
+        )
+
+        await manager.process(executor)
+
+        calls = [
+            call.args
+            for call in executor.set_fast_charging.call_args_list
+            if call.args[0] == "kontor"
+        ]
+        assert not any(args[1] is True for args in calls), (
+            "Default emergency (no fast_charging flag) must NOT call "
+            f"set_fast_charging True; calls: {calls}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Concurrent batteries

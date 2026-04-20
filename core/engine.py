@@ -369,6 +369,16 @@ class ControlEngine:
             budget_result.reason,
         )
 
+        # PLAT-1751: Route emergency SoC-floor recovery through mode_change_manager
+        # so the fast path (skip standby) is used and fast_charging is set atomically.
+        for bat_id in budget_result.emergency_recovery:
+            self._mode_manager.emergency_mode_change(
+                bat_id,
+                "charge_battery",
+                reason="SoC < floor — emergency recovery",
+                target_fast_charging=True,
+            )
+
         if budget_result.commands:
             return await self._executor.execute(budget_result.commands)
         return None
