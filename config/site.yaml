@@ -345,6 +345,13 @@ control:
     max_export_w: 0
     momentary_tolerance_w: 200
 
+  # PLAT-1767: user-invariant "bat SoC max = 100". Lift stop-SoC from the
+  # schema default (95) to 100 so firmware (LFP) governs the upper bound.
+  # PLAT-1695 invariant: budget.bat_charge_stop_soc_pct is derived from
+  # this value → keeps state_machine.surplus_entry_soc_pct consistent.
+  battery_gate:
+    charge_stop_soc_pct: 100.0
+
 # Safety guards
 guards:
   g0_grid_charging:
