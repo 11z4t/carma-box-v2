@@ -1076,9 +1076,9 @@ class TestPlat1753EvSocInBatch:
             r"get_states_batch\([\s\S]*?cfg\.ev\.entities\.soc[\s\S]*?\)",
             src,
         )
-        assert matches, (
-            "cfg.ev.entities.soc must appear inside a get_states_batch() call — PLAT-1753"
-        )
+        assert (
+            matches
+        ), "cfg.ev.entities.soc must appear inside a get_states_batch() call — PLAT-1753"
 
 
 class TestPlat1753WarmCacheCalledInCycle:
@@ -1089,6 +1089,194 @@ class TestPlat1753WarmCacheCalledInCycle:
         from pathlib import Path as _Path
 
         src = (_Path(__file__).parent.parent.parent / "main.py").read_text()
-        assert "warm_batch_cache" in src, (
-            "main.py must call warm_batch_cache() in _collect_snapshot — PLAT-1753"
+        assert (
+            "warm_batch_cache" in src
+        ), "main.py must call warm_batch_cache() in _collect_snapshot — PLAT-1753"
+
+
+# ===========================================================================
+# PLAT-1757: Atomär HA sensor-batch-read
+# ===========================================================================
+
+_BAT_ENTITY_FIELDS = (
+    "soc",
+    "power",
+    "ems_mode",
+    "ems_power_limit",
+    "fast_charging",
+)
+
+
+@pytest.mark.asyncio()
+class TestAtomicBatBatchRead:
+    """PLAT-1757: All battery sensors must be read in a single atomic batch call.
+
+    The race: sequential per-battery get_states_batch() calls expose the
+    algorithm to data from different HA snapshots (50-100 ms apart).
+    Fix: collect ALL battery entity IDs upfront → one get_states_batch() call.
+    """
+
+    @staticmethod
+    def _make_config() -> "object":
+        """Load site.yaml config."""
+        from config.schema import load_config
+        from pathlib import Path
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        return load_config(config_path)
+
+    @staticmethod
+    def _build_batch_response(cfg: "object") -> "dict[str, dict[str, str]]":
+        """Minimal batch response covering all battery entity fields."""
+        response: dict[str, dict[str, str]] = {}
+        for bat_cfg in cfg.batteries:  # type: ignore[attr-defined]
+            ents = bat_cfg.entities
+            response[ents.soc] = {"entity_id": ents.soc, "state": "55"}
+            response[ents.power] = {"entity_id": ents.power, "state": "0"}
+            response[ents.ems_mode] = {
+                "entity_id": ents.ems_mode,
+                "state": "battery_standby",
+            }
+            response[ents.ems_power_limit] = {
+                "entity_id": ents.ems_power_limit,
+                "state": "0",
+            }
+            response[ents.fast_charging] = {
+                "entity_id": ents.fast_charging,
+                "state": "off",
+            }
+        return response
+
+    async def test_bat_sensors_read_in_single_batch_call(self) -> None:
+        """PLAT-1757 AC1: all battery sensors fetched with exactly ONE get_states_batch call.
+
+        With N batteries, the old code called get_states_batch N times.
+        After the fix, a single call covers all battery entity IDs.
+        """
+        from unittest.mock import AsyncMock
+
+        from main import CarmaBoxService
+
+        cfg = self._make_config()
+        bat_count = len(cfg.batteries)  # type: ignore[attr-defined]
+        assert bat_count >= 2, "site.yaml must have ≥2 batteries for this test"
+
+        batch_response = self._build_batch_response(cfg)
+        call_entity_sets: list[frozenset[str]] = []
+
+        async def _tracking_batch(entity_ids: list[str]) -> "dict[str, dict[str, str]]":
+            call_entity_sets.append(frozenset(entity_ids))
+            return {k: v for k, v in batch_response.items() if k in entity_ids}
+
+        mock_api = AsyncMock()
+        mock_api.get_states_batch = _tracking_batch  # type: ignore[method-assign]
+        mock_api.get_state = AsyncMock(return_value=None)
+
+        service = CarmaBoxService(cfg, ha_api=mock_api)
+        await service._collect_snapshot(ha_connected=True)
+
+        # Identify calls that contain battery soc entities
+        bat_soc_entities = frozenset(
+            b.entities.soc
+            for b in cfg.batteries  # type: ignore[attr-defined]
         )
+        bat_calls = [s for s in call_entity_sets if s & bat_soc_entities]
+
+        assert len(bat_calls) == 1, (
+            f"Expected exactly 1 batch call for all {bat_count} batteries, "
+            f"got {len(bat_calls)}. "
+            "PLAT-1757: collect ALL bat entity IDs upfront → single get_states_batch()."
+        )
+
+        # The single call must include soc entities from ALL batteries
+        all_call_entities = bat_calls[0]
+        for bat_cfg in cfg.batteries:  # type: ignore[attr-defined]
+            assert (
+                bat_cfg.entities.soc in all_call_entities
+            ), f"Battery {bat_cfg.id} soc entity missing from single batch call"
+
+    async def test_bat_sensors_from_same_snapshot(self) -> None:
+        """PLAT-1757 AC2: all batteries read from the same batch call (no per-battery calls).
+
+        With atomic single-call, the structural sensor-skew between batteries is 0:
+        all batteries are read from one HTTP response, regardless of HA latency.
+        """
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        from main import CarmaBoxService
+
+        cfg = self._make_config()
+        assert len(cfg.batteries) >= 2  # type: ignore[attr-defined]
+
+        batch_response = self._build_batch_response(cfg)
+        bat_soc_entities = frozenset(
+            b.entities.soc
+            for b in cfg.batteries  # type: ignore[attr-defined]
+        )
+        call_entity_sets: list[frozenset[str]] = []
+
+        async def _batch_with_delay(entity_ids: list[str]) -> "dict[str, dict[str, str]]":
+            """Record entity sets; simulate 50 ms HA latency on bat-covering calls."""
+            call_entity_sets.append(frozenset(entity_ids))
+            if frozenset(entity_ids) & bat_soc_entities:
+                await asyncio.sleep(0.050)
+            return {k: v for k, v in batch_response.items() if k in entity_ids}
+
+        mock_api = AsyncMock()
+        mock_api.get_states_batch = _batch_with_delay  # type: ignore[method-assign]
+        mock_api.get_state = AsyncMock(return_value=None)
+
+        service = CarmaBoxService(cfg, ha_api=mock_api)
+        await service._collect_snapshot(ha_connected=True)
+
+        bat_calls = [s for s in call_entity_sets if s & bat_soc_entities]
+        assert len(bat_calls) == 1, (
+            f"Expected 1 atomic batch call for all batteries, got {len(bat_calls)}. "
+            "Sensor-skew fix: all battery entities must share one get_states_batch()."
+        )
+
+    async def test_bat_soc_values_correct_after_atomic_read(self) -> None:
+        """PLAT-1757 AC3: SoC values are correctly extracted after atomic batch read."""
+        from unittest.mock import AsyncMock
+
+        from main import CarmaBoxService
+
+        cfg = self._make_config()
+        expected_socs = {
+            bat_cfg.id: 45.0 + i * 10.0
+            for i, bat_cfg in enumerate(cfg.batteries)  # type: ignore[attr-defined]
+        }
+
+        batch_response: dict[str, dict[str, str]] = {}
+        for i, bat_cfg in enumerate(cfg.batteries):  # type: ignore[attr-defined]
+            ents = bat_cfg.entities
+            soc_val = expected_socs[bat_cfg.id]
+            batch_response[ents.soc] = {"entity_id": ents.soc, "state": str(soc_val)}
+            batch_response[ents.power] = {"entity_id": ents.power, "state": "0"}
+            batch_response[ents.ems_mode] = {
+                "entity_id": ents.ems_mode,
+                "state": "battery_standby",
+            }
+            batch_response[ents.ems_power_limit] = {
+                "entity_id": ents.ems_power_limit,
+                "state": "0",
+            }
+            batch_response[ents.fast_charging] = {
+                "entity_id": ents.fast_charging,
+                "state": "off",
+            }
+
+        mock_api = AsyncMock()
+        mock_api.get_states_batch = AsyncMock(return_value=batch_response)
+        mock_api.get_state = AsyncMock(return_value=None)
+
+        service = CarmaBoxService(cfg, ha_api=mock_api)
+        snapshot = await service._collect_snapshot(ha_connected=True)
+
+        assert snapshot is not None
+        for bat in snapshot.batteries:
+            assert bat.soc_pct == pytest.approx(expected_socs[bat.battery_id]), (
+                f"Battery {bat.battery_id}: expected SoC "
+                f"{expected_socs[bat.battery_id]}, got {bat.soc_pct}"
+            )
