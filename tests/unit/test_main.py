@@ -983,3 +983,112 @@ class TestBudgetConfigMapping:
         """emergency.bat_discharge_min_soc_pct reaches BudgetConfig."""
         _, service = cfg_and_service
         assert service._engine._budget_config.bat_discharge_min_soc_pct == 18.0
+
+
+# ===========================================================================
+# PLAT-1753: Cycle p95 tracking + atomic batch warm
+# ===========================================================================
+
+
+class TestPlat1753CycleP95:
+    """PLAT-1753: cycle_p95_s returns p95 of last 100 cycle durations.
+
+    Acceptance: Cycle p95 < 500 ms in production.
+    """
+
+    def test_cycle_p95_no_data_returns_zero(self) -> None:
+        """p95 with no recorded cycles must return 0.0."""
+        from config.schema import load_config
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+        service = CarmaBoxService(cfg)
+        assert service.cycle_p95_s == 0.0
+
+    def test_cycle_p95_single_sample(self) -> None:
+        """p95 with one sample must return that sample."""
+        from config.schema import load_config
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+        service = CarmaBoxService(cfg)
+        service._cycle_durations.append(0.123)
+        assert service.cycle_p95_s == 0.123
+
+    def test_cycle_p95_percentile_correct(self) -> None:
+        """p95 with 100 samples [0.01, 0.02, ..., 1.00] must be >= 0.95."""
+        from config.schema import load_config
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+        service = CarmaBoxService(cfg)
+        # 100 samples: 0.01 .. 1.00 (step 0.01)
+        for i in range(1, 101):
+            service._cycle_durations.append(i * 0.01)
+        p95 = service.cycle_p95_s
+        # p95 index = int(100 * 0.95) = 95 → value at index 95 (0-based) = 0.96
+        assert 0.94 <= p95 <= 1.00
+
+    def test_cycle_durations_window_max_100(self) -> None:
+        """_cycle_durations must hold at most 100 entries (deque maxlen=100)."""
+        from config.schema import load_config
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+        service = CarmaBoxService(cfg)
+        for i in range(150):
+            service._cycle_durations.append(float(i))
+        assert len(service._cycle_durations) == 100
+
+    def test_cycle_durations_attribute_exists(self) -> None:
+        """CarmaBoxService must expose _cycle_durations as a deque."""
+        from collections import deque
+        from config.schema import load_config
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+        service = CarmaBoxService(cfg)
+        assert hasattr(service, "_cycle_durations")
+        assert isinstance(service._cycle_durations, deque)
+
+
+class TestPlat1753EvSocInBatch:
+    """PLAT-1753: ev.entities.soc must be fetched via get_states_batch, not get_state."""
+
+    def test_ev_soc_not_read_via_standalone_get_state(self) -> None:
+        """Source must not call get_state(cfg.ev.entities.soc) separately."""
+        from pathlib import Path as _Path
+
+        src = (_Path(__file__).parent.parent.parent / "main.py").read_text()
+        assert "get_state(cfg.ev.entities.soc)" not in src, (
+            "ev.entities.soc must be merged into get_states_batch call, "
+            "not fetched via get_state — PLAT-1753"
+        )
+
+    def test_ev_soc_entity_appears_in_batch_block(self) -> None:
+        """Source must include ev.entities.soc inside a get_states_batch() argument."""
+        from pathlib import Path as _Path
+        import re
+
+        src = (_Path(__file__).parent.parent.parent / "main.py").read_text()
+        # Find all get_states_batch(...) call blocks
+        matches = re.findall(
+            r"get_states_batch\([\s\S]*?cfg\.ev\.entities\.soc[\s\S]*?\)",
+            src,
+        )
+        assert matches, (
+            "cfg.ev.entities.soc must appear inside a get_states_batch() call — PLAT-1753"
+        )
+
+
+class TestPlat1753WarmCacheCalledInCycle:
+    """PLAT-1753: warm_batch_cache() must be called at the start of _collect_snapshot."""
+
+    def test_warm_batch_cache_called_in_collect_snapshot_source(self) -> None:
+        """_collect_snapshot must call warm_batch_cache at its start."""
+        from pathlib import Path as _Path
+
+        src = (_Path(__file__).parent.parent.parent / "main.py").read_text()
+        assert "warm_batch_cache" in src, (
+            "main.py must call warm_batch_cache() in _collect_snapshot — PLAT-1753"
+        )

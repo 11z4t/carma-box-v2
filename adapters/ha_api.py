@@ -286,6 +286,46 @@ class HAApiClient:
         self._batch_cache = None
         self._batch_cache_ts = 0.0
 
+    async def warm_batch_cache(self) -> bool:
+        """Fetch all HA states atomically and populate the batch cache.
+
+        Call once at the start of each control cycle.  All subsequent
+        ``get_states_batch()`` calls within the same cycle will read from
+        this cache, guaranteeing that every sensor is read from the same
+        point-in-time HTTP response (true atomic snapshot).
+
+        Unconditionally issues a new GET /api/states regardless of whether
+        the cache is still within its TTL — this makes the cycle boundary
+        explicit and prevents stale data from spanning two cycles.
+
+        Returns:
+            True  — cache successfully warmed (all later batch reads are free).
+            False — GET /api/states failed; cache is cleared so callers receive
+                    the fallback per-entity path from get_states_batch().
+        """
+        async with self._batch_cache_lock:
+            # Always discard existing cache — force a fresh atomic fetch.
+            self._batch_cache = None
+            self._batch_cache_ts = 0.0
+
+            batch_timeout = aiohttp.ClientTimeout(total=HA_API_BATCH_TIMEOUT_S)
+            all_states = await self._request(
+                "GET", "/api/states", timeout=batch_timeout
+            )
+            if all_states is None:
+                logger.warning(
+                    "warm_batch_cache: GET /api/states failed — cache not warmed"
+                )
+                return False
+
+            self._batch_cache = all_states
+            self._batch_cache_ts = time.monotonic()
+            logger.debug(
+                "warm_batch_cache: %d entities loaded (atomic snapshot)",
+                len(all_states),
+            )
+            return True
+
     async def call_service(
         self,
         domain: str,

@@ -9,6 +9,7 @@ Tests cover:
 - Session lifecycle (reuse, close)
 - Unavailable/unknown state filtering
 - PLAT-1574: batch fetch (single call), fallback, timeout constants
+- PLAT-1753: warm_batch_cache() — atomic cycle-start prefetch
 """
 
 from __future__ import annotations
@@ -865,3 +866,162 @@ class TestExponentialBackoffPlat1575:
         assert all(s <= HA_API_MAX_BACKOFF_S for s in sleep_calls), (
             f"Backoff exceeded max: {sleep_calls}"
         )
+
+
+# ===========================================================================
+# PLAT-1753: warm_batch_cache() — atomic cycle-start prefetch
+# ===========================================================================
+
+
+@pytest.mark.asyncio()
+class TestPlat1753WarmBatchCache:
+    """PLAT-1753: warm_batch_cache() fetches all states in one atomic call.
+
+    Acceptance criteria:
+    - AC1: returns True on success / False on failure
+    - AC2: forces a fresh fetch even when cache is still valid
+    - AC3: subsequent get_states_batch() uses the warmed cache (zero extra HTTP calls)
+    - AC4: on failure, cache remains empty (no stale partial data served)
+    """
+
+    async def test_warm_cache_returns_true_on_success(
+        self, ha_config: HAConfig
+    ) -> None:
+        """AC1: warm_batch_cache() returns True when /api/states succeeds."""
+        from unittest.mock import AsyncMock, patch
+
+        all_states = [
+            {"entity_id": "sensor.a", "state": "1"},
+            {"entity_id": "sensor.b", "state": "2"},
+        ]
+        client = HAApiClient(ha_config)
+        with patch.object(
+            client, "_request", new_callable=AsyncMock, return_value=all_states
+        ):
+            result = await client.warm_batch_cache()
+        assert result is True
+
+    async def test_warm_cache_returns_false_on_failure(
+        self, ha_config: HAConfig
+    ) -> None:
+        """AC1: warm_batch_cache() returns False when /api/states fails."""
+        from unittest.mock import AsyncMock, patch
+
+        client = HAApiClient(ha_config)
+        with patch.object(
+            client, "_request", new_callable=AsyncMock, return_value=None
+        ):
+            result = await client.warm_batch_cache()
+        assert result is False
+
+    async def test_warm_cache_forces_refresh_when_cache_valid(
+        self, ha_config: HAConfig
+    ) -> None:
+        """AC2: warm_batch_cache() fetches even if cache TTL has not expired."""
+        import time
+        from unittest.mock import AsyncMock, patch
+
+        all_states = [{"entity_id": "sensor.x", "state": "fresh"}]
+        client = HAApiClient(ha_config)
+
+        # Pre-populate cache so it looks valid (not expired)
+        client._batch_cache = [{"entity_id": "sensor.x", "state": "stale"}]
+        client._batch_cache_ts = time.monotonic()  # just now — cache is valid
+
+        with patch.object(
+            client, "_request", new_callable=AsyncMock, return_value=all_states
+        ) as mock_req:
+            result = await client.warm_batch_cache()
+
+        # Must have made a new HTTP call despite valid cache
+        assert mock_req.call_count == 1
+        assert result is True
+        # Cache should now contain the fresh data
+        assert client._batch_cache is not None
+        assert client._batch_cache[0]["state"] == "fresh"
+
+    async def test_warm_cache_populates_cache_on_success(
+        self, ha_config: HAConfig
+    ) -> None:
+        """AC3: after warm_batch_cache(), _batch_cache is populated."""
+        from unittest.mock import AsyncMock, patch
+
+        all_states = [
+            {"entity_id": "sensor.bat1_soc", "state": "87"},
+            {"entity_id": "sensor.bat2_soc", "state": "62"},
+        ]
+        client = HAApiClient(ha_config)
+        with patch.object(
+            client, "_request", new_callable=AsyncMock, return_value=all_states
+        ):
+            await client.warm_batch_cache()
+
+        assert client._batch_cache is not None
+        assert len(client._batch_cache) == 2
+
+    async def test_warm_cache_subsequent_batch_no_extra_http_call(
+        self, ha_config: HAConfig
+    ) -> None:
+        """AC3: get_states_batch() after warm_batch_cache() uses cache — no extra HTTP call."""
+        from unittest.mock import AsyncMock, patch
+
+        all_states = [
+            {"entity_id": "sensor.bat1_soc", "state": "87"},
+            {"entity_id": "sensor.bat2_soc", "state": "62"},
+        ]
+        client = HAApiClient(ha_config)
+        with patch.object(
+            client, "_request", new_callable=AsyncMock, return_value=all_states
+        ) as mock_req:
+            await client.warm_batch_cache()
+            # Now read from cache — must not issue another HTTP call
+            result = await client.get_states_batch(
+                ["sensor.bat1_soc", "sensor.bat2_soc"]
+            )
+
+        # Exactly ONE HTTP call total (the warm), none for the batch read
+        assert mock_req.call_count == 1
+        assert result["sensor.bat1_soc"]["state"] == "87"
+        assert result["sensor.bat2_soc"]["state"] == "62"
+
+    async def test_warm_cache_failure_leaves_cache_empty(
+        self, ha_config: HAConfig
+    ) -> None:
+        """AC4: on failure, cache is empty so no stale data is served."""
+        from unittest.mock import AsyncMock, patch
+
+        client = HAApiClient(ha_config)
+        # Pre-populate stale cache
+        client._batch_cache = [{"entity_id": "sensor.old", "state": "stale"}]
+
+        with patch.object(
+            client, "_request", new_callable=AsyncMock, return_value=None
+        ):
+            result = await client.warm_batch_cache()
+
+        assert result is False
+        # Cache must be cleared — no stale data
+        assert client._batch_cache is None
+
+    async def test_warm_cache_uses_batch_timeout(
+        self, ha_config: HAConfig
+    ) -> None:
+        """warm_batch_cache() must pass HA_API_BATCH_TIMEOUT_S to the request."""
+        from unittest.mock import AsyncMock, patch
+        from adapters.ha_api import HA_API_BATCH_TIMEOUT_S
+
+        all_states: list[Any] = []
+        client = HAApiClient(ha_config)
+        with patch.object(
+            client, "_request", new_callable=AsyncMock, return_value=all_states
+        ) as mock_req:
+            await client.warm_batch_cache()
+
+        # Verify the call used a timeout object with the correct total
+        assert mock_req.called
+        kwargs = mock_req.call_args
+        timeout_arg = kwargs[1].get("timeout") or (
+            kwargs[0][2] if len(kwargs[0]) > 2 else None
+        )
+        assert timeout_arg is not None
+        assert timeout_arg.total == HA_API_BATCH_TIMEOUT_S

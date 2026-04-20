@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from collections import deque
 import logging
 import signal
 import sys
+import time
 import zoneinfo
 
 import aiohttp.web
@@ -90,6 +92,9 @@ _FALLBACK_WINDOW_END_H: int = 22
 _PV_REPLAN_FALLBACK_THRESHOLD: float = 0.20
 _DYNAMIC_TAK_DEFAULT_KW: float = 3.0
 _PRICE_DEFAULT_ORE: float = 100.0
+_CYCLE_DURATION_WINDOW: int = 100
+_P95_PERCENTILE: float = 0.95
+_CYCLE_P95_LOG_INTERVAL: int = 20
 
 
 def setup_logging(config: CarmaConfig) -> None:
@@ -153,6 +158,9 @@ class CarmaBoxService:
         self._health = HealthStatus(version=__version__)
         self._metrics = Metrics()
         self._health_task: Optional[asyncio.Task[None]] = None
+        # PLAT-1753: rolling window of full-cycle durations for p95 profiling.
+        # maxlen=100 keeps memory bounded and gives a ~25 min window at 15 s/cycle.
+        self._cycle_durations: deque[float] = deque(maxlen=_CYCLE_DURATION_WINDOW)
 
         # HA API client (None in dry-run/test mode)
         self._ha_api = ha_api
@@ -465,6 +473,19 @@ class CarmaBoxService:
         """Whether the main loop is active."""
         return self._running
 
+    @property
+    def cycle_p95_s(self) -> float:
+        """95th-percentile full-cycle duration from the last 100 cycles (seconds).
+
+        PLAT-1753: Use for capacity planning — target p95 < 0.5 s.
+        Returns 0.0 when no cycles have been recorded yet.
+        """
+        if not self._cycle_durations:
+            return 0.0
+        sorted_d = sorted(self._cycle_durations)
+        idx = int(len(sorted_d) * _P95_PERCENTILE)
+        return sorted_d[min(idx, len(sorted_d) - 1)]
+
     async def start(self) -> None:
         """Start the main control loop.
 
@@ -524,12 +545,14 @@ class CarmaBoxService:
         logger.info("Shutdown complete")
 
     async def _run_cycle(self) -> None:
-        """Execute one 30-second control cycle.
+        """Execute one control cycle.
 
         Pipeline: COLLECT → GUARD → SCENARIO → BALANCE → EXECUTE → PERSIST
         """
         self._cycle_count += 1
         self._last_cycle = datetime.now(tz=timezone.utc)
+        # PLAT-1753: measure full-cycle wall time for p95 profiling.
+        _cycle_start = time.monotonic()
 
         if self._engine is None or self._ha_api is None:
             logger.debug("Cycle %d (no engine — dry run)", self._cycle_count)
@@ -714,6 +737,16 @@ class CarmaBoxService:
             except Exception as exc:
                 logger.debug("Cycle log write failed: %s", exc)
 
+        # PLAT-1753: record full-cycle wall time and log p95 every 20 cycles.
+        _cycle_wall_s = time.monotonic() - _cycle_start
+        self._cycle_durations.append(_cycle_wall_s)
+        if self._cycle_count % _CYCLE_P95_LOG_INTERVAL == 0:
+            logger.info(
+                "PLAT-1753 cycle timing: p95=%.0fms over last %d cycles",
+                self.cycle_p95_s * _MS_PER_S,
+                len(self._cycle_durations),
+            )
+
     def _on_health_done(self, task: asyncio.Task[None]) -> None:
         """Log health server task completion/failure."""
         self._health_task = None
@@ -833,6 +866,11 @@ class CarmaBoxService:
             now = datetime.now(tz=tz)
             cfg = self._config
 
+            # PLAT-1753: Atomic prefetch — one GET /api/states at cycle start.
+            # All subsequent get_states_batch() calls in this cycle use the
+            # cached response, ensuring every sensor reflects the same instant.
+            await self._ha_api.warm_batch_cache()
+
             # Read battery states
             batteries: list[BatteryState] = []
             for bat_cfg in cfg.batteries:
@@ -903,6 +941,7 @@ class CarmaBoxService:
                 )
 
             # Read EV state
+            # PLAT-1753: ev.entities.soc merged into batch — no separate get_state call.
             ev_ents = cfg.ev_charger.entities
             ev_batch = await self._ha_api.get_states_batch(
                 [
@@ -911,10 +950,11 @@ class CarmaBoxService:
                     ev_ents.current,
                     ev_ents.enabled,
                     ev_ents.reason_for_no_current,
+                    cfg.ev.entities.soc,
                 ]
             )
-            ev_soc_str = await self._ha_api.get_state(cfg.ev.entities.soc)
-            ev_soc = float(ev_soc_str) if ev_soc_str else -1.0
+            ev_soc_raw = ev_batch.get(cfg.ev.entities.soc, {}).get("state")
+            ev_soc = float(ev_soc_raw) if ev_soc_raw else -1.0
             ev_status = ev_batch.get(ev_ents.status, {}).get("state", "disconnected")
             ev_enabled = ev_batch.get(ev_ents.enabled, {}).get("state") == "on"
             # Easee reports "disconnected" when disabled even if cable plugged in
