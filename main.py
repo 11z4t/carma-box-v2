@@ -92,6 +92,9 @@ _FALLBACK_WINDOW_END_H: int = 22
 _PV_REPLAN_FALLBACK_THRESHOLD: float = 0.20
 _DYNAMIC_TAK_DEFAULT_KW: float = 3.0
 _PRICE_DEFAULT_ORE: float = 100.0
+_CYCLE_DURATION_WINDOW: int = 100
+_P95_PERCENTILE: float = 0.95
+_CYCLE_P95_LOG_INTERVAL: int = 20
 
 
 def setup_logging(config: CarmaConfig) -> None:
@@ -157,7 +160,7 @@ class CarmaBoxService:
         self._health_task: Optional[asyncio.Task[None]] = None
         # PLAT-1753: rolling window of full-cycle durations for p95 profiling.
         # maxlen=100 keeps memory bounded and gives a ~25 min window at 15 s/cycle.
-        self._cycle_durations: deque[float] = deque(maxlen=100)
+        self._cycle_durations: deque[float] = deque(maxlen=_CYCLE_DURATION_WINDOW)
 
         # HA API client (None in dry-run/test mode)
         self._ha_api = ha_api
@@ -480,7 +483,7 @@ class CarmaBoxService:
         if not self._cycle_durations:
             return 0.0
         sorted_d = sorted(self._cycle_durations)
-        idx = int(len(sorted_d) * 0.95)
+        idx = int(len(sorted_d) * _P95_PERCENTILE)
         return sorted_d[min(idx, len(sorted_d) - 1)]
 
     async def start(self) -> None:
@@ -737,7 +740,7 @@ class CarmaBoxService:
         # PLAT-1753: record full-cycle wall time and log p95 every 20 cycles.
         _cycle_wall_s = time.monotonic() - _cycle_start
         self._cycle_durations.append(_cycle_wall_s)
-        if self._cycle_count % 20 == 0:
+        if self._cycle_count % _CYCLE_P95_LOG_INTERVAL == 0:
             logger.info(
                 "PLAT-1753 cycle timing: p95=%.0fms over last %d cycles",
                 self.cycle_p95_s * _MS_PER_S,
