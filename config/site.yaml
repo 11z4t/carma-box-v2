@@ -469,3 +469,60 @@ dashboard:
 health:
   port: 8412
   path: "/health"
+
+# Power budget allocator tunables (PLAT-1748)
+# All fields have sensible defaults — omitting this section is safe.
+# bat_charge_stop_soc_pct is NOT here; it is always derived from
+# control.battery_gate.charge_stop_soc_pct (PLAT-1695 invariant).
+budget:
+  # EV charging current limits
+  ev_min_amps: 6          # absolute floor; overridden by ev_charger.ramp.start_amps in main.py
+  ev_max_amps: 16         # absolute ceiling for EV budget ramp
+
+  # Battery SoC thresholds
+  bat_soc_full_pct: 100.0  # above this = bat is "full" (stops bat-discharge-support)
+
+  # Battery spread ratios (P/S split when SoC diff is active)
+  bat_lower_ratio: 0.8     # fraction of power to lower-SoC battery
+  bat_higher_ratio: 0.2    # fraction of power to higher-SoC battery
+
+  # EV ramp hold cycles (anti-oscillation)
+  ev_ramp_up_hold_cycles: 2   # consecutive export cycles needed before ramping up
+  ev_ramp_down_hold_cycles: 1  # consecutive import cycles before ramping down
+
+  # Battery discharge support (allow bat to discharge to cover EV when PV insufficient)
+  bat_discharge_support: true
+
+  # Evening time boundary — battery priority after this hour
+  evening_cutoff_h: 17
+
+  # Grid-sensor tiered fine-tuner (PLAT-1737)
+  # Enable once zero_grid alone is stable on the site (shadow first)
+  grid_tuner:
+    enabled: false
+    tiers_w: [50.0, 75.0, 100.0]      # |grid| thresholds (W)
+    corrections_w: [100, 300, 500]     # correction per tier (W)
+    rolling_window_s: 300              # anti-flap guard window
+    mode_change_stability_w: 50.0      # block mode-change if |avg| < this
+
+  # Consumer cascade pacing
+  cascade:
+    cooldown_s: 60.0            # min seconds between consecutive consumer switches
+    sustained_cycles: 2         # export cycles before starting next consumer
+    bat_at_max_headroom_w: 500  # treat bat as saturated when alloc within this of max
+
+  # Grid-sensor median smoothing
+  smoothing:
+    grid_smoothing_window: 3    # 1=no smoothing; 3=good default (rejects single spikes)
+
+  # Battery SoC spread control
+  aggressive_spread:
+    bat_spread_max_pct: 1.0          # spread > this triggers P/S split
+    bat_aggressive_spread_pct: 1.0   # backward-compat alias (kept = bat_spread_max_pct)
+
+  # Emergency + capacity fallbacks
+  emergency:
+    bat_discharge_min_soc_pct: 15.0   # absolute floor (GoodWe cuts AC below 15%)
+    bat_default_cap_kwh: 10.0         # fallback capacity when caller omits bat_caps
+    bat_default_max_charge_w: 5000    # fallback max charge rate per battery
+    bat_default_max_discharge_w: 5000 # fallback max discharge rate per battery
