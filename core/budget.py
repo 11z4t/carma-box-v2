@@ -86,7 +86,7 @@ class BudgetConfig:
     bat_lower_ratio: float = 0.8
     bat_higher_ratio: float = 0.2
     # EV ramp tröghet: ramp UP kräver N konsekutiva export-cykler
-    ev_ramp_up_hold_cycles: int = 2   # trög upp (moln kan återkomma)
+    ev_ramp_up_hold_cycles: int = 2  # trög upp (moln kan återkomma)
     ev_ramp_down_hold_cycles: int = 1  # snabb ner (skydda mot import)
     # Bat discharge support for EV
     bat_discharge_support: bool = True
@@ -137,18 +137,18 @@ class BudgetInput:
     """All facts needed for one budget cycle."""
 
     now: datetime
-    grid_power_w: float          # positive = import, negative = export
-    pv_power_w: float            # total PV production
-    house_load_w: float          # house consumption (excl bat/EV)
+    grid_power_w: float  # positive = import, negative = export
+    pv_power_w: float  # total PV production
+    house_load_w: float  # house consumption (excl bat/EV)
     ev_connected: bool
     ev_charging: bool
     ev_current_amps: int
     ev_soc_pct: float
     ev_target_soc_pct: float
-    bat_socs: dict[str, float]   # battery_id → SoC %
-    bat_caps: dict[str, float]   # battery_id → capacity kWh
+    bat_socs: dict[str, float]  # battery_id → SoC %
+    bat_caps: dict[str, float]  # battery_id → capacity kWh
     bat_powers: dict[str, float]  # battery_id → current power W
-    bat_modes: dict[str, str]    # battery_id → current EMS mode
+    bat_modes: dict[str, str]  # battery_id → current EMS mode
     pv_remaining_kwh: float = 0.0  # Solcast remaining today
     house_remaining_kwh: float = 0.0  # estimated house consumption remaining
     # PLAT-1715: consumer list for unified priority cascade.
@@ -197,7 +197,7 @@ class BudgetResult:
     commands: list[Command]
     ev_target_amps: int
     bat_allocations: dict[str, int]  # battery_id → charge limit W
-    bat_discharge_w: int = 0        # total bat discharge for support
+    bat_discharge_w: int = 0  # total bat discharge for support
     reason: str = ""
 
 
@@ -265,10 +265,7 @@ def allocate(
     bat_alloc: dict[str, int] = {}
     bat_discharge = 0
     reasons: list[str] = []
-    ev_wants_charge = (
-        inp.ev_connected
-        and inp.ev_soc_pct < inp.ev_target_soc_pct
-    )
+    ev_wants_charge = inp.ev_connected and inp.ev_soc_pct < inp.ev_target_soc_pct
 
     # Update grid feedback counters
     if inp.grid_power_w < -_GRID_TOLERANCE_W:
@@ -286,12 +283,10 @@ def allocate(
     bat_total_cap = sum(inp.bat_caps.values()) or 1.0
     pv_for_bat = max(0.0, inp.pv_remaining_kwh - inp.house_remaining_kwh)
     bat_min_soc_dynamic = max(
-        0.0, cfg.bat_soc_full_pct - (pv_for_bat / bat_total_cap * _PCT_FACTOR),
+        0.0,
+        cfg.bat_soc_full_pct - (pv_for_bat / bat_total_cap * _PCT_FACTOR),
     )
-    bat_avg_soc = (
-        sum(inp.bat_socs.values()) / len(inp.bat_socs)
-        if inp.bat_socs else 0.0
-    )
+    bat_avg_soc = sum(inp.bat_socs.values()) / len(inp.bat_socs) if inp.bat_socs else 0.0
     bat_can_support_ev = bat_avg_soc > bat_min_soc_dynamic
 
     # ----- PRIORITY ALLOCATION -----
@@ -343,6 +338,12 @@ def allocate(
             )
             for bid in inp.bat_socs
         }
+        # PLAT-1754 verified (no-op): cfg value is ALWAYS forwarded
+        # explicitly — plan_zero_grid's parameter default (5.0) is
+        # intentionally never reached from this call site.
+        # Do NOT remove the keyword argument: that would silently revert
+        # to 5.0 and break the user invariant "SoC diff > 1 pp = P1"
+        # (BudgetConfig.bat_aggressive_spread_pct defaults to 1.0).
         zero_grid_plan = plan_zero_grid(
             grid_power_w=grid_smoothed_w,
             bats=zg_bats,
@@ -351,7 +352,8 @@ def allocate(
         )
         bat_alloc = dict(zero_grid_plan.limits_w)
         bat_discharge = sum(
-            lim for bid, lim in zero_grid_plan.limits_w.items()
+            lim
+            for bid, lim in zero_grid_plan.limits_w.items()
             if zero_grid_plan.modes[bid] == "discharge_pv"
         )
         reasons.append(zero_grid_plan.reason)
@@ -373,7 +375,8 @@ def allocate(
             tune_delta = tune_grid_delta(inp.grid_power_w, cfg.grid_tuner)
             if tune_delta != 0:
                 active_bats = [
-                    bid for bid, mode in zero_grid_plan.modes.items()
+                    bid
+                    for bid, mode in zero_grid_plan.modes.items()
                     if mode in ("charge_battery", "discharge_pv")
                 ]
                 if active_bats:
@@ -396,7 +399,8 @@ def allocate(
                     )
                     # Keep bat_discharge in sync after tuning
                     bat_discharge = sum(
-                        alloc for bid, alloc in bat_alloc.items()
+                        alloc
+                        for bid, alloc in bat_alloc.items()
                         if zero_grid_plan.modes[bid] == "discharge_pv"
                     )
 
@@ -413,7 +417,9 @@ def allocate(
         # zero-grid controller is disabled (feature flag / night branch).
         # Kept as a safety net; emits proportional-by-capacity shares.
         bat_discharge, bat_alloc = _allocate_evening_discharge(
-            inp, cfg, state,
+            inp,
+            cfg,
+            state,
         )
         ev_target = 0
         reasons.append(
@@ -433,7 +439,10 @@ def allocate(
         # FM 06-12: EV wants to charge. Zero-grid already wrote the bat
         # plan; the EV ramper handles its own ±1 A per cycle.
         ev_target, remaining = _allocate_ev_with_ramp(
-            inp, remaining, cfg, state,
+            inp,
+            remaining,
+            cfg,
+            state,
         )
         reasons.append(f"FM: EV target {ev_target}A")
 
@@ -444,15 +453,17 @@ def allocate(
         # the remaining PV directly).
         if ev_wants_charge and (bat_can_support_ev or _all_bat_full(inp, cfg)):
             ev_target, remaining = _allocate_ev_with_ramp(
-                inp, remaining, cfg, state,
+                inp,
+                remaining,
+                cfg,
+                state,
             )
             reasons.append(f"EM: EV {ev_target}A")
         else:
             ev_target = 0
             if ev_wants_charge:
                 reasons.append(
-                    f"EM: bat {bat_avg_soc:.0f}%≤min"
-                    f"{bat_min_soc_dynamic:.0f}% EV off",
+                    f"EM: bat {bat_avg_soc:.0f}%≤min" f"{bat_min_soc_dynamic:.0f}% EV off",
                 )
             else:
                 reasons.append("EM: EV idle")
@@ -472,29 +483,40 @@ def allocate(
         # State is flipped only when Budget actually emits the command.
         want_enabled = ev_target > 0
         if want_enabled and not state.intended_ev_enabled:
-            cmds.append(Command(
-                command_type=CommandType.START_EV_CHARGING,
-                target_id="ev", value=None,
-                rule_id=_RULE_ID, reason="Budget: EV start",
-            ))
+            cmds.append(
+                Command(
+                    command_type=CommandType.START_EV_CHARGING,
+                    target_id="ev",
+                    value=None,
+                    rule_id=_RULE_ID,
+                    reason="Budget: EV start",
+                )
+            )
             state.intended_ev_enabled = True
         if not want_enabled and state.intended_ev_enabled:
-            cmds.append(Command(
-                command_type=CommandType.STOP_EV_CHARGING,
-                target_id="ev", value=None,
-                rule_id=_RULE_ID, reason="Budget: EV stop",
-            ))
+            cmds.append(
+                Command(
+                    command_type=CommandType.STOP_EV_CHARGING,
+                    target_id="ev",
+                    value=None,
+                    rule_id=_RULE_ID,
+                    reason="Budget: EV stop",
+                )
+            )
             state.intended_ev_enabled = False
         # SET_EV_CURRENT: compare to state.ev_current_amps (what Budget
         # last wrote), NOT inp.ev_current_amps (which is HA-reported and
         # can lag/flap). ev_current_amps is updated at end of tick().
         if want_enabled and ev_target != state.ev_current_amps:
-            cmds.append(Command(
-                command_type=CommandType.SET_EV_CURRENT,
-                target_id="ev", value=ev_target,
-                rule_id=_RULE_ID,
-                reason=f"Budget: EV {state.ev_current_amps}→{ev_target}A",
-            ))
+            cmds.append(
+                Command(
+                    command_type=CommandType.SET_EV_CURRENT,
+                    target_id="ev",
+                    value=ev_target,
+                    rule_id=_RULE_ID,
+                    reason=f"Budget: EV {state.ev_current_amps}→{ev_target}A",
+                )
+            )
 
     # Bat commands — per-battery mode + limit.
     # PLAT-1718: when the zero-grid controller ran (daytime), its plan is
@@ -519,53 +541,54 @@ def allocate(
     # protocol clears the power limit during Step 1 PREPARE, so re-emitting
     # the same mode every cycle would keep pulling the limit back to 0.
     emergency_bats: frozenset[str] = (
-        zero_grid_plan.emergency_recovery if zero_grid_plan is not None
-        else frozenset()
+        zero_grid_plan.emergency_recovery if zero_grid_plan is not None else frozenset()
     )
 
     for bid, limit_w in bat_alloc.items():
         target_mode = bat_modes_target.get(
-            bid, EMSMode.BATTERY_STANDBY.value,
+            bid,
+            EMSMode.BATTERY_STANDBY.value,
         )
         current_mode = inp.bat_modes.get(bid, "")
         if current_mode != target_mode:
-            cmds.append(Command(
-                command_type=CommandType.SET_EMS_MODE,
+            cmds.append(
+                Command(
+                    command_type=CommandType.SET_EMS_MODE,
+                    target_id=bid,
+                    value=target_mode,
+                    rule_id=_RULE_ID,
+                    reason=(
+                        f"Budget: {target_mode} {limit_w}W" if limit_w > 0 else "Budget: standby"
+                    ),
+                )
+            )
+        cmds.append(
+            Command(
+                command_type=CommandType.SET_EMS_POWER_LIMIT,
                 target_id=bid,
-                value=target_mode,
+                value=limit_w,
                 rule_id=_RULE_ID,
-                reason=(
-                    f"Budget: {target_mode} {limit_w}W"
-                    if limit_w > 0
-                    else "Budget: standby"
-                ),
-            ))
-        cmds.append(Command(
-            command_type=CommandType.SET_EMS_POWER_LIMIT,
-            target_id=bid, value=limit_w,
-            rule_id=_RULE_ID,
-            reason=(
-                f"Budget: limit {limit_w}W"
-                if limit_w > 0
-                else "Budget: standby limit=0"
-            ),
-        ))
+                reason=(f"Budget: limit {limit_w}W" if limit_w > 0 else "Budget: standby limit=0"),
+            )
+        )
         # Emergency-recovery override: SoC fell below the absolute floor
         # → force grid-charge via charge_battery + fast_charging ON until
         # SoC climbs back above soc_min_pct. Explicit fast_charging=False
         # on all other bats to keep INV-3 intact (no fast_charging +
         # discharge_pv combos).
-        cmds.append(Command(
-            command_type=CommandType.SET_FAST_CHARGING,
-            target_id=bid,
-            value=True if bid in emergency_bats else False,
-            rule_id=_RULE_ID,
-            reason=(
-                "EMERGENCY recovery: SoC < floor, force grid-charge"
-                if bid in emergency_bats
-                else "INV-3: ensure fast_charging OFF"
-            ),
-        ))
+        cmds.append(
+            Command(
+                command_type=CommandType.SET_FAST_CHARGING,
+                target_id=bid,
+                value=True if bid in emergency_bats else False,
+                rule_id=_RULE_ID,
+                reason=(
+                    "EMERGENCY recovery: SoC < floor, force grid-charge"
+                    if bid in emergency_bats
+                    else "INV-3: ensure fast_charging OFF"
+                ),
+            )
+        )
 
     # PLAT-1715: unified consumer cascade runs after bat + EV allocation.
     cmds.extend(_cascade_consumers(inp, bat_alloc, state, cfg))
@@ -760,10 +783,7 @@ def _bat_at_max(
         at_max = soc_at_stop or alloc_at_max
         if not at_max:
             all_at_max = False
-        state_tag = (
-            "stop-SoC" if soc_at_stop
-            else ("alloc-max" if alloc_at_max else "headroom")
-        )
+        state_tag = "stop-SoC" if soc_at_stop else ("alloc-max" if alloc_at_max else "headroom")
         parts.append(f"{bid}: SoC={soc:.0f}% alloc={alloc}W ({state_tag})")
     return all_at_max, ", ".join(parts)
 
@@ -797,9 +817,7 @@ def _cascade_consumers(
     # Sustained export signal: bat couldn't absorb the surplus in the
     # previous cycle(s) → consumers needed. consecutive_export_cycles is
     # updated in allocate() before the cascade runs.
-    sustained_export = (
-        state.consecutive_export_cycles >= cfg.cascade_sustained_cycles
-    )
+    sustained_export = state.consecutive_export_cycles >= cfg.cascade_sustained_cycles
 
     all_at_max, bat_state_str = _bat_at_max(bat_alloc, inp.bat_socs, cfg)
 
@@ -812,17 +830,19 @@ def _cascade_consumers(
             last = state.consumer_last_switch_ts.get(c.consumer_id, 0.0)
             if now_ts - last < cooldown_s:
                 continue
-            cmds.append(Command(
-                command_type=CommandType.TURN_ON_CONSUMER,
-                target_id=c.consumer_id,
-                value=None,
-                rule_id=_RULE_ID,
-                reason=(
-                    f"Cascade: grid export {-grid_w:.0f}W > "
-                    f"{_GRID_TOLERANCE_W:.0f}W sustained, bat SoC: "
-                    f"{bat_state_str}"
-                ),
-            ))
+            cmds.append(
+                Command(
+                    command_type=CommandType.TURN_ON_CONSUMER,
+                    target_id=c.consumer_id,
+                    value=None,
+                    rule_id=_RULE_ID,
+                    reason=(
+                        f"Cascade: grid export {-grid_w:.0f}W > "
+                        f"{_GRID_TOLERANCE_W:.0f}W sustained, bat SoC: "
+                        f"{bat_state_str}"
+                    ),
+                )
+            )
             state.consumer_last_switch_ts[c.consumer_id] = now_ts
             break
     elif grid_w > _GRID_TOLERANCE_W:
@@ -834,16 +854,15 @@ def _cascade_consumers(
             last = state.consumer_last_switch_ts.get(c.consumer_id, 0.0)
             if now_ts - last < cooldown_s:
                 continue
-            cmds.append(Command(
-                command_type=CommandType.TURN_OFF_CONSUMER,
-                target_id=c.consumer_id,
-                value=None,
-                rule_id=_RULE_ID,
-                reason=(
-                    f"Cascade: grid import {grid_w:.0f}W > "
-                    f"{_GRID_TOLERANCE_W:.0f}W"
-                ),
-            ))
+            cmds.append(
+                Command(
+                    command_type=CommandType.TURN_OFF_CONSUMER,
+                    target_id=c.consumer_id,
+                    value=None,
+                    rule_id=_RULE_ID,
+                    reason=(f"Cascade: grid import {grid_w:.0f}W > " f"{_GRID_TOLERANCE_W:.0f}W"),
+                )
+            )
             state.consumer_last_switch_ts[c.consumer_id] = now_ts
             break
     return cmds
@@ -868,8 +887,7 @@ def _allocate_bat(
     # 100% → grid export grew instead of shrinking at high SoC.
     # NOTE: Allocation only distributed across ACTIVE bats (below threshold);
     # bats at/above threshold get 0 so they standby in downstream command emit.
-    active = {bid: soc for bid, soc in inp.bat_socs.items()
-              if soc < cfg.bat_charge_stop_soc_pct}
+    active = {bid: soc for bid, soc in inp.bat_socs.items() if soc < cfg.bat_charge_stop_soc_pct}
     if not active:
         return {bid: 0 for bid in inp.bat_socs}, remaining_w
 
@@ -909,8 +927,7 @@ def _allocate_bat(
         lower_bids = sorted_bids[:mid]
         higher_bids = sorted_bids[mid:]
         lower_share_per = cfg.bat_lower_ratio / max(1, len(lower_bids))
-        higher_share_per = cfg.bat_higher_ratio / max(1, len(higher_bids)) \
-            if higher_bids else 0.0
+        higher_share_per = cfg.bat_higher_ratio / max(1, len(higher_bids)) if higher_bids else 0.0
         for bid in lower_bids:
             alloc[bid] = int(total_alloc * lower_share_per)
         for bid in higher_bids:

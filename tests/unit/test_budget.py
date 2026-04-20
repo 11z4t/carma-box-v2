@@ -71,6 +71,7 @@ def cfg() -> BudgetConfig:
 # Time helpers
 # -------------------------------------------------------------------
 
+
 def test_is_daytime() -> None:
     assert _is_daytime(6) is True
     assert _is_daytime(12) is True
@@ -89,6 +90,7 @@ def test_is_fm() -> None:
 # -------------------------------------------------------------------
 # Surplus calculation
 # -------------------------------------------------------------------
+
 
 def test_surplus_daytime_never_negative() -> None:
     """DAG: surplus = max(0, PV - house). ALDRIG negativ."""
@@ -110,6 +112,7 @@ def test_surplus_night_can_be_negative() -> None:
 # AC2: sum(allocations) <= surplus
 # -------------------------------------------------------------------
 
+
 def test_allocations_never_exceed_surplus(cfg: BudgetConfig) -> None:
     inp = _inp(pv_w=2000, house_w=500)
     state = BudgetState()
@@ -123,11 +126,16 @@ def test_allocations_never_exceed_surplus(cfg: BudgetConfig) -> None:
 # FM priority: EV → bat
 # -------------------------------------------------------------------
 
+
 def test_fm_ev_priority_when_connected(cfg: BudgetConfig) -> None:
     """FM + EV connected → EV gets allocation."""
     inp = _inp(
-        hour=9, pv_w=6000, house_w=500,
-        ev_connected=True, ev_soc=50, grid_w=-2000,
+        hour=9,
+        pv_w=6000,
+        house_w=500,
+        ev_connected=True,
+        ev_soc=50,
+        grid_w=-2000,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -137,8 +145,11 @@ def test_fm_ev_priority_when_connected(cfg: BudgetConfig) -> None:
 def test_fm_ev_no_start_without_surplus(cfg: BudgetConfig) -> None:
     """FM + EV connected but no surplus → EV stays off."""
     inp = _inp(
-        hour=9, pv_w=500, house_w=500,
-        ev_connected=True, ev_soc=50,
+        hour=9,
+        pv_w=500,
+        house_w=500,
+        ev_connected=True,
+        ev_soc=50,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -149,6 +160,7 @@ def test_fm_ev_no_start_without_surplus(cfg: BudgetConfig) -> None:
 # EM priority: bat → EV
 # -------------------------------------------------------------------
 
+
 def test_em_bat_priority(cfg: BudgetConfig) -> None:
     """EM + bat < 100% → zero-grid absorbs exported surplus, EV off.
 
@@ -156,8 +168,12 @@ def test_em_bat_priority(cfg: BudgetConfig) -> None:
     bat 0 → grid ≈ -2.5 kW export). Zero-grid sends that to the bat.
     """
     inp = _inp(
-        hour=14, pv_w=3000, house_w=500, grid_w=-2500,
-        ev_connected=True, bat_k_soc=80,
+        hour=14,
+        pv_w=3000,
+        house_w=500,
+        grid_w=-2500,
+        ev_connected=True,
+        bat_k_soc=80,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -168,10 +184,16 @@ def test_em_bat_priority(cfg: BudgetConfig) -> None:
 def test_em_ev_after_bat_full(cfg: BudgetConfig) -> None:
     """EM + bat 100% + EV connected → EV gets surplus (ramp-up path)."""
     inp = _inp(
-        hour=14, pv_w=6000, house_w=500,
-        ev_connected=True, ev_charging=True, ev_amps=6, ev_soc=50,
+        hour=14,
+        pv_w=6000,
+        house_w=500,
+        ev_connected=True,
+        ev_charging=True,
+        ev_amps=6,
+        ev_soc=50,
         grid_w=-2000,
-        bat_k_soc=100, bat_f_soc=100,
+        bat_k_soc=100,
+        bat_f_soc=100,
     )
     # Two consecutive export cycles unlock the ramp-up
     state = BudgetState(consecutive_export_cycles=2, ev_current_amps=6)
@@ -183,11 +205,16 @@ def test_em_ev_after_bat_full(cfg: BudgetConfig) -> None:
 # EV ramp ±1A
 # -------------------------------------------------------------------
 
+
 def test_ev_ramp_up_on_export(cfg: BudgetConfig) -> None:
     """Grid exporting 2 consecutive cycles → ramp +1A (tröghet)."""
     inp = _inp(
-        hour=9, pv_w=6000, house_w=500,
-        ev_connected=True, ev_charging=True, ev_amps=7,
+        hour=9,
+        pv_w=6000,
+        house_w=500,
+        ev_connected=True,
+        ev_charging=True,
+        ev_amps=7,
         grid_w=-500,
     )
     state = BudgetState(consecutive_export_cycles=2, ev_current_amps=7)
@@ -198,8 +225,12 @@ def test_ev_ramp_up_on_export(cfg: BudgetConfig) -> None:
 def test_ev_ramp_down_on_import(cfg: BudgetConfig) -> None:
     """Grid importing 1 cycle → ramp -1A (snabb ner)."""
     inp = _inp(
-        hour=9, pv_w=6000, house_w=500,
-        ev_connected=True, ev_charging=True, ev_amps=9,
+        hour=9,
+        pv_w=6000,
+        house_w=500,
+        ev_connected=True,
+        ev_charging=True,
+        ev_amps=9,
         grid_w=500,
     )
     state = BudgetState(consecutive_import_cycles=1, ev_current_amps=9)
@@ -210,8 +241,12 @@ def test_ev_ramp_down_on_import(cfg: BudgetConfig) -> None:
 def test_ev_hold_in_band(cfg: BudgetConfig) -> None:
     """Grid within ±100W → hold."""
     inp = _inp(
-        hour=9, pv_w=6000, house_w=500,
-        ev_connected=True, ev_charging=True, ev_amps=8,
+        hour=9,
+        pv_w=6000,
+        house_w=500,
+        ev_connected=True,
+        ev_charging=True,
+        ev_amps=8,
         grid_w=50,
     )
     state = BudgetState(ev_current_amps=8)
@@ -222,8 +257,12 @@ def test_ev_hold_in_band(cfg: BudgetConfig) -> None:
 def test_ev_max_capped(cfg: BudgetConfig) -> None:
     """At max amps (16) → no ramp up."""
     inp = _inp(
-        hour=9, pv_w=15000, house_w=500,
-        ev_connected=True, ev_charging=True, ev_amps=16,
+        hour=9,
+        pv_w=15000,
+        house_w=500,
+        ev_connected=True,
+        ev_charging=True,
+        ev_amps=16,
         grid_w=-2000,
     )
     state = BudgetState(consecutive_export_cycles=3, ev_current_amps=16)
@@ -234,8 +273,12 @@ def test_ev_max_capped(cfg: BudgetConfig) -> None:
 def test_ev_min_floored(cfg: BudgetConfig) -> None:
     """At min amps + import → stays at min (not 0, but stops if no surplus)."""
     inp = _inp(
-        hour=9, pv_w=6000, house_w=500,
-        ev_connected=True, ev_charging=True, ev_amps=6,
+        hour=9,
+        pv_w=6000,
+        house_w=500,
+        ev_connected=True,
+        ev_charging=True,
+        ev_amps=6,
         grid_w=500,
     )
     state = BudgetState()
@@ -248,6 +291,7 @@ def test_ev_min_floored(cfg: BudgetConfig) -> None:
 # Bat balance: spread ≤ 1pp
 # -------------------------------------------------------------------
 
+
 def test_bat_balanced_proportional(cfg: BudgetConfig) -> None:
     """Same SoC, measured surplus (export) → proportional by capacity.
 
@@ -258,8 +302,11 @@ def test_bat_balanced_proportional(cfg: BudgetConfig) -> None:
     forrad also > 0.
     """
     inp = _inp(
-        pv_w=3000, house_w=500, grid_w=-2500,
-        bat_k_soc=70, bat_f_soc=70,
+        pv_w=3000,
+        house_w=500,
+        grid_w=-2500,
+        bat_k_soc=70,
+        bat_f_soc=70,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -272,8 +319,11 @@ def test_bat_balanced_proportional(cfg: BudgetConfig) -> None:
 def test_bat_unbalanced_lower_gets_more(cfg: BudgetConfig) -> None:
     """Large SoC spread (>5 pp) → aggressive split, lower gets 100 %."""
     inp = _inp(
-        pv_w=3000, house_w=500, grid_w=-2500,
-        bat_k_soc=85, bat_f_soc=95,  # 10 pp spread → aggressive
+        pv_w=3000,
+        house_w=500,
+        grid_w=-2500,
+        bat_k_soc=85,
+        bat_f_soc=95,  # 10 pp spread → aggressive
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -302,9 +352,12 @@ def test_evening_discharge_covers_house_load(cfg: BudgetConfig) -> None:
     while being closed-loop on the measured bat + grid state.
     """
     inp = _inp(
-        hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        hour=_EVENING_DISCHARGE_HOUR,
+        pv_w=0,
+        house_w=_EVENING_HOUSE_LOAD_W,
         grid_w=_EVENING_GRID_IMPORT_W,
-        bat_k_soc=_EVENING_BAT_SOC, bat_f_soc=_EVENING_BAT_SOC,
+        bat_k_soc=_EVENING_BAT_SOC,
+        bat_f_soc=_EVENING_BAT_SOC,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -325,9 +378,12 @@ def test_evening_discharge_proportional(cfg: BudgetConfig) -> None:
     inverter rate capacity because that is the real physical constraint.
     """
     inp = _inp(
-        hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        hour=_EVENING_DISCHARGE_HOUR,
+        pv_w=0,
+        house_w=_EVENING_HOUSE_LOAD_W,
         grid_w=_EVENING_GRID_IMPORT_W,
-        bat_k_soc=_EVENING_BAT_SOC, bat_f_soc=_EVENING_BAT_SOC,
+        bat_k_soc=_EVENING_BAT_SOC,
+        bat_f_soc=_EVENING_BAT_SOC,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -341,9 +397,12 @@ def test_evening_discharge_proportional(cfg: BudgetConfig) -> None:
 def test_evening_discharge_discharge_pv_commands(cfg: BudgetConfig) -> None:
     """Evening discharge emits discharge_pv mode + limit commands."""
     inp = _inp(
-        hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        hour=_EVENING_DISCHARGE_HOUR,
+        pv_w=0,
+        house_w=_EVENING_HOUSE_LOAD_W,
         grid_w=_EVENING_GRID_IMPORT_W,
-        bat_k_soc=_EVENING_BAT_SOC, bat_f_soc=_EVENING_BAT_SOC,
+        bat_k_soc=_EVENING_BAT_SOC,
+        bat_f_soc=_EVENING_BAT_SOC,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -359,10 +418,14 @@ def test_evening_discharge_discharge_pv_commands(cfg: BudgetConfig) -> None:
 def test_evening_discharge_no_ev(cfg: BudgetConfig) -> None:
     """Evening discharge: EV always off (preserve bat for peak shaving)."""
     inp = _inp(
-        hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        hour=_EVENING_DISCHARGE_HOUR,
+        pv_w=0,
+        house_w=_EVENING_HOUSE_LOAD_W,
         grid_w=_EVENING_GRID_IMPORT_W,
-        ev_connected=True, ev_soc=50,
-        bat_k_soc=_EVENING_BAT_SOC, bat_f_soc=_EVENING_BAT_SOC,
+        ev_connected=True,
+        ev_soc=50,
+        bat_k_soc=_EVENING_BAT_SOC,
+        bat_f_soc=_EVENING_BAT_SOC,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -372,9 +435,12 @@ def test_evening_discharge_no_ev(cfg: BudgetConfig) -> None:
 def test_evening_discharge_skipped_bat_low(cfg: BudgetConfig) -> None:
     """Evening discharge: bat at min_soc → no discharge, falls through to standby."""
     inp = _inp(
-        hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        hour=_EVENING_DISCHARGE_HOUR,
+        pv_w=0,
+        house_w=_EVENING_HOUSE_LOAD_W,
         grid_w=_EVENING_GRID_IMPORT_W,
-        bat_k_soc=_EVENING_BAT_LOW_SOC, bat_f_soc=_EVENING_BAT_LOW_SOC,
+        bat_k_soc=_EVENING_BAT_LOW_SOC,
+        bat_f_soc=_EVENING_BAT_LOW_SOC,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -385,9 +451,12 @@ def test_evening_discharge_skipped_bat_low(cfg: BudgetConfig) -> None:
 def test_evening_discharge_bat_full_still_discharges(cfg: BudgetConfig) -> None:
     """Evening discharge: bat at 100% → zero_grid still discharges to grid=0."""
     inp = _inp(
-        hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        hour=_EVENING_DISCHARGE_HOUR,
+        pv_w=0,
+        house_w=_EVENING_HOUSE_LOAD_W,
         grid_w=_EVENING_GRID_IMPORT_W,
-        bat_k_soc=100.0, bat_f_soc=100.0,
+        bat_k_soc=100.0,
+        bat_f_soc=100.0,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -398,9 +467,12 @@ def test_evening_discharge_bat_full_still_discharges(cfg: BudgetConfig) -> None:
 def test_evening_discharge_grid_responsive(cfg: BudgetConfig) -> None:
     """Grid exporting (negative) → no discharge needed (bat already covers)."""
     inp = _inp(
-        hour=_EVENING_DISCHARGE_HOUR, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        hour=_EVENING_DISCHARGE_HOUR,
+        pv_w=0,
+        house_w=_EVENING_HOUSE_LOAD_W,
         grid_w=-500.0,  # exporting = bat gives too much
-        bat_k_soc=_EVENING_BAT_SOC, bat_f_soc=_EVENING_BAT_SOC,
+        bat_k_soc=_EVENING_BAT_SOC,
+        bat_f_soc=_EVENING_BAT_SOC,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -415,9 +487,12 @@ def test_evening_20h_covers_grid_import(cfg: BudgetConfig) -> None:
     leaked multi-kW imports during expensive hours.
     """
     inp = _inp(
-        hour=20, pv_w=0, house_w=_EVENING_HOUSE_LOAD_W,
+        hour=20,
+        pv_w=0,
+        house_w=_EVENING_HOUSE_LOAD_W,
         grid_w=_EVENING_GRID_IMPORT_W,
-        bat_k_soc=_EVENING_BAT_SOC, bat_f_soc=_EVENING_BAT_SOC,
+        bat_k_soc=_EVENING_BAT_SOC,
+        bat_f_soc=_EVENING_BAT_SOC,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -428,6 +503,7 @@ def test_evening_20h_covers_grid_import(cfg: BudgetConfig) -> None:
 # -------------------------------------------------------------------
 # HARD RULE: ALDRIG grid import dagtid
 # -------------------------------------------------------------------
+
 
 def test_never_import_daytime(cfg: BudgetConfig) -> None:
     """No PV surplus → no allocation. Grid stays at 0."""
@@ -442,6 +518,7 @@ def test_never_import_daytime(cfg: BudgetConfig) -> None:
 # Night
 # -------------------------------------------------------------------
 
+
 def test_night_defers(cfg: BudgetConfig) -> None:
     """Night → budget allocator defers (no bat/EV commands)."""
     inp = _inp(hour=23)
@@ -455,11 +532,16 @@ def test_night_defers(cfg: BudgetConfig) -> None:
 # Commands
 # -------------------------------------------------------------------
 
+
 def test_start_ev_command(cfg: BudgetConfig) -> None:
     """EV not charging + allocation → START command."""
     inp = _inp(
-        hour=9, pv_w=8000, house_w=500,
-        ev_connected=True, ev_charging=False, ev_amps=0,
+        hour=9,
+        pv_w=8000,
+        house_w=500,
+        ev_connected=True,
+        ev_charging=False,
+        ev_amps=0,
         grid_w=-4000,
     )
     state = BudgetState()
@@ -477,8 +559,12 @@ def test_stop_ev_command(cfg: BudgetConfig) -> None:
     PLAT-1740: comparison is against intended state, not HA-reported.
     """
     inp = _inp(
-        hour=14, pv_w=500, house_w=500,
-        ev_connected=True, ev_charging=True, ev_amps=6,
+        hour=14,
+        pv_w=500,
+        house_w=500,
+        ev_connected=True,
+        ev_charging=True,
+        ev_amps=6,
         bat_k_soc=80,
     )
     state = BudgetState(intended_ev_enabled=True, ev_current_amps=6)
@@ -501,10 +587,12 @@ def test_all_commands_have_rule_id(cfg: BudgetConfig) -> None:
 # Guard tests (per 901 reject krav)
 # -------------------------------------------------------------------
 
+
 def test_house_load_formula_sign_convention() -> None:
     """Guard: house = grid + pv - bat_charge - ev. Never grid + bat_charge."""
     # Read engine.py source and verify formula
     from pathlib import Path
+
     source = (Path(__file__).resolve().parents[2] / "core" / "engine.py").read_text()
     for i, line in enumerate(source.splitlines(), 1):
         if "house_w" in line and "bat_charge_w" in line and "=" in line:
@@ -517,6 +605,7 @@ def test_house_load_formula_sign_convention() -> None:
 def test_balance_ratios_are_named_constants() -> None:
     """Guard: no raw 0.8/0.2 in engine.py balance logic."""
     from pathlib import Path
+
     source = (Path(__file__).resolve().parents[2] / "core" / "engine.py").read_text()
     for i, line in enumerate(source.splitlines(), 1):
         stripped = line.strip()
@@ -558,7 +647,10 @@ def test_balance_ratios_are_named_constants() -> None:
     ],
 )
 def test_plat1695_bat_charge_stops_at_config_threshold(
-    soc_k: float, soc_f: float, stop_pct: float, expect_bat_cmds: bool,
+    soc_k: float,
+    soc_f: float,
+    stop_pct: float,
+    expect_bat_cmds: bool,
 ) -> None:
     """PLAT-1695: Stop charging at bat_charge_stop_soc_pct (config-driven).
 
@@ -566,10 +658,10 @@ def test_plat1695_bat_charge_stops_at_config_threshold(
     """
     cfg = BudgetConfig(bat_charge_stop_soc_pct=stop_pct)
     inp = _inp(
-        hour=14,            # EM path (bat-prio)
-        pv_w=5000.0,        # plenty of PV
+        hour=14,  # EM path (bat-prio)
+        pv_w=5000.0,  # plenty of PV
         house_w=500.0,
-        grid_w=-4000.0,     # exporting
+        grid_w=-4000.0,  # exporting
         bat_k_soc=soc_k,
         bat_f_soc=soc_f,
     )
@@ -577,7 +669,8 @@ def test_plat1695_bat_charge_stops_at_config_threshold(
     result = allocate(inp, cfg)
 
     bat_charge_cmds = [
-        c for c in result.commands
+        c
+        for c in result.commands
         if c.command_type == CommandType.SET_EMS_MODE and c.value == "charge_battery"
     ]
     if expect_bat_cmds:
@@ -601,28 +694,29 @@ def test_plat1695_only_lower_bat_charges_when_mixed() -> None:
         pv_w=5000.0,
         house_w=500.0,
         grid_w=-4000.0,
-        bat_k_soc=94.0,   # below threshold
-        bat_f_soc=96.0,   # above threshold
+        bat_k_soc=94.0,  # below threshold
+        bat_f_soc=96.0,  # above threshold
     )
 
     result = allocate(inp, cfg)
 
     charge_targets = {
-        c.target_id for c in result.commands
+        c.target_id
+        for c in result.commands
         if c.command_type == CommandType.SET_EMS_MODE and c.value == "charge_battery"
     }
     standby_targets = {
-        c.target_id for c in result.commands
-        if c.command_type == CommandType.SET_EMS_MODE
-        and c.value == "battery_standby"
+        c.target_id
+        for c in result.commands
+        if c.command_type == CommandType.SET_EMS_MODE and c.value == "battery_standby"
     }
 
-    assert "kontor" in charge_targets, (
-        f"kontor (SoC 94%) should charge. Charge targets: {charge_targets}"
-    )
-    assert "forrad" in standby_targets, (
-        f"forrad (SoC 96%) should be standby. Standby targets: {standby_targets}"
-    )
+    assert (
+        "kontor" in charge_targets
+    ), f"kontor (SoC 94%) should charge. Charge targets: {charge_targets}"
+    assert (
+        "forrad" in standby_targets
+    ), f"forrad (SoC 96%) should be standby. Standby targets: {standby_targets}"
 
 
 @pytest.mark.parametrize(
@@ -646,7 +740,10 @@ def test_plat1695_only_lower_bat_charges_when_mixed() -> None:
     ],
 )
 def test_plat1695_grid_w_variation(
-    grid_w: float, soc_k: float, soc_f: float, should_kontor_charge: bool,
+    grid_w: float,
+    soc_k: float,
+    soc_f: float,
+    should_kontor_charge: bool,
 ) -> None:
     """PLAT-1695 + PLAT-1718: grid-driven allocation × SoC-gate matrix.
 
@@ -665,15 +762,14 @@ def test_plat1695_grid_w_variation(
     )
     result = allocate(inp, cfg)
     kontor_cmd = next(
-        (c for c in result.commands
-         if c.command_type == CommandType.SET_EMS_MODE
-         and c.target_id == "kontor"),
+        (
+            c
+            for c in result.commands
+            if c.command_type == CommandType.SET_EMS_MODE and c.target_id == "kontor"
+        ),
         None,
     )
-    kontor_charges = (
-        kontor_cmd is not None
-        and kontor_cmd.value == "charge_battery"
-    )
+    kontor_charges = kontor_cmd is not None and kontor_cmd.value == "charge_battery"
     assert kontor_charges is should_kontor_charge, (
         f"grid={grid_w} soc_k={soc_k} soc_f={soc_f}: "
         f"expected charge={should_kontor_charge}, "
@@ -698,21 +794,23 @@ def test_plat1708_bat_full_soc100_goes_to_standby() -> None:
     )
     result = allocate(inp, cfg)
     standby_cmds = [
-        c for c in result.commands
-        if c.command_type == CommandType.SET_EMS_MODE
-        and c.value == "battery_standby"
+        c
+        for c in result.commands
+        if c.command_type == CommandType.SET_EMS_MODE and c.value == "battery_standby"
     ]
     limit_cmds = {
-        c.target_id: c.value for c in result.commands
+        c.target_id: c.value
+        for c in result.commands
         if c.command_type == CommandType.SET_EMS_POWER_LIMIT
     }
-    assert {c.target_id for c in standby_cmds} >= {"kontor", "forrad"}, (
-        "Both full bats must be commanded to battery_standby"
-    )
+    assert {c.target_id for c in standby_cmds} >= {
+        "kontor",
+        "forrad",
+    }, "Both full bats must be commanded to battery_standby"
     for bid in ("kontor", "forrad"):
-        assert limit_cmds.get(bid) == 0, (
-            f"{bid} limit should be 0 when SoC=100, got {limit_cmds.get(bid)}"
-        )
+        assert (
+            limit_cmds.get(bid) == 0
+        ), f"{bid} limit should be 0 when SoC=100, got {limit_cmds.get(bid)}"
 
 
 def test_plat1695_default_stop_matches_state_machine_s8_entry() -> None:
@@ -743,7 +841,7 @@ def test_plat1714_bat_charge_uses_charge_battery_not_charge_pv() -> None:
     """PLAT-1714: Budget charge must emit charge_battery (mode 11), not charge_pv."""
     cfg = BudgetConfig()
     inp = _inp(
-        hour=14,           # EM
+        hour=14,  # EM
         pv_w=5000.0,
         house_w=500.0,
         grid_w=-4000.0,
@@ -752,8 +850,7 @@ def test_plat1714_bat_charge_uses_charge_battery_not_charge_pv() -> None:
     )
 
     result = allocate(inp, cfg)
-    mode_cmds = [c for c in result.commands
-                 if c.command_type == CommandType.SET_EMS_MODE]
+    mode_cmds = [c for c in result.commands if c.command_type == CommandType.SET_EMS_MODE]
     charge_pv_cmds = [c for c in mode_cmds if c.value == "charge_pv"]
     charge_bat_cmds = [c for c in mode_cmds if c.value == "charge_battery"]
 
@@ -761,9 +858,7 @@ def test_plat1714_bat_charge_uses_charge_battery_not_charge_pv() -> None:
         f"PLAT-1714: Budget must NOT emit charge_pv (uncontrollable in peak_shaving). "
         f"Offending cmds: {[(c.target_id, c.reason) for c in charge_pv_cmds]}"
     )
-    assert charge_bat_cmds, (
-        "PLAT-1714: Budget must emit charge_battery for PV-surplus absorption"
-    )
+    assert charge_bat_cmds, "PLAT-1714: Budget must emit charge_battery for PV-surplus absorption"
 
 
 def test_plat1714_bat_charge_emits_matching_power_limit() -> None:
@@ -783,10 +878,14 @@ def test_plat1714_bat_charge_emits_matching_power_limit() -> None:
 
     result = allocate(inp, cfg)
     # Group mode + limit commands by target_id
-    modes = {c.target_id: c.value for c in result.commands
-             if c.command_type == CommandType.SET_EMS_MODE}
-    limits = {c.target_id: c.value for c in result.commands
-              if c.command_type == CommandType.SET_EMS_POWER_LIMIT}
+    modes = {
+        c.target_id: c.value for c in result.commands if c.command_type == CommandType.SET_EMS_MODE
+    }
+    limits = {
+        c.target_id: c.value
+        for c in result.commands
+        if c.command_type == CommandType.SET_EMS_POWER_LIMIT
+    }
 
     for bid, mode in modes.items():
         if mode == "charge_battery":
@@ -795,8 +894,7 @@ def test_plat1714_bat_charge_emits_matching_power_limit() -> None:
                 f"SET_EMS_POWER_LIMIT emitted"
             )
             assert limits[bid] > 0, (
-                f"PLAT-1714: bat {bid} charge_battery limit must be > 0, "
-                f"got {limits[bid]}"
+                f"PLAT-1714: bat {bid} charge_battery limit must be > 0, " f"got {limits[bid]}"
             )
 
 
@@ -809,17 +907,21 @@ def test_plat1714_standby_emits_limit_zero() -> None:
         pv_w=5000.0,
         house_w=500.0,
         grid_w=-4000.0,
-        bat_k_soc=96.0,   # above threshold → standby
+        bat_k_soc=96.0,  # above threshold → standby
         bat_f_soc=97.0,
     )
 
     result = allocate(inp, cfg)
-    standby_targets = {c.target_id for c in result.commands
-                       if c.command_type == CommandType.SET_EMS_MODE
-                       and c.value == "battery_standby"}
-    limit_zero_targets = {c.target_id for c in result.commands
-                          if c.command_type == CommandType.SET_EMS_POWER_LIMIT
-                          and c.value == 0}
+    standby_targets = {
+        c.target_id
+        for c in result.commands
+        if c.command_type == CommandType.SET_EMS_MODE and c.value == "battery_standby"
+    }
+    limit_zero_targets = {
+        c.target_id
+        for c in result.commands
+        if c.command_type == CommandType.SET_EMS_POWER_LIMIT and c.value == 0
+    }
 
     assert standby_targets == limit_zero_targets, (
         f"PLAT-1714: Every standby bat must also emit limit=0. "
@@ -859,18 +961,27 @@ def test_plat1715_cascade_turn_on_lowest_priority_on_sustained_export() -> None:
         bat_charge_stop_soc_pct=95.0,
     )
     inp = _inp(
-        hour=14, pv_w=6000, house_w=500, grid_w=-1500,
-        bat_k_soc=96, bat_f_soc=96,  # PLAT-1738: at stop-SoC
+        hour=14,
+        pv_w=6000,
+        house_w=500,
+        grid_w=-1500,
+        bat_k_soc=96,
+        bat_f_soc=96,  # PLAT-1738: at stop-SoC
     )
     inp_with_consumers = BudgetInput(
         now=inp.now,
         grid_power_w=inp.grid_power_w,
         pv_power_w=inp.pv_power_w,
         house_load_w=inp.house_load_w,
-        ev_connected=False, ev_charging=False,
-        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
-        bat_socs=inp.bat_socs, bat_caps=inp.bat_caps,
-        bat_powers=inp.bat_powers, bat_modes=inp.bat_modes,
+        ev_connected=False,
+        ev_charging=False,
+        ev_current_amps=0,
+        ev_soc_pct=50.0,
+        ev_target_soc_pct=100.0,
+        bat_socs=inp.bat_socs,
+        bat_caps=inp.bat_caps,
+        bat_powers=inp.bat_powers,
+        bat_modes=inp.bat_modes,
         consumers=(
             _c("vp", active=False, priority=2, priority_shed=2),
             _c("miner", active=False, priority=99, priority_shed=1),
@@ -879,10 +990,7 @@ def test_plat1715_cascade_turn_on_lowest_priority_on_sustained_export() -> None:
     # 2 consecutive export cycles required
     state = BudgetState(consecutive_export_cycles=2)
     result = allocate(inp_with_consumers, cfg, state)
-    starts = [
-        c for c in result.commands
-        if c.command_type == CommandType.TURN_ON_CONSUMER
-    ]
+    starts = [c for c in result.commands if c.command_type == CommandType.TURN_ON_CONSUMER]
     assert len(starts) == 1
     assert starts[0].target_id == "vp"  # lowest priority number wins
 
@@ -894,9 +1002,13 @@ def test_plat1715_cascade_turn_off_highest_priority_shed_on_import() -> None:
     inp_with_consumers = BudgetInput(
         now=_inp().now,
         grid_power_w=400.0,  # import
-        pv_power_w=500.0, house_load_w=1200.0,
-        ev_connected=False, ev_charging=False,
-        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        pv_power_w=500.0,
+        house_load_w=1200.0,
+        ev_connected=False,
+        ev_charging=False,
+        ev_current_amps=0,
+        ev_soc_pct=50.0,
+        ev_target_soc_pct=100.0,
         bat_socs={"k": 60.0, "f": 60.0},
         bat_caps={"k": 15.0, "f": 5.0},
         bat_powers={"k": 0.0, "f": 0.0},
@@ -908,10 +1020,7 @@ def test_plat1715_cascade_turn_off_highest_priority_shed_on_import() -> None:
     )
     state = BudgetState()
     result = allocate(inp_with_consumers, cfg, state)
-    stops = [
-        c for c in result.commands
-        if c.command_type == CommandType.TURN_OFF_CONSUMER
-    ]
+    stops = [c for c in result.commands if c.command_type == CommandType.TURN_OFF_CONSUMER]
     assert len(stops) == 1
     # pool_heater has priority_shed=4 — highest → first to shed
     assert stops[0].target_id == "pool_heater"
@@ -922,6 +1031,7 @@ def test_plat1715_cascade_cooldown_prevents_immediate_reswitch() -> None:
     cooldown window, even if the grid signal would justify it."""
     cfg = BudgetConfig(cascade_cooldown_s=60.0, cascade_sustained_cycles=2)
     import time as _time
+
     now = _time.monotonic()
     state = BudgetState(
         consecutive_import_cycles=5,
@@ -929,19 +1039,26 @@ def test_plat1715_cascade_cooldown_prevents_immediate_reswitch() -> None:
     )
     inp_with_consumers = BudgetInput(
         now=_inp().now,
-        grid_power_w=500.0, pv_power_w=0.0, house_load_w=500.0,
-        ev_connected=False, ev_charging=False,
-        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
-        bat_socs={"k": 60.0}, bat_caps={"k": 15.0},
-        bat_powers={"k": 0.0}, bat_modes={"k": "charge_pv"},
+        grid_power_w=500.0,
+        pv_power_w=0.0,
+        house_load_w=500.0,
+        ev_connected=False,
+        ev_charging=False,
+        ev_current_amps=0,
+        ev_soc_pct=50.0,
+        ev_target_soc_pct=100.0,
+        bat_socs={"k": 60.0},
+        bat_caps={"k": 15.0},
+        bat_powers={"k": 0.0},
+        bat_modes={"k": "charge_pv"},
         consumers=(_c("vp", active=True, priority=2, priority_shed=2),),
     )
     result = allocate(inp_with_consumers, cfg, state)
     # vp is in cooldown → no turn_off should be emitted for it
     turn_offs_for_vp = [
-        c for c in result.commands
-        if c.command_type == CommandType.TURN_OFF_CONSUMER
-        and c.target_id == "vp"
+        c
+        for c in result.commands
+        if c.command_type == CommandType.TURN_OFF_CONSUMER and c.target_id == "vp"
     ]
     assert len(turn_offs_for_vp) == 0
 
@@ -952,19 +1069,22 @@ def test_plat1715_cascade_no_start_without_sustained_export() -> None:
     inp_with_consumers = BudgetInput(
         now=_inp().now,
         grid_power_w=-500.0,
-        pv_power_w=5000.0, house_load_w=500.0,
-        ev_connected=False, ev_charging=False,
-        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
-        bat_socs={"k": 60.0}, bat_caps={"k": 15.0},
-        bat_powers={"k": 0.0}, bat_modes={"k": "charge_pv"},
+        pv_power_w=5000.0,
+        house_load_w=500.0,
+        ev_connected=False,
+        ev_charging=False,
+        ev_current_amps=0,
+        ev_soc_pct=50.0,
+        ev_target_soc_pct=100.0,
+        bat_socs={"k": 60.0},
+        bat_caps={"k": 15.0},
+        bat_powers={"k": 0.0},
+        bat_modes={"k": "charge_pv"},
         consumers=(_c("vp", active=False, priority=2, priority_shed=2),),
     )
     state = BudgetState(consecutive_export_cycles=0)
     result = allocate(inp_with_consumers, cfg, state)
-    starts = [
-        c for c in result.commands
-        if c.command_type == CommandType.TURN_ON_CONSUMER
-    ]
+    starts = [c for c in result.commands if c.command_type == CommandType.TURN_ON_CONSUMER]
     assert len(starts) == 0
 
 
@@ -990,19 +1110,19 @@ def test_emergency_bat_gets_fast_charging_true_via_allocate() -> None:
     # Need a scenario where zero_grid_active and daytime so bat emit path
     # is reachable. EM + modest surplus does the job.
     inp = _inp(
-        hour=14, pv_w=3000, house_w=500, grid_w=-500,
-        bat_k_soc=10.0,   # below floor (15) → emergency
-        bat_f_soc=60.0,   # healthy
+        hour=14,
+        pv_w=3000,
+        house_w=500,
+        grid_w=-500,
+        bat_k_soc=10.0,  # below floor (15) → emergency
+        bat_f_soc=60.0,  # healthy
     )
     result = allocate(inp, cfg)
 
-    fc_cmds = [c for c in result.commands
-               if c.command_type == CommandType.SET_FAST_CHARGING]
+    fc_cmds = [c for c in result.commands if c.command_type == CommandType.SET_FAST_CHARGING]
     fc_map = {c.target_id: c.value for c in fc_cmds}
 
-    assert "kontor" in fc_map, (
-        "Expected SET_FAST_CHARGING emitted for emergency bat 'kontor'"
-    )
+    assert "kontor" in fc_map, "Expected SET_FAST_CHARGING emitted for emergency bat 'kontor'"
     assert fc_map["kontor"] is True, (
         f"Emergency bat (SoC=10 < floor=15) must get fast_charging=True, "
         f"got {fc_map['kontor']!r}"
@@ -1012,8 +1132,7 @@ def test_emergency_bat_gets_fast_charging_true_via_allocate() -> None:
         "(INV-3: explicit OFF elsewhere)"
     )
     assert fc_map["forrad"] is False, (
-        f"Non-emergency bat must get fast_charging=False (INV-3), "
-        f"got {fc_map['forrad']!r}"
+        f"Non-emergency bat must get fast_charging=False (INV-3), " f"got {fc_map['forrad']!r}"
     )
 
     # Reason-string sanity: emergency reason is explicit
@@ -1030,25 +1149,28 @@ def test_normal_bat_gets_fast_charging_false_via_allocate() -> None:
     """
     cfg = BudgetConfig(bat_discharge_min_soc_pct=15.0)
     inp = _inp(
-        hour=14, pv_w=3000, house_w=500, grid_w=-500,
+        hour=14,
+        pv_w=3000,
+        house_w=500,
+        grid_w=-500,
         bat_k_soc=60.0,
         bat_f_soc=60.0,
     )
     result = allocate(inp, cfg)
 
-    fc_cmds = [c for c in result.commands
-               if c.command_type == CommandType.SET_FAST_CHARGING]
+    fc_cmds = [c for c in result.commands if c.command_type == CommandType.SET_FAST_CHARGING]
     fc_map = {c.target_id: c.value for c in fc_cmds}
 
-    assert set(fc_map.keys()) == {"kontor", "forrad"}, (
-        f"Expected SET_FAST_CHARGING for both bats, got {set(fc_map.keys())}"
-    )
+    assert set(fc_map.keys()) == {
+        "kontor",
+        "forrad",
+    }, f"Expected SET_FAST_CHARGING for both bats, got {set(fc_map.keys())}"
     assert fc_map["kontor"] is False
     assert fc_map["forrad"] is False
     for c in fc_cmds:
-        assert "INV-3" in c.reason or "OFF" in c.reason, (
-            f"Reason must reference INV-3 invariant, got: {c.reason!r}"
-        )
+        assert (
+            "INV-3" in c.reason or "OFF" in c.reason
+        ), f"Reason must reference INV-3 invariant, got: {c.reason!r}"
 
 
 # -------------------------------------------------------------------
@@ -1069,9 +1191,13 @@ def test_plat1738_cascade_skips_when_bat_has_headroom() -> None:
     inp_with_consumers = BudgetInput(
         now=_inp().now,
         grid_power_w=-300.0,
-        pv_power_w=3000.0, house_load_w=500.0,
-        ev_connected=False, ev_charging=False,
-        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        pv_power_w=3000.0,
+        house_load_w=500.0,
+        ev_connected=False,
+        ev_charging=False,
+        ev_current_amps=0,
+        ev_soc_pct=50.0,
+        ev_target_soc_pct=100.0,
         bat_socs={"k": 50.0, "f": 50.0},
         bat_caps={"k": 15.0, "f": 5.0},
         bat_powers={"k": -1000.0, "f": -1000.0},  # charging 1 kW each
@@ -1083,10 +1209,7 @@ def test_plat1738_cascade_skips_when_bat_has_headroom() -> None:
     )
     state = BudgetState(consecutive_export_cycles=5)
     result = allocate(inp_with_consumers, cfg, state)
-    starts = [
-        c for c in result.commands
-        if c.command_type == CommandType.TURN_ON_CONSUMER
-    ]
+    starts = [c for c in result.commands if c.command_type == CommandType.TURN_ON_CONSUMER]
     assert not starts, (
         f"PLAT-1738: cascade fired despite bat headroom (SoC 50 %). "
         f"Offending reasons: {[c.reason for c in starts]}"
@@ -1107,26 +1230,24 @@ def test_plat1738_cascade_fires_when_bat_at_stop_soc() -> None:
     inp_with_consumers = BudgetInput(
         now=_inp().now,
         grid_power_w=-300.0,
-        pv_power_w=3000.0, house_load_w=500.0,
-        ev_connected=False, ev_charging=False,
-        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        pv_power_w=3000.0,
+        house_load_w=500.0,
+        ev_connected=False,
+        ev_charging=False,
+        ev_current_amps=0,
+        ev_soc_pct=50.0,
+        ev_target_soc_pct=100.0,
         bat_socs={"k": 95.5, "f": 96.0},  # at/above stop
         bat_caps={"k": 15.0, "f": 5.0},
         bat_powers={"k": 0.0, "f": 0.0},
         bat_modes={"k": "battery_standby", "f": "battery_standby"},
-        consumers=(
-            _c("vp", active=False, priority=2, priority_shed=2),
-        ),
+        consumers=(_c("vp", active=False, priority=2, priority_shed=2),),
     )
     state = BudgetState(consecutive_export_cycles=5)
     result = allocate(inp_with_consumers, cfg, state)
-    starts = [
-        c for c in result.commands
-        if c.command_type == CommandType.TURN_ON_CONSUMER
-    ]
+    starts = [c for c in result.commands if c.command_type == CommandType.TURN_ON_CONSUMER]
     assert len(starts) == 1, (
-        f"PLAT-1738: cascade should fire when both bats at stop-SoC. "
-        f"Got {len(starts)} starts."
+        f"PLAT-1738: cascade should fire when both bats at stop-SoC. " f"Got {len(starts)} starts."
     )
     assert starts[0].target_id == "vp"
 
@@ -1147,23 +1268,22 @@ def test_plat1738_cascade_fires_when_both_bats_above_stop_soc() -> None:
     inp_with_consumers = BudgetInput(
         now=_inp().now,
         grid_power_w=-300.0,
-        pv_power_w=3000.0, house_load_w=500.0,
-        ev_connected=False, ev_charging=False,
-        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        pv_power_w=3000.0,
+        house_load_w=500.0,
+        ev_connected=False,
+        ev_charging=False,
+        ev_current_amps=0,
+        ev_soc_pct=50.0,
+        ev_target_soc_pct=100.0,
         bat_socs={"k": 96.0, "f": 96.0},  # both at/above stop
         bat_caps={"k": 15.0, "f": 5.0},
         bat_powers={"k": 0.0, "f": 0.0},
         bat_modes={"k": "battery_standby", "f": "battery_standby"},
-        consumers=(
-            _c("vp", active=False, priority=2, priority_shed=2),
-        ),
+        consumers=(_c("vp", active=False, priority=2, priority_shed=2),),
     )
     state = BudgetState(consecutive_export_cycles=5)
     result = allocate(inp_with_consumers, cfg, state)
-    starts = [
-        c for c in result.commands
-        if c.command_type == CommandType.TURN_ON_CONSUMER
-    ]
+    starts = [c for c in result.commands if c.command_type == CommandType.TURN_ON_CONSUMER]
     assert len(starts) == 1
 
 
@@ -1186,32 +1306,31 @@ def test_plat1738_cascade_fires_when_bat_alloc_at_physical_max() -> None:
     inp_with_consumers = BudgetInput(
         now=_inp().now,
         grid_power_w=-8000.0,
-        pv_power_w=15000.0, house_load_w=500.0,
-        ev_connected=False, ev_charging=False,
-        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        pv_power_w=15000.0,
+        house_load_w=500.0,
+        ev_connected=False,
+        ev_charging=False,
+        ev_current_amps=0,
+        ev_soc_pct=50.0,
+        ev_target_soc_pct=100.0,
         bat_socs={"k": 88.0, "f": 88.0},  # under stop-SoC
         bat_caps={"k": 15.0, "f": 5.0},
         bat_powers={"k": -4800.0, "f": -4800.0},  # each charging near max
         bat_modes={"k": "charge_battery", "f": "charge_battery"},
-        consumers=(
-            _c("vp", active=False, priority=2, priority_shed=2),
-        ),
+        consumers=(_c("vp", active=False, priority=2, priority_shed=2),),
     )
     state = BudgetState(consecutive_export_cycles=5)
     result = allocate(inp_with_consumers, cfg, state)
-    starts = [
-        c for c in result.commands
-        if c.command_type == CommandType.TURN_ON_CONSUMER
-    ]
+    starts = [c for c in result.commands if c.command_type == CommandType.TURN_ON_CONSUMER]
     assert len(starts) == 1, (
         f"PLAT-1738 F1: cascade should fire via alloc_at_max arm "
         f"(bats under stop-SoC but at physical max). Got {len(starts)} starts."
     )
     reason = starts[0].reason
     # Reason must show alloc-max tag (not stop-SoC) — proves alloc-arm triggered
-    assert "alloc-max" in reason, (
-        f"PLAT-1738 F1: reason should mark bats as 'alloc-max', got: {reason!r}"
-    )
+    assert (
+        "alloc-max" in reason
+    ), f"PLAT-1738 F1: reason should mark bats as 'alloc-max', got: {reason!r}"
 
 
 # -------------------------------------------------------------------
@@ -1231,16 +1350,21 @@ def test_plat1740_start_not_re_emitted_when_intended_already_on() -> None:
     back to False (plug-sensor glitch). Budget must NOT re-emit START."""
     cfg = BudgetConfig()
     inp = _inp(
-        hour=14, pv_w=6000, house_w=500, grid_w=-4500,
-        ev_connected=True, ev_charging=False,  # flapped back to False
-        ev_amps=6, ev_soc=50.0, ev_target=100.0,
+        hour=14,
+        pv_w=6000,
+        house_w=500,
+        grid_w=-4500,
+        ev_connected=True,
+        ev_charging=False,  # flapped back to False
+        ev_amps=6,
+        ev_soc=50.0,
+        ev_target=100.0,
     )
     # State: Budget already emitted START on a previous cycle
     state = BudgetState(intended_ev_enabled=True, ev_current_amps=6)
     result = allocate(inp, cfg, state)
 
-    starts = [c for c in result.commands
-              if c.command_type == CommandType.START_EV_CHARGING]
+    starts = [c for c in result.commands if c.command_type == CommandType.START_EV_CHARGING]
     assert not starts, (
         "PLAT-1740: START re-emitted despite intended_ev_enabled=True. "
         f"Offending: {[c.reason for c in starts]}"
@@ -1252,16 +1376,21 @@ def test_plat1740_stop_not_re_emitted_when_intended_already_off() -> None:
     back to True. Budget must NOT re-emit STOP."""
     cfg = BudgetConfig()
     inp = _inp(
-        hour=14, pv_w=0, house_w=2000, grid_w=2000,  # no surplus
-        ev_connected=True, ev_charging=True,  # HA flapped to True
-        ev_amps=0, ev_soc=50.0, ev_target=100.0,
+        hour=14,
+        pv_w=0,
+        house_w=2000,
+        grid_w=2000,  # no surplus
+        ev_connected=True,
+        ev_charging=True,  # HA flapped to True
+        ev_amps=0,
+        ev_soc=50.0,
+        ev_target=100.0,
     )
     # State: Budget already emitted STOP on a previous cycle
     state = BudgetState(intended_ev_enabled=False, ev_current_amps=0)
     result = allocate(inp, cfg, state)
 
-    stops = [c for c in result.commands
-             if c.command_type == CommandType.STOP_EV_CHARGING]
+    stops = [c for c in result.commands if c.command_type == CommandType.STOP_EV_CHARGING]
     assert not stops, (
         "PLAT-1740: STOP re-emitted despite intended_ev_enabled=False. "
         f"Offending: {[c.reason for c in stops]}"
@@ -1277,19 +1406,24 @@ def test_plat1740_start_emitted_once_on_transition_from_off_to_on() -> None:
     """
     cfg = BudgetConfig()
     inp = _inp(
-        hour=10, pv_w=6000, house_w=500, grid_w=-4500,
-        ev_connected=True, ev_charging=False,
-        ev_amps=0, ev_soc=50.0, ev_target=100.0,
+        hour=10,
+        pv_w=6000,
+        house_w=500,
+        grid_w=-4500,
+        ev_connected=True,
+        ev_charging=False,
+        ev_amps=0,
+        ev_soc=50.0,
+        ev_target=100.0,
     )
     state = BudgetState(intended_ev_enabled=False, ev_current_amps=0)
     result = allocate(inp, cfg, state)
 
-    starts = [c for c in result.commands
-              if c.command_type == CommandType.START_EV_CHARGING]
+    starts = [c for c in result.commands if c.command_type == CommandType.START_EV_CHARGING]
     assert len(starts) == 1, "START must be emitted on off→on transition"
-    assert state.intended_ev_enabled is True, (
-        "intended_ev_enabled must flip to True after emitting START"
-    )
+    assert (
+        state.intended_ev_enabled is True
+    ), "intended_ev_enabled must flip to True after emitting START"
 
 
 def test_plat1740_stop_emitted_once_on_transition_from_on_to_off() -> None:
@@ -1297,19 +1431,24 @@ def test_plat1740_stop_emitted_once_on_transition_from_on_to_off() -> None:
     and intended_ev_enabled state flipped to False."""
     cfg = BudgetConfig()
     inp = _inp(
-        hour=14, pv_w=0, house_w=2000, grid_w=2000,
-        ev_connected=True, ev_charging=True,
-        ev_amps=6, ev_soc=50.0, ev_target=100.0,
+        hour=14,
+        pv_w=0,
+        house_w=2000,
+        grid_w=2000,
+        ev_connected=True,
+        ev_charging=True,
+        ev_amps=6,
+        ev_soc=50.0,
+        ev_target=100.0,
     )
     state = BudgetState(intended_ev_enabled=True, ev_current_amps=6)
     result = allocate(inp, cfg, state)
 
-    stops = [c for c in result.commands
-             if c.command_type == CommandType.STOP_EV_CHARGING]
+    stops = [c for c in result.commands if c.command_type == CommandType.STOP_EV_CHARGING]
     assert len(stops) == 1, "STOP must be emitted on on→off transition"
-    assert state.intended_ev_enabled is False, (
-        "intended_ev_enabled must flip to False after emitting STOP"
-    )
+    assert (
+        state.intended_ev_enabled is False
+    ), "intended_ev_enabled must flip to False after emitting STOP"
 
 
 def test_plat1740_set_current_compares_to_intended_not_ha_state() -> None:
@@ -1317,17 +1456,21 @@ def test_plat1740_set_current_compares_to_intended_not_ha_state() -> None:
     last) not HA-reported amps (which can lag or flap)."""
     cfg = BudgetConfig()
     inp = _inp(
-        hour=14, pv_w=6000, house_w=500, grid_w=-4500,
-        ev_connected=True, ev_charging=True,
+        hour=14,
+        pv_w=6000,
+        house_w=500,
+        grid_w=-4500,
+        ev_connected=True,
+        ev_charging=True,
         ev_amps=0,  # HA reports 0 (stale/glitch)
-        ev_soc=50.0, ev_target=100.0,
+        ev_soc=50.0,
+        ev_target=100.0,
     )
     # State: Budget told charger 6A last cycle
     state = BudgetState(intended_ev_enabled=True, ev_current_amps=6)
     result = allocate(inp, cfg, state)
 
-    sets = [c for c in result.commands
-            if c.command_type == CommandType.SET_EV_CURRENT]
+    sets = [c for c in result.commands if c.command_type == CommandType.SET_EV_CURRENT]
     # If ev_target resolves to 6A (same as intended), no re-emit
     # If Budget ramps it up, emit once with new value, not the stale HA one
     if sets:
@@ -1350,21 +1493,24 @@ def test_plat1740_277_flap_regression() -> None:
     stop_count = 0
     for i in range(20):
         # alternate: HA reports charging true/false even though we want it on
-        ha_charging = (i % 2 == 0)
+        ha_charging = i % 2 == 0
         inp = _inp(
-            hour=14, pv_w=6000, house_w=500, grid_w=-4500,
-            ev_connected=True, ev_charging=ha_charging,
+            hour=14,
+            pv_w=6000,
+            house_w=500,
+            grid_w=-4500,
+            ev_connected=True,
+            ev_charging=ha_charging,
             ev_amps=6 if ha_charging else 0,
-            ev_soc=50.0, ev_target=100.0,
+            ev_soc=50.0,
+            ev_target=100.0,
         )
         result = allocate(inp, cfg, state)
         start_count += sum(
-            1 for c in result.commands
-            if c.command_type == CommandType.START_EV_CHARGING
+            1 for c in result.commands if c.command_type == CommandType.START_EV_CHARGING
         )
         stop_count += sum(
-            1 for c in result.commands
-            if c.command_type == CommandType.STOP_EV_CHARGING
+            1 for c in result.commands if c.command_type == CommandType.STOP_EV_CHARGING
         )
 
     assert start_count <= 1, (
@@ -1382,19 +1528,30 @@ def test_plat1740_night_mode_does_not_touch_intended_state() -> None:
     intended_ev_enabled must NOT be modified by Budget at night."""
     cfg = BudgetConfig()
     inp = _inp(
-        hour=23, pv_w=0, house_w=2000, grid_w=2000,
-        ev_connected=True, ev_charging=True,
-        ev_amps=6, ev_soc=50.0, ev_target=100.0,
+        hour=23,
+        pv_w=0,
+        house_w=2000,
+        grid_w=2000,
+        ev_connected=True,
+        ev_charging=True,
+        ev_amps=6,
+        ev_soc=50.0,
+        ev_target=100.0,
     )
     # NightEV has set state: EV enabled at 6A
     state = BudgetState(intended_ev_enabled=True, ev_current_amps=6)
     result = allocate(inp, cfg, state)
 
-    ev_cmds = [c for c in result.commands if c.command_type in (
-        CommandType.START_EV_CHARGING,
-        CommandType.STOP_EV_CHARGING,
-        CommandType.SET_EV_CURRENT,
-    )]
+    ev_cmds = [
+        c
+        for c in result.commands
+        if c.command_type
+        in (
+            CommandType.START_EV_CHARGING,
+            CommandType.STOP_EV_CHARGING,
+            CommandType.SET_EV_CURRENT,
+        )
+    ]
     assert not ev_cmds, (
         f"PLAT-1740: Budget must not emit EV cmds at night. "
         f"Offending: {[(c.command_type.value, c.reason) for c in ev_cmds]}"
@@ -1414,11 +1571,15 @@ def test_plat1740_night_mode_does_not_touch_intended_state() -> None:
 def test_plat1737_tuner_disabled_no_change_to_bat_alloc() -> None:
     """grid_tuner.enabled=False → bat_alloc unchanged vs baseline."""
     from core.grid_tuner import GridTunerConfig
+
     cfg = BudgetConfig(grid_tuner=GridTunerConfig(enabled=False))
     inp = _inp(
-        hour=12, pv_w=5000, house_w=500,
+        hour=12,
+        pv_w=5000,
+        house_w=500,
         grid_w=-500.0,  # big enough export so zero_grid allocates real charge
-        bat_k_soc=60, bat_f_soc=60,
+        bat_k_soc=60,
+        bat_f_soc=60,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -1426,11 +1587,13 @@ def test_plat1737_tuner_disabled_no_change_to_bat_alloc() -> None:
 
     # Now with enabled=True (tier3 + 500 W correction added to charge)
     cfg_on = BudgetConfig(
-        grid_tuner=GridTunerConfig(enabled=True,
-                                    tiers_w=(50.0, 75.0, 100.0),
-                                    corrections_w=(100, 300, 500),
-                                    rolling_window_s=300,
-                                    mode_change_stability_w=50.0),
+        grid_tuner=GridTunerConfig(
+            enabled=True,
+            tiers_w=(50.0, 75.0, 100.0),
+            corrections_w=(100, 300, 500),
+            rolling_window_s=300,
+            mode_change_stability_w=50.0,
+        ),
     )
     state2 = BudgetState()
     result_on = allocate(inp, cfg_on, state2)
@@ -1447,6 +1610,7 @@ def test_plat1737_tuner_disabled_no_change_to_bat_alloc() -> None:
 def test_plat1737_tuner_respects_bat_max_on_charge() -> None:
     """Delta applied to charge-mode must not push alloc past max_charge_w."""
     from core.grid_tuner import GridTunerConfig
+
     cfg = BudgetConfig(
         bat_default_max_charge_w=3000,  # low cap for test
         grid_tuner=GridTunerConfig(
@@ -1458,21 +1622,25 @@ def test_plat1737_tuner_respects_bat_max_on_charge() -> None:
         ),
     )
     inp = _inp(
-        hour=12, pv_w=10000, house_w=500,
+        hour=12,
+        pv_w=10000,
+        house_w=500,
         grid_w=-3000.0,  # big export → tier3
-        bat_k_soc=60, bat_f_soc=60,
+        bat_k_soc=60,
+        bat_f_soc=60,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
     for bid, alloc in result.bat_allocations.items():
-        assert alloc <= cfg.bat_default_max_charge_w, (
-            f"PLAT-1737: {bid} alloc {alloc}W > max {cfg.bat_default_max_charge_w}W"
-        )
+        assert (
+            alloc <= cfg.bat_default_max_charge_w
+        ), f"PLAT-1737: {bid} alloc {alloc}W > max {cfg.bat_default_max_charge_w}W"
 
 
 def test_plat1737_tuner_floors_alloc_at_zero() -> None:
     """Delta on charge-mode with big import must not drive alloc below 0."""
     from core.grid_tuner import GridTunerConfig
+
     cfg = BudgetConfig(
         grid_tuner=GridTunerConfig(
             enabled=True,
@@ -1483,9 +1651,12 @@ def test_plat1737_tuner_floors_alloc_at_zero() -> None:
         ),
     )
     inp = _inp(
-        hour=12, pv_w=3000, house_w=500,
+        hour=12,
+        pv_w=3000,
+        house_w=500,
         grid_w=500.0,  # import → tier3 positive delta → reduce charge
-        bat_k_soc=60, bat_f_soc=60,
+        bat_k_soc=60,
+        bat_f_soc=60,
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
@@ -1508,6 +1679,7 @@ def test_plat1737_rolling_window_accumulates_in_budget_state() -> None:
 def test_plat1737_tuner_deadband_no_change() -> None:
     """|grid| < tier1 (50 W) → delta=0 → bat_alloc unchanged."""
     from core.grid_tuner import GridTunerConfig
+
     cfg_baseline = BudgetConfig()
     cfg_tuner = BudgetConfig(
         grid_tuner=GridTunerConfig(
@@ -1519,15 +1691,18 @@ def test_plat1737_tuner_deadband_no_change() -> None:
         ),
     )
     inp = _inp(
-        hour=12, pv_w=3000, house_w=500,
+        hour=12,
+        pv_w=3000,
+        house_w=500,
         grid_w=-30.0,  # below tier1
-        bat_k_soc=60, bat_f_soc=60,
+        bat_k_soc=60,
+        bat_f_soc=60,
     )
     r1 = allocate(inp, cfg_baseline, BudgetState())
     r2 = allocate(inp, cfg_tuner, BudgetState())
-    assert r1.bat_allocations == r2.bat_allocations, (
-        "PLAT-1737: inside deadband → tuner must be no-op"
-    )
+    assert (
+        r1.bat_allocations == r2.bat_allocations
+    ), "PLAT-1737: inside deadband → tuner must be no-op"
 
 
 def test_plat1738_cascade_reason_reflects_soc_state() -> None:
@@ -1540,9 +1715,13 @@ def test_plat1738_cascade_reason_reflects_soc_state() -> None:
     inp_with_consumers = BudgetInput(
         now=_inp().now,
         grid_power_w=-300.0,
-        pv_power_w=3000.0, house_load_w=500.0,
-        ev_connected=False, ev_charging=False,
-        ev_current_amps=0, ev_soc_pct=50.0, ev_target_soc_pct=100.0,
+        pv_power_w=3000.0,
+        house_load_w=500.0,
+        ev_connected=False,
+        ev_charging=False,
+        ev_current_amps=0,
+        ev_soc_pct=50.0,
+        ev_target_soc_pct=100.0,
         bat_socs={"k": 95.0, "f": 97.0},
         bat_caps={"k": 15.0, "f": 5.0},
         bat_powers={"k": 0.0, "f": 0.0},
@@ -1551,16 +1730,13 @@ def test_plat1738_cascade_reason_reflects_soc_state() -> None:
     )
     state = BudgetState(consecutive_export_cycles=5)
     result = allocate(inp_with_consumers, cfg, state)
-    starts = [
-        c for c in result.commands
-        if c.command_type == CommandType.TURN_ON_CONSUMER
-    ]
+    starts = [c for c in result.commands if c.command_type == CommandType.TURN_ON_CONSUMER]
     assert starts
     reason = starts[0].reason
     # Reason must mention bat SoC state — no more "bat at max" lie
-    assert "SoC" in reason or "soc" in reason, (
-        f"PLAT-1738: reason must describe actual bat state, got: {reason!r}"
-    )
+    assert (
+        "SoC" in reason or "soc" in reason
+    ), f"PLAT-1738: reason must describe actual bat state, got: {reason!r}"
 
 
 # -------------------------------------------------------------------
@@ -1599,17 +1775,59 @@ def test_grid_spike_rejected_by_median(cfg: BudgetConfig) -> None:
     # Prime the history with two quiet readings, then inject a spike.
     for gw in (2500.0, 2500.0):
         allocate(
-            _inp(hour=14, pv_w=0, house_w=2500, grid_w=gw,
-                 bat_k_soc=60.0, bat_f_soc=60.0),
-            cfg, state,
+            _inp(hour=14, pv_w=0, house_w=2500, grid_w=gw, bat_k_soc=60.0, bat_f_soc=60.0),
+            cfg,
+            state,
         )
     # Spike cycle — sorted history = [2500, 2500, 12900] → median = 2500.
     spike_inp = _inp(
-        hour=14, pv_w=0, house_w=2500, grid_w=12900.0,
-        bat_k_soc=60.0, bat_f_soc=60.0,
+        hour=14,
+        pv_w=0,
+        house_w=2500,
+        grid_w=12900.0,
+        bat_k_soc=60.0,
+        bat_f_soc=60.0,
     )
     spike_result = allocate(spike_inp, cfg, state)
     assert state.grid_history_w == [2500.0, 2500.0, 12900.0]
     # bat_discharge should reflect the 2500 W MEDIAN, not the 12900 W spike.
     # With gain=0.7: discharge ≈ 0.7 × 2500 = 1750 W.
     assert spike_result.bat_discharge_w == int(2500.0 * 0.7)
+
+
+# -------------------------------------------------------------------
+# PLAT-1754: verify cfg.bat_aggressive_spread_pct passthrough
+# -------------------------------------------------------------------
+
+
+def test_plat1754_allocate_passes_cfg_spread_to_plan_zero_grid() -> None:
+    """PLAT-1754: allocate() must forward cfg.bat_aggressive_spread_pct to
+    plan_zero_grid() — the function's parameter default (5.0) must never
+    silently override the BudgetConfig value (user invariant: 1.0 = 1 pp).
+
+    Verification: patch plan_zero_grid inside core.budget and assert the
+    keyword arg matches the configured value, not the module-level default.
+    """
+    from unittest.mock import patch
+
+    from core.zero_grid import ZeroGridPlan
+
+    # Deliberately != BudgetConfig default (1.0) AND != plan_zero_grid default (5.0)
+    custom_spread = 2.5
+    cfg = BudgetConfig(bat_aggressive_spread_pct=custom_spread)
+    fake_plan = ZeroGridPlan(
+        modes={"kontor": "charge_pv", "forrad": "charge_pv"},
+        limits_w={"kontor": 0, "forrad": 0},
+        total_target_net_w=0,
+        reason="test",
+        emergency_recovery=frozenset(),
+    )
+    with patch("core.budget.plan_zero_grid", return_value=fake_plan) as mock_pgz:
+        allocate(_inp(hour=10), cfg, BudgetState())
+
+    mock_pgz.assert_called_once()
+    forwarded = mock_pgz.call_args.kwargs.get("spread_aggressive_pct")
+    assert forwarded == custom_spread, (
+        f"allocate() forwarded spread={forwarded!r} but expected cfg value {custom_spread!r}. "
+        "Remove the keyword arg from the plan_zero_grid call and the default (5.0) silently wins."
+    )
