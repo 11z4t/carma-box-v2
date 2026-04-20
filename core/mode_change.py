@@ -12,13 +12,23 @@ the safe 5-step protocol:
 
 Only ONE mode change per battery at a time.
 Multiple batteries can change simultaneously.
+
+Transition matrix (PLAT-1750):
+  Some modes (notably charge_battery) are accepted by GoodWe firmware
+  directly from any mode — no standby intermediate required. The
+  transition matrix configures which target modes may skip the
+  clear_wait and/or standby steps, reducing latency from ~60 s to
+  set_wait + verify_wait (≤ 15 s in production).
+
+  Modes that require full 5-step (B1/B2 protection): discharge_pv,
+  discharge_battery, and any mode not listed in the matrix.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, unique
 from typing import Optional, Protocol
 
@@ -72,7 +82,46 @@ class ModeChangeRequest:
     state: ModeChangeState = ModeChangeState.IDLE
     step_started_at: float = 0.0  # monotonic timestamp
     retry_count: int = 0
-    emergency: bool = False  # True = skip standby wait
+    emergency: bool = False  # True = override in-progress + skip clear_wait + standby
+    skip_clear_wait: bool = False  # True = skip CLEARING timer (set by transition matrix)
+    skip_standby: bool = False  # True = skip STANDBY_WAIT step (set by transition matrix)
+
+
+# ---------------------------------------------------------------------------
+# Transition policy
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TransitionPolicy:
+    """Per-target-mode skip policy for the mode change state machine.
+
+    GoodWe firmware accepts certain modes (e.g. charge_battery) directly
+    from any current mode, making the clearing wait and standby step
+    unnecessary. This policy allows the manager to skip those steps safely.
+
+    skip_clear_wait: Skip the CLEARING state timer — go directly to
+        SETTING_TARGET after executing clear limits (B9/B15 still enforced).
+    skip_standby:    Skip the STANDBY_WAIT state — no battery_standby
+        intermediate is written before setting the target mode.
+
+    Both flags True is the fastest path: clear limits → set target.
+    Both flags False is the full 5-step protocol (default for all modes
+    not listed in the transition matrix).
+    """
+
+    skip_clear_wait: bool = False
+    skip_standby: bool = False
+
+
+# Default matrix: modes that GoodWe accepts without standby intermediate.
+# discharge_pv and discharge_battery are intentionally absent (B1/B2 guard).
+_DEFAULT_TRANSITION_MATRIX: dict[str, TransitionPolicy] = {
+    EMSMode.CHARGE_BATTERY.value: TransitionPolicy(
+        skip_clear_wait=True,
+        skip_standby=True,
+    ),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -84,14 +133,17 @@ class ModeChangeRequest:
 class ModeChangeConfig:
     """Timing configuration for mode changes."""
 
-    clear_wait_s: float = 60.0       # Wait after clearing limits (2 cycles)
-    standby_wait_s: float = 300.0    # Wait in standby: GoodWe ET firmware requires
-                                     # ≥5 min in battery_standby for internal BMS
-                                     # capacitor bleed before accepting the next EMS
-                                     # mode — shorter dwell causes B1/B2 hangs.
-    set_wait_s: float = 60.0         # Wait after setting target mode
-    verify_wait_s: float = 30.0      # Wait before verification
+    clear_wait_s: float = 60.0  # Wait after clearing limits (2 cycles)
+    standby_wait_s: float = 300.0  # Wait in standby: GoodWe ET firmware requires
+    # ≥5 min in battery_standby for internal BMS
+    # capacitor bleed before accepting the next EMS
+    # mode — shorter dwell causes B1/B2 hangs.
+    set_wait_s: float = 60.0  # Wait after setting target mode
+    verify_wait_s: float = 30.0  # Wait before verification
     max_retries: int = 3
+    transition_matrix: dict[str, TransitionPolicy] = field(
+        default_factory=lambda: dict(_DEFAULT_TRANSITION_MATRIX),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +170,8 @@ class ModeChangeManager:
         """
         if battery_id in self._requests:
             logger.info(
-                "Clearing pending mode change for %s", battery_id,
+                "Clearing pending mode change for %s",
+                battery_id,
             )
             del self._requests[battery_id]
 
@@ -145,20 +198,31 @@ class ModeChangeManager:
                     return False  # Same target, already in progress
                 logger.warning(
                     "Mode change in progress for %s (%s→%s), rejecting new request (%s)",
-                    battery_id, current.target_mode, current.state.value, target_mode,
+                    battery_id,
+                    current.target_mode,
+                    current.state.value,
+                    target_mode,
                 )
                 return False
 
+        policy = self._config.transition_matrix.get(target_mode, TransitionPolicy())
         self._requests[battery_id] = ModeChangeRequest(
             battery_id=battery_id,
             target_mode=target_mode,
             target_limit_w=target_limit_w,
             target_fast_charging=target_fast_charging,
             reason=reason,
+            skip_clear_wait=policy.skip_clear_wait,
+            skip_standby=policy.skip_standby,
         )
         logger.info(
-            "Mode change requested: %s → %s (limit=%dW, reason=%s)",
-            battery_id, target_mode, target_limit_w, reason,
+            "Mode change requested: %s → %s (limit=%dW, skip_clear=%s, skip_standby=%s, reason=%s)",
+            battery_id,
+            target_mode,
+            target_limit_w,
+            policy.skip_clear_wait,
+            policy.skip_standby,
+            reason,
         )
         return True
 
@@ -174,7 +238,9 @@ class ModeChangeManager:
         """
         logger.warning(
             "EMERGENCY mode change: %s → %s (reason=%s)",
-            battery_id, target_mode, reason,
+            battery_id,
+            target_mode,
+            reason,
         )
         self._requests[battery_id] = ModeChangeRequest(
             battery_id=battery_id,
@@ -234,9 +300,7 @@ class ModeChangeManager:
     # State machine
     # ------------------------------------------------------------------
 
-    async def _process_request(
-        self, req: ModeChangeRequest, executor: ModeChangeExecutor
-    ) -> None:
+    async def _process_request(self, req: ModeChangeRequest, executor: ModeChangeExecutor) -> None:
         """Advance a single request through the 5-step protocol."""
         now = time.monotonic()
 
@@ -245,33 +309,52 @@ class ModeChangeManager:
             req.step_started_at = now
             logger.info(
                 "Step 1 PREPARE: %s → %s (reason: %s)",
-                req.battery_id, req.target_mode, req.reason,
+                req.battery_id,
+                req.target_mode,
+                req.reason,
             )
-            # STEP 2: CLEAR LIMITS — execute immediately
+            # STEP 2: CLEAR LIMITS — always execute immediately (B9/B15)
             await executor.set_ems_power_limit(req.battery_id, 0)
             await executor.set_fast_charging(req.battery_id, False)
-            if req.emergency:
-                # Emergency: skip clear_wait + standby, go directly to SET TARGET
+            if req.emergency or req.skip_clear_wait:
+                # Emergency overrides in-progress and skips clear_wait + standby.
+                # skip_clear_wait (transition matrix) skips clear_wait + standby
+                # without overriding in-progress (regular request_change semantics).
+                label = "emergency" if req.emergency else "transition matrix"
                 req.state = ModeChangeState.SETTING_TARGET
                 logger.info(
-                    "Step 4 SET TARGET (emergency skip clear+standby): %s → %s",
-                    req.battery_id, req.target_mode,
+                    "Step 4 SET TARGET (%s skip clear+standby): %s → %s",
+                    label,
+                    req.battery_id,
+                    req.target_mode,
                 )
                 await self._execute_set_target(req, executor)
             else:
                 req.state = ModeChangeState.CLEARING
 
         elif req.state == ModeChangeState.CLEARING:
-            # Wait for clear_wait_s (emergency requests never reach this state)
+            # Wait for clear_wait_s.
+            # Emergency requests never reach this state (handled in IDLE).
             elapsed = now - req.step_started_at
             if elapsed >= self._config.clear_wait_s:
-                req.state = ModeChangeState.STANDBY_WAIT
-                req.step_started_at = now
-                logger.info(
-                    "Step 3 STANDBY: %s entering battery_standby",
-                    req.battery_id,
-                )
-                await executor.set_ems_mode(req.battery_id, EMSMode.BATTERY_STANDBY.value)
+                if req.skip_standby:
+                    # Transition matrix: target mode accepts direct write — skip standby.
+                    req.state = ModeChangeState.SETTING_TARGET
+                    req.step_started_at = now
+                    logger.info(
+                        "Step 4 SET TARGET (skip standby via matrix): %s → %s",
+                        req.battery_id,
+                        req.target_mode,
+                    )
+                    await self._execute_set_target(req, executor)
+                else:
+                    req.state = ModeChangeState.STANDBY_WAIT
+                    req.step_started_at = now
+                    logger.info(
+                        "Step 3 STANDBY: %s entering battery_standby",
+                        req.battery_id,
+                    )
+                    await executor.set_ems_mode(req.battery_id, EMSMode.BATTERY_STANDBY.value)
 
         elif req.state == ModeChangeState.STANDBY_WAIT:
             # Wait for standby_wait_s
@@ -282,7 +365,8 @@ class ModeChangeManager:
                 req.step_started_at = now
                 logger.info(
                     "Step 4 SET TARGET: %s → %s",
-                    req.battery_id, req.target_mode,
+                    req.battery_id,
+                    req.target_mode,
                 )
                 await self._execute_set_target(req, executor)
 
@@ -311,7 +395,8 @@ class ModeChangeManager:
                     req.state = ModeChangeState.COMPLETE
                     logger.info(
                         "Step 5 VERIFY OK: %s now in %s",
-                        req.battery_id, actual_mode,
+                        req.battery_id,
+                        actual_mode,
                     )
                 else:
                     req.retry_count += 1
@@ -319,14 +404,18 @@ class ModeChangeManager:
                         req.state = ModeChangeState.FAILED
                         logger.error(
                             "Mode change FAILED: %s expected=%s actual=%s after %d retries",
-                            req.battery_id, req.target_mode,
-                            actual_mode, req.retry_count,
+                            req.battery_id,
+                            req.target_mode,
+                            actual_mode,
+                            req.retry_count,
                         )
                     else:
                         logger.warning(
                             "VERIFY MISMATCH: %s expected=%s actual=%s (retry %d/%d)",
-                            req.battery_id, req.target_mode,
-                            actual_mode, req.retry_count,
+                            req.battery_id,
+                            req.target_mode,
+                            actual_mode,
+                            req.retry_count,
                             self._config.max_retries,
                         )
                         # Retry: go back to SETTING_TARGET
