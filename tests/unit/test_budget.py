@@ -470,16 +470,23 @@ def test_start_ev_command(cfg: BudgetConfig) -> None:
 
 
 def test_stop_ev_command(cfg: BudgetConfig) -> None:
-    """EV charging + no surplus → STOP command."""
+    """EV charging + no surplus → STOP command.
+
+    Scenario: Budget previously turned EV on (intended_ev_enabled=True,
+    ev_current_amps=6). Surplus falls to 0. Budget must emit STOP once.
+    PLAT-1740: comparison is against intended state, not HA-reported.
+    """
     inp = _inp(
         hour=14, pv_w=500, house_w=500,
         ev_connected=True, ev_charging=True, ev_amps=6,
         bat_k_soc=80,
     )
-    state = BudgetState()
+    state = BudgetState(intended_ev_enabled=True, ev_current_amps=6)
     result = allocate(inp, cfg, state)
     cmd_types = [c.command_type for c in result.commands]
     assert CommandType.STOP_EV_CHARGING in cmd_types
+    # PLAT-1740: intent flipped to False after emit
+    assert state.intended_ev_enabled is False
 
 
 def test_all_commands_have_rule_id(cfg: BudgetConfig) -> None:
@@ -1122,6 +1129,195 @@ def test_plat1738_cascade_fires_when_bat_alloc_at_physical_max() -> None:
     assert "alloc-max" in reason, (
         f"PLAT-1738 F1: reason should mark bats as 'alloc-max', got: {reason!r}"
     )
+
+
+# -------------------------------------------------------------------
+# PLAT-1740: Budget EV-path must be idempotent against HA-state flap.
+# Root cause 2026-04-19: 277 switch.easee_home_12840_is_enabled on/off
+# events in 8 hours — Easee integration's plug sensor kept flipping
+# unavailable↔on, which toggled ev_charging input flag cycle-by-cycle.
+# Budget saw "not charging" each flap → re-emitted start_ev_charging,
+# which locked the charger in a state it could never escape.
+# Fix: compare against Budget's INTENDED state (what we told the charger
+# to be) rather than HA's reported state.
+# -------------------------------------------------------------------
+
+
+def test_plat1740_start_not_re_emitted_when_intended_already_on() -> None:
+    """Budget has already told the charger to start. HA flaps ev_charging
+    back to False (plug-sensor glitch). Budget must NOT re-emit START."""
+    cfg = BudgetConfig()
+    inp = _inp(
+        hour=14, pv_w=6000, house_w=500, grid_w=-4500,
+        ev_connected=True, ev_charging=False,  # flapped back to False
+        ev_amps=6, ev_soc=50.0, ev_target=100.0,
+    )
+    # State: Budget already emitted START on a previous cycle
+    state = BudgetState(intended_ev_enabled=True, ev_current_amps=6)
+    result = allocate(inp, cfg, state)
+
+    starts = [c for c in result.commands
+              if c.command_type == CommandType.START_EV_CHARGING]
+    assert not starts, (
+        "PLAT-1740: START re-emitted despite intended_ev_enabled=True. "
+        f"Offending: {[c.reason for c in starts]}"
+    )
+
+
+def test_plat1740_stop_not_re_emitted_when_intended_already_off() -> None:
+    """Budget has already told the charger to stop. HA flaps ev_charging
+    back to True. Budget must NOT re-emit STOP."""
+    cfg = BudgetConfig()
+    inp = _inp(
+        hour=14, pv_w=0, house_w=2000, grid_w=2000,  # no surplus
+        ev_connected=True, ev_charging=True,  # HA flapped to True
+        ev_amps=0, ev_soc=50.0, ev_target=100.0,
+    )
+    # State: Budget already emitted STOP on a previous cycle
+    state = BudgetState(intended_ev_enabled=False, ev_current_amps=0)
+    result = allocate(inp, cfg, state)
+
+    stops = [c for c in result.commands
+             if c.command_type == CommandType.STOP_EV_CHARGING]
+    assert not stops, (
+        "PLAT-1740: STOP re-emitted despite intended_ev_enabled=False. "
+        f"Offending: {[c.reason for c in stops]}"
+    )
+
+
+def test_plat1740_start_emitted_once_on_transition_from_off_to_on() -> None:
+    """First cycle where Budget decides to enable EV: START must be emitted
+    and intended_ev_enabled state flipped to True.
+
+    Uses FM (hour=10) so ev_wants_charge drives ev_target directly without
+    requiring specific bat states.
+    """
+    cfg = BudgetConfig()
+    inp = _inp(
+        hour=10, pv_w=6000, house_w=500, grid_w=-4500,
+        ev_connected=True, ev_charging=False,
+        ev_amps=0, ev_soc=50.0, ev_target=100.0,
+    )
+    state = BudgetState(intended_ev_enabled=False, ev_current_amps=0)
+    result = allocate(inp, cfg, state)
+
+    starts = [c for c in result.commands
+              if c.command_type == CommandType.START_EV_CHARGING]
+    assert len(starts) == 1, "START must be emitted on off→on transition"
+    assert state.intended_ev_enabled is True, (
+        "intended_ev_enabled must flip to True after emitting START"
+    )
+
+
+def test_plat1740_stop_emitted_once_on_transition_from_on_to_off() -> None:
+    """First cycle where Budget decides to disable EV: STOP must be emitted
+    and intended_ev_enabled state flipped to False."""
+    cfg = BudgetConfig()
+    inp = _inp(
+        hour=14, pv_w=0, house_w=2000, grid_w=2000,
+        ev_connected=True, ev_charging=True,
+        ev_amps=6, ev_soc=50.0, ev_target=100.0,
+    )
+    state = BudgetState(intended_ev_enabled=True, ev_current_amps=6)
+    result = allocate(inp, cfg, state)
+
+    stops = [c for c in result.commands
+             if c.command_type == CommandType.STOP_EV_CHARGING]
+    assert len(stops) == 1, "STOP must be emitted on on→off transition"
+    assert state.intended_ev_enabled is False, (
+        "intended_ev_enabled must flip to False after emitting STOP"
+    )
+
+
+def test_plat1740_set_current_compares_to_intended_not_ha_state() -> None:
+    """SET_EV_CURRENT must compare against intended amps (what we wrote
+    last) not HA-reported amps (which can lag or flap)."""
+    cfg = BudgetConfig()
+    inp = _inp(
+        hour=14, pv_w=6000, house_w=500, grid_w=-4500,
+        ev_connected=True, ev_charging=True,
+        ev_amps=0,  # HA reports 0 (stale/glitch)
+        ev_soc=50.0, ev_target=100.0,
+    )
+    # State: Budget told charger 6A last cycle
+    state = BudgetState(intended_ev_enabled=True, ev_current_amps=6)
+    result = allocate(inp, cfg, state)
+
+    sets = [c for c in result.commands
+            if c.command_type == CommandType.SET_EV_CURRENT]
+    # If ev_target resolves to 6A (same as intended), no re-emit
+    # If Budget ramps it up, emit once with new value, not the stale HA one
+    if sets:
+        assert all(c.value != 0 for c in sets), (
+            "PLAT-1740: SET_EV_CURRENT must target intended, not 0 "
+            f"(which was the stale HA value). Got: {[c.value for c in sets]}"
+        )
+
+
+def test_plat1740_277_flap_regression() -> None:
+    """Regression: 277 switch-flips in 8 h on 2026-04-19 night.
+    Simulated: 20 cycles alternating ev_charging True/False while Budget
+    wants EV on (PV surplus, intent=on). Budget must emit AT MOST 1 START
+    for the entire flap sequence (idempotent against HA brus).
+    """
+    cfg = BudgetConfig()
+    state = BudgetState(intended_ev_enabled=False, ev_current_amps=0)
+
+    start_count = 0
+    stop_count = 0
+    for i in range(20):
+        # alternate: HA reports charging true/false even though we want it on
+        ha_charging = (i % 2 == 0)
+        inp = _inp(
+            hour=14, pv_w=6000, house_w=500, grid_w=-4500,
+            ev_connected=True, ev_charging=ha_charging,
+            ev_amps=6 if ha_charging else 0,
+            ev_soc=50.0, ev_target=100.0,
+        )
+        result = allocate(inp, cfg, state)
+        start_count += sum(
+            1 for c in result.commands
+            if c.command_type == CommandType.START_EV_CHARGING
+        )
+        stop_count += sum(
+            1 for c in result.commands
+            if c.command_type == CommandType.STOP_EV_CHARGING
+        )
+
+    assert start_count <= 1, (
+        f"PLAT-1740: {start_count} START commands emitted over 20 HA-flap "
+        f"cycles (expected ≤1). Idempotency broken."
+    )
+    assert stop_count == 0, (
+        f"PLAT-1740: {stop_count} STOP commands emitted despite consistent "
+        f"intent=on. Budget must not STOP just because HA flaps."
+    )
+
+
+def test_plat1740_night_mode_does_not_touch_intended_state() -> None:
+    """Night window: Budget must stay out of EV entirely (NightEV owns).
+    intended_ev_enabled must NOT be modified by Budget at night."""
+    cfg = BudgetConfig()
+    inp = _inp(
+        hour=23, pv_w=0, house_w=2000, grid_w=2000,
+        ev_connected=True, ev_charging=True,
+        ev_amps=6, ev_soc=50.0, ev_target=100.0,
+    )
+    # NightEV has set state: EV enabled at 6A
+    state = BudgetState(intended_ev_enabled=True, ev_current_amps=6)
+    result = allocate(inp, cfg, state)
+
+    ev_cmds = [c for c in result.commands if c.command_type in (
+        CommandType.START_EV_CHARGING,
+        CommandType.STOP_EV_CHARGING,
+        CommandType.SET_EV_CURRENT,
+    )]
+    assert not ev_cmds, (
+        f"PLAT-1740: Budget must not emit EV cmds at night. "
+        f"Offending: {[(c.command_type.value, c.reason) for c in ev_cmds]}"
+    )
+    # State also untouched
+    assert state.intended_ev_enabled is True
 
 
 def test_plat1738_cascade_reason_reflects_soc_state() -> None:

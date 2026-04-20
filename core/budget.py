@@ -156,6 +156,14 @@ class BudgetState:
 
     consecutive_export_cycles: int = 0
     consecutive_import_cycles: int = 0
+    # PLAT-1740: Budget's INTENDED EV state — compared against, not
+    # HA-reported ``ev_charging``. HA/Easee can flap ev_charging cycle-
+    # by-cycle (plug sensor glitch, integration restart). Comparing to
+    # intended state makes START/STOP emission idempotent.
+    intended_ev_enabled: bool = False
+    # Last amps value Budget wrote (source of truth for SET_EV_CURRENT
+    # idempotency). Renamed 2026-04-20 from "last HA value" semantic to
+    # "intended" — name kept stable for back-compat with call sites.
     ev_current_amps: int = 0
     # PLAT-1715: cooldown per consumer (monotonic seconds) to prevent flapping.
     # Key = consumer_id, value = monotonic timestamp of last switch.
@@ -399,24 +407,34 @@ def allocate(
     # loop in the 22:46 cycles. Budget staying out of EV at night leaves
     # ev_target=0 but emits no START/STOP/SET commands.
     if daytime:
-        if ev_target > 0 and not inp.ev_charging:
+        # PLAT-1740: compare to Budget's INTENDED state, not HA-reported
+        # ev_charging. HA flapping (plug sensor glitch, integration
+        # restart) must not cause Budget to re-emit START/STOP in a loop.
+        # State is flipped only when Budget actually emits the command.
+        want_enabled = ev_target > 0
+        if want_enabled and not state.intended_ev_enabled:
             cmds.append(Command(
                 command_type=CommandType.START_EV_CHARGING,
                 target_id="ev", value=None,
                 rule_id=_RULE_ID, reason="Budget: EV start",
             ))
-        if ev_target == 0 and inp.ev_charging:
+            state.intended_ev_enabled = True
+        if not want_enabled and state.intended_ev_enabled:
             cmds.append(Command(
                 command_type=CommandType.STOP_EV_CHARGING,
                 target_id="ev", value=None,
                 rule_id=_RULE_ID, reason="Budget: EV stop",
             ))
-        if ev_target > 0 and ev_target != inp.ev_current_amps:
+            state.intended_ev_enabled = False
+        # SET_EV_CURRENT: compare to state.ev_current_amps (what Budget
+        # last wrote), NOT inp.ev_current_amps (which is HA-reported and
+        # can lag/flap). ev_current_amps is updated at end of tick().
+        if want_enabled and ev_target != state.ev_current_amps:
             cmds.append(Command(
                 command_type=CommandType.SET_EV_CURRENT,
                 target_id="ev", value=ev_target,
                 rule_id=_RULE_ID,
-                reason=f"Budget: EV {inp.ev_current_amps}→{ev_target}A",
+                reason=f"Budget: EV {state.ev_current_amps}→{ev_target}A",
             ))
 
     # Bat commands — per-battery mode + limit.
