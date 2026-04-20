@@ -61,7 +61,8 @@ from core.day_planner import (
 from core.planner import Planner, PlannerConfig
 from core.ev_controller import EVAction, EVController, EVControllerConfig
 from core.bat_support_controller import BatSupportConfig as BatSupportCtrlCfg
-from core.budget import BudgetConfig
+
+# BudgetConfig no longer imported directly — constructed via config.budget.to_budget_config()
 from core.ev_night_controller import NightEVConfig
 from core.ev_surplus import EVSurplusConfig, EVSurplusController
 from core.surplus_dispatch import SurplusConfig as SurplusDispatchConfig, SurplusDispatch
@@ -220,22 +221,28 @@ class CarmaBoxService:
 
         grid_guard = GridGuard(guard_cfg)
         guard_policy = GuardPolicy(grid_guard, ExportGuard())
-        sm = StateMachine(StateMachineConfig(
-            start_scenario=Scenario[config.control.start_scenario],
-            min_dwell_s=config.control.scenario_transition_s,
-            surplus_entry_soc_pct=config.control.battery_gate.charge_stop_soc_pct,
-        ))
-        balancer = BatteryBalancer(BalancerConfig(
-            normal_floor_pct=guard_cfg.normal_floor_pct,
-            cold_floor_pct=guard_cfg.cold_floor_pct,
-            freeze_floor_pct=guard_cfg.freeze_floor_pct,
-        ))
-        mode_mgr = ModeChangeManager(ModeChangeConfig(
-            clear_wait_s=float(config.control.mode_change_clear_wait_s),
-            standby_wait_s=config.control.standby_intermediate_s,
-            set_wait_s=float(config.control.mode_change_set_wait_s),
-            verify_wait_s=float(config.control.mode_change_verify_wait_s),
-        ))
+        sm = StateMachine(
+            StateMachineConfig(
+                start_scenario=Scenario[config.control.start_scenario],
+                min_dwell_s=config.control.scenario_transition_s,
+                surplus_entry_soc_pct=config.control.battery_gate.charge_stop_soc_pct,
+            )
+        )
+        balancer = BatteryBalancer(
+            BalancerConfig(
+                normal_floor_pct=guard_cfg.normal_floor_pct,
+                cold_floor_pct=guard_cfg.cold_floor_pct,
+                freeze_floor_pct=guard_cfg.freeze_floor_pct,
+            )
+        )
+        mode_mgr = ModeChangeManager(
+            ModeChangeConfig(
+                clear_wait_s=float(config.control.mode_change_clear_wait_s),
+                standby_wait_s=config.control.standby_intermediate_s,
+                set_wait_s=float(config.control.mode_change_set_wait_s),
+                verify_wait_s=float(config.control.mode_change_verify_wait_s),
+            )
+        )
         # EV charger adapter — wired into executor for EV commands
         ev_adapter: Optional[EaseeAdapter] = None
         if config.ev_charger and config.ev_charger.charger_id:
@@ -253,6 +260,7 @@ class CarmaBoxService:
         # control them (safety: prevents miner power-cycling via Shelly relay).
         from adapters.goldshell import GoldshellMinerAdapter
         from core.executor import LoadPort
+
         consumers: dict[str, LoadPort] = {}
         skipped: list[str] = []
         for consumer_cfg in config.consumers:
@@ -269,7 +277,8 @@ class CarmaBoxService:
                     entity_power=consumer_cfg.entity_power,
                 )
                 logger.info(
-                    "GoldshellMinerAdapter wired (stub): %s", consumer_cfg.id,
+                    "GoldshellMinerAdapter wired (stub): %s",
+                    consumer_cfg.id,
                 )
                 continue
             # Default: Shelly relay
@@ -306,15 +315,16 @@ class CarmaBoxService:
         self._db = LocalDB(db_path)
 
         # Planner
-        self._planner = Planner(PlannerConfig(
-            ev_target_soc_pct=config.ev.daily_target_soc_pct,
-            pv_high_threshold_kwh=float(
-                config.night_plan.house_baseload_kw
-                * config.night_plan.night_hours
-            ),
-            grid_charge_max_soc_pct=config.night_plan.grid_charge_max_soc_pct,
-            grid_charge_price_threshold_ore=config.night_plan.grid_charge_price_threshold_ore,
-        ))
+        self._planner = Planner(
+            PlannerConfig(
+                ev_target_soc_pct=config.ev.daily_target_soc_pct,
+                pv_high_threshold_kwh=float(
+                    config.night_plan.house_baseload_kw * config.night_plan.night_hours
+                ),
+                grid_charge_max_soc_pct=config.night_plan.grid_charge_max_soc_pct,
+                grid_charge_price_threshold_ore=config.night_plan.grid_charge_price_threshold_ore,
+            )
+        )
         self._plan_executor = PlanExecutor(
             planner=self._planner,
             ha_api=ha_api,
@@ -333,44 +343,52 @@ class CarmaBoxService:
             logger.info("SolcastAdapter wired: %s", config.pv_forecast.entity_today)
 
         # Ellevio peak tracker
-        self._ellevio = EllevioTracker(EllevioConfig(
-            tak_kw=config.grid.ellevio.tak_kw,
-            night_weight=config.grid.ellevio.night_weight,
-            day_weight=config.grid.ellevio.day_weight,
-            night_start_h=config.grid.ellevio.night_start_hour,
-            night_end_h=config.grid.ellevio.night_end_hour,
-        ))
+        self._ellevio = EllevioTracker(
+            EllevioConfig(
+                tak_kw=config.grid.ellevio.tak_kw,
+                night_weight=config.grid.ellevio.night_weight,
+                day_weight=config.grid.ellevio.day_weight,
+                night_start_h=config.grid.ellevio.night_start_hour,
+                night_end_h=config.grid.ellevio.night_end_hour,
+            )
+        )
 
         # EV controller
-        self._ev_controller = EVController(EVControllerConfig(
-            target_soc_pct=config.ev.daily_target_soc_pct,
-        ))
+        self._ev_controller = EVController(
+            EVControllerConfig(
+                target_soc_pct=config.ev.daily_target_soc_pct,
+            )
+        )
 
         # Surplus dispatch from consumer configs
         surplus_cfg = config.surplus
-        self._surplus_dispatch = SurplusDispatch(SurplusDispatchConfig(
-            stop_threshold_w=surplus_cfg.stop_threshold_kw * _W_TO_KW,
-            start_delay_s=surplus_cfg.start_delay_s,
-            max_switches_per_window=surplus_cfg.max_switches_per_window,
-            switch_window_s=surplus_cfg.switch_window_min * 60,
-            bump_delay_s=surplus_cfg.bump_delay_s,
-            deadband_w=float(config.control.deadband.normal_w),
-            doubled_deadband_w=float(config.control.deadband.doubled_w),
-            doubled_deadband_s=float(config.control.deadband.doubled_duration_s),
-        ))
+        self._surplus_dispatch = SurplusDispatch(
+            SurplusDispatchConfig(
+                stop_threshold_w=surplus_cfg.stop_threshold_kw * _W_TO_KW,
+                start_delay_s=surplus_cfg.start_delay_s,
+                max_switches_per_window=surplus_cfg.max_switches_per_window,
+                switch_window_s=surplus_cfg.switch_window_min * 60,
+                bump_delay_s=surplus_cfg.bump_delay_s,
+                deadband_w=float(config.control.deadband.normal_w),
+                doubled_deadband_w=float(config.control.deadband.doubled_w),
+                doubled_deadband_s=float(config.control.deadband.doubled_duration_s),
+            )
+        )
         self._consumer_configs = config.consumers
 
         # EV surplus controller — PV-only EV charging with ramp
         ev_surplus_ctrl: Optional[EVSurplusController] = None
         if ev_adapter is not None:
             ev_ramp = config.ev_charger.ramp
-            ev_surplus_ctrl = EVSurplusController(EVSurplusConfig(
-                min_amps=config.ev_charger.min_amps,
-                max_amps=config.ev_charger.max_amps,
-                phases=config.ev_charger.phases,
-                voltage_v=config.ev_charger.voltage_v,
-                step_amps=ev_ramp.step_amps,
-            ))
+            ev_surplus_ctrl = EVSurplusController(
+                EVSurplusConfig(
+                    min_amps=config.ev_charger.min_amps,
+                    max_amps=config.ev_charger.max_amps,
+                    phases=config.ev_charger.phases,
+                    voltage_v=config.ev_charger.voltage_v,
+                    step_amps=ev_ramp.step_amps,
+                )
+            )
             logger.info(
                 "EVSurplusController wired: %d-%dA, %d-phase",
                 config.ev_charger.min_amps,
@@ -409,7 +427,11 @@ class CarmaBoxService:
             )
 
         self._engine = ControlEngine(
-            grid_guard, sm, balancer, mode_mgr, executor,
+            grid_guard,
+            sm,
+            balancer,
+            mode_mgr,
+            executor,
             battery_configs=battery_cfg_map,
             ev_surplus=ev_surplus_ctrl,
             surplus_dispatch=self._surplus_dispatch,
@@ -418,12 +440,19 @@ class CarmaBoxService:
         )
         # PLAT-1686: Activate Budget Allocator for daytime PV charging
         # PLAT-1695: Share charge_stop_soc_pct with state machine via config
+        # PLAT-1748: Map all BudgetSection fields from site.yaml
         if config.ev_charger:
-            self._engine._budget_config = BudgetConfig(
-                ev_min_amps=config.ev_charger.ramp.start_amps,
-                bat_charge_stop_soc_pct=(
-                    config.control.battery_gate.charge_stop_soc_pct
-                ),
+            # Build all tunables from budget: section in site.yaml, then
+            # apply the PLAT-1695 invariant override: bat_charge_stop_soc_pct
+            # must always equal control.battery_gate.charge_stop_soc_pct so
+            # that S8 (PV_SURPLUS entry SoC) and the budget stop SoC stay in
+            # sync. A drift between them causes a dead zone where the state
+            # machine says "surplus" but the budget keeps charging.
+            import dataclasses
+
+            self._engine._budget_config = dataclasses.replace(
+                config.budget.to_budget_config(),
+                bat_charge_stop_soc_pct=(config.control.battery_gate.charge_stop_soc_pct),
             )
 
     @property
@@ -446,7 +475,8 @@ class CarmaBoxService:
         health_port = self._config.health.port
         logger.info(
             "Starting main loop (cycle=%ds, health=:%d)",
-            cycle_s, health_port,
+            cycle_s,
+            health_port,
         )
 
         # Initialize local DB
@@ -472,9 +502,7 @@ class CarmaBoxService:
             self._running = False
             if self._health_task:
                 self._health_task.cancel()
-            logger.info(
-                "Main loop stopped after %d cycles", self._cycle_count
-            )
+            logger.info("Main loop stopped after %d cycles", self._cycle_count)
 
     async def stop(self) -> None:
         """Signal the main loop to stop gracefully."""
@@ -515,9 +543,7 @@ class CarmaBoxService:
             return
 
         # Phase 1.4: PLAN GENERATION at configured hours
-        plan_hours = set(
-            self._planner._config.plan_hours
-        ) if self._planner else set()
+        plan_hours = set(self._planner._config.plan_hours) if self._planner else set()
         # Check for PV forecast change (>20% delta → re-plan)
         pv_changed = False
         pv_tomorrow = snapshot.grid.pv_forecast_tomorrow_kwh
@@ -525,13 +551,16 @@ class CarmaBoxService:
             delta_pct = abs(pv_tomorrow - self._last_pv_tomorrow) / self._last_pv_tomorrow
             replan_threshold = (
                 self._planner._config.pv_replan_threshold
-                if self._planner else _PV_REPLAN_FALLBACK_THRESHOLD
+                if self._planner
+                else _PV_REPLAN_FALLBACK_THRESHOLD
             )
             if delta_pct > replan_threshold:
                 pv_changed = True
                 logger.info(
                     "PV forecast changed %.0f → %.0f kWh (%.0f%%) — re-planning",
-                    self._last_pv_tomorrow, pv_tomorrow, delta_pct * 100,
+                    self._last_pv_tomorrow,
+                    pv_tomorrow,
+                    delta_pct * 100,
                 )
         self._last_pv_tomorrow = pv_tomorrow
 
@@ -541,15 +570,15 @@ class CarmaBoxService:
         # Force replan via HA input_boolean
         force_replan = await self._check_force_replan()
 
-        scheduled = (
-            snapshot.hour in plan_hours
-            and snapshot.hour != self._last_plan_hour
-        )
+        scheduled = snapshot.hour in plan_hours and snapshot.hour != self._last_plan_hour
         if self._planner and (scheduled or pv_changed or startup_replan or force_replan):
             reason = (
-                "startup" if startup_replan
-                else "force_replan" if force_replan
-                else "pv_changed" if pv_changed
+                "startup"
+                if startup_replan
+                else "force_replan"
+                if force_replan
+                else "pv_changed"
+                if pv_changed
                 else f"scheduled (hour={snapshot.hour})"
             )
             logger.info("Plan generation triggered: %s", reason)
@@ -572,9 +601,7 @@ class CarmaBoxService:
         await self._apply_manual_override()
 
         # Phases 2-6: delegated to ControlEngine
-        data_age_s = (
-            datetime.now(tz=timezone.utc) - snapshot.timestamp
-        ).total_seconds()
+        data_age_s = (datetime.now(tz=timezone.utc) - snapshot.timestamp).total_seconds()
         cycle_result = await self._engine.run_cycle(
             snapshot=snapshot,
             ha_connected=ha_connected,
@@ -600,7 +627,9 @@ class CarmaBoxService:
         if cycle_result.error:
             logger.error(
                 "[%s] Cycle %d error: %s",
-                cycle_result.cycle_id, self._cycle_count, cycle_result.error,
+                cycle_result.cycle_id,
+                self._cycle_count,
+                cycle_result.error,
             )
 
         # Update health + metrics
@@ -608,9 +637,7 @@ class CarmaBoxService:
         self._health.cycle_count = self._cycle_count
         self._health.last_cycle_s = cycle_result.elapsed_s
         self._health.ha_connected = ha_connected
-        self._health.guard_level = (
-            cycle_result.guard.level.value if cycle_result.guard else "ok"
-        )
+        self._health.guard_level = cycle_result.guard.level.value if cycle_result.guard else "ok"
         self._metrics.increment_cycle()
         if cycle_result.guard and cycle_result.guard.commands:
             self._metrics.increment_guard_trigger()
@@ -649,45 +676,41 @@ class CarmaBoxService:
             if snapshot.hour in snap_hours and snapshot.minute == 0 and self._cycle_count > 1:
                 try:
                     from storage.local_db import EventLogEntry
+
                     for bat in snapshot.batteries:
-                        await self._db.write_event(EventLogEntry(
-                            timestamp=snapshot.timestamp.isoformat(),
-                            event_type="soc_snapshot",
-                            source=bat.battery_id,
-                            message=f"SoC={bat.soc_pct:.1f}%",
-                            data=f"hour={snapshot.hour}",
-                        ))
-                    logger.info("SoC snapshot: %s", {
-                        b.battery_id: f"{b.soc_pct:.0f}%"
-                        for b in snapshot.batteries
-                    })
+                        await self._db.write_event(
+                            EventLogEntry(
+                                timestamp=snapshot.timestamp.isoformat(),
+                                event_type="soc_snapshot",
+                                source=bat.battery_id,
+                                message=f"SoC={bat.soc_pct:.1f}%",
+                                data=f"hour={snapshot.hour}",
+                            )
+                        )
+                    logger.info(
+                        "SoC snapshot: %s",
+                        {b.battery_id: f"{b.soc_pct:.0f}%" for b in snapshot.batteries},
+                    )
                 except Exception as exc:
                     logger.debug("SoC snapshot: %s", exc)
 
         # Phase 10: PERSIST — write cycle to SQLite
         if self._db:
             try:
-                guard_level = (
-                    cycle_result.guard.level.value
-                    if cycle_result.guard else "ok"
+                guard_level = cycle_result.guard.level.value if cycle_result.guard else "ok"
+                headroom = cycle_result.guard.headroom_kw if cycle_result.guard else 0.0
+                violations = "; ".join(cycle_result.guard.violations) if cycle_result.guard else ""
+                await self._db.write_cycle(
+                    CycleLogEntry(
+                        cycle_id=cycle_result.cycle_id,
+                        timestamp=snapshot.timestamp.isoformat(),
+                        scenario=cycle_result.scenario.value,
+                        guard_level=guard_level,
+                        headroom_kw=headroom,
+                        elapsed_s=cycle_result.elapsed_s,
+                        violations=violations,
+                    )
                 )
-                headroom = (
-                    cycle_result.guard.headroom_kw
-                    if cycle_result.guard else 0.0
-                )
-                violations = (
-                    "; ".join(cycle_result.guard.violations)
-                    if cycle_result.guard else ""
-                )
-                await self._db.write_cycle(CycleLogEntry(
-                    cycle_id=cycle_result.cycle_id,
-                    timestamp=snapshot.timestamp.isoformat(),
-                    scenario=cycle_result.scenario.value,
-                    guard_level=guard_level,
-                    headroom_kw=headroom,
-                    elapsed_s=cycle_result.elapsed_s,
-                    violations=violations,
-                ))
             except Exception as exc:
                 logger.debug("Cycle log write failed: %s", exc)
 
@@ -783,7 +806,8 @@ class CarmaBoxService:
             await runner.cleanup()
 
     async def _handle_health(
-        self, request: aiohttp.web.Request,
+        self,
+        request: aiohttp.web.Request,
     ) -> aiohttp.web.Response:
         return aiohttp.web.Response(
             text=self._health.to_json(),
@@ -791,7 +815,8 @@ class CarmaBoxService:
         )
 
     async def _handle_metrics(
-        self, request: aiohttp.web.Request,
+        self,
+        request: aiohttp.web.Request,
     ) -> aiohttp.web.Response:
         return aiohttp.web.Response(
             text=self._metrics.to_prometheus(),
@@ -812,12 +837,20 @@ class CarmaBoxService:
             batteries: list[BatteryState] = []
             for bat_cfg in cfg.batteries:
                 ents = bat_cfg.entities
-                batch = await self._ha_api.get_states_batch([
-                    ents.soc, ents.power, ents.cell_temp,
-                    ents.pv_power, ents.grid_power, ents.load_power,
-                    ents.ems_mode, ents.ems_power_limit,
-                    ents.fast_charging, ents.soh,
-                ])
+                batch = await self._ha_api.get_states_batch(
+                    [
+                        ents.soc,
+                        ents.power,
+                        ents.cell_temp,
+                        ents.pv_power,
+                        ents.grid_power,
+                        ents.load_power,
+                        ents.ems_mode,
+                        ents.ems_power_limit,
+                        ents.fast_charging,
+                        ents.soh,
+                    ]
+                )
 
                 def _float(eid: str, default: float = 0.0) -> float:
                     s = batch.get(eid, {}).get("state")
@@ -848,29 +881,38 @@ class CarmaBoxService:
                 soc_ratio = (soc - floor) / _PCT_TO_RATIO
                 avail = max(0.0, soc_ratio * bat_cfg.cap_kwh * bat_cfg.efficiency)
 
-                batteries.append(BatteryState(
-                    battery_id=bat_cfg.id,
-                    soc_pct=soc,
-                    power_w=_float(ents.power),
-                    cell_temp_c=_float(ents.cell_temp, bat_cfg.default_cell_temp_c),
-                    pv_power_w=max(0.0, _float(ents.pv_power)),
-                    grid_power_w=_float(ents.grid_power),
-                    load_power_w=max(0.0, _float(ents.load_power)),
-                    ems_mode=EMSMode(batch.get(ents.ems_mode, {}).get("state", "battery_standby")),
-                    ems_power_limit_w=int(_float(ents.ems_power_limit)),
-                    fast_charging=batch.get(ents.fast_charging, {}).get("state") == "on",
-                    soh_pct=_float(ents.soh, bat_cfg.default_soh_pct),
-                    cap_kwh=bat_cfg.cap_kwh,
-                    ct_placement=bat_cfg.ct_placement,
-                    available_kwh=avail,
-                ))
+                batteries.append(
+                    BatteryState(
+                        battery_id=bat_cfg.id,
+                        soc_pct=soc,
+                        power_w=_float(ents.power),
+                        cell_temp_c=_float(ents.cell_temp, bat_cfg.default_cell_temp_c),
+                        pv_power_w=max(0.0, _float(ents.pv_power)),
+                        grid_power_w=_float(ents.grid_power),
+                        load_power_w=max(0.0, _float(ents.load_power)),
+                        ems_mode=EMSMode(
+                            batch.get(ents.ems_mode, {}).get("state", "battery_standby")
+                        ),
+                        ems_power_limit_w=int(_float(ents.ems_power_limit)),
+                        fast_charging=batch.get(ents.fast_charging, {}).get("state") == "on",
+                        soh_pct=_float(ents.soh, bat_cfg.default_soh_pct),
+                        cap_kwh=bat_cfg.cap_kwh,
+                        ct_placement=bat_cfg.ct_placement,
+                        available_kwh=avail,
+                    )
+                )
 
             # Read EV state
             ev_ents = cfg.ev_charger.entities
-            ev_batch = await self._ha_api.get_states_batch([
-                ev_ents.status, ev_ents.power, ev_ents.current,
-                ev_ents.enabled, ev_ents.reason_for_no_current,
-            ])
+            ev_batch = await self._ha_api.get_states_batch(
+                [
+                    ev_ents.status,
+                    ev_ents.power,
+                    ev_ents.current,
+                    ev_ents.enabled,
+                    ev_ents.reason_for_no_current,
+                ]
+            )
             ev_soc_str = await self._ha_api.get_state(cfg.ev.entities.soc)
             ev_soc = float(ev_soc_str) if ev_soc_str else -1.0
             ev_status = ev_batch.get(ev_ents.status, {}).get("state", "disconnected")
@@ -878,8 +920,12 @@ class CarmaBoxService:
             # Easee reports "disconnected" when disabled even if cable plugged in
             # If disabled → assume connected (cable always plugged in at home)
             ev_connected = (
-                ev_status.lower() in (
-                    "awaiting_start", "charging", "completed", "ready_to_charge",
+                ev_status.lower()
+                in (
+                    "awaiting_start",
+                    "charging",
+                    "completed",
+                    "ready_to_charge",
                 )
                 or not ev_enabled  # disabled = car connected but charger off
             )
@@ -898,22 +944,24 @@ class CarmaBoxService:
                 power_w=_ev_float(ev_ents.power) * _W_TO_KW,  # kW → W
                 current_a=_ev_float(ev_ents.current),
                 charger_status=ev_status,
-                reason_for_no_current=ev_batch.get(
-                    ev_ents.reason_for_no_current, {}
-                ).get("state", ""),
+                reason_for_no_current=ev_batch.get(ev_ents.reason_for_no_current, {}).get(
+                    "state", ""
+                ),
                 target_soc_pct=cfg.ev.daily_target_soc_pct,
             )
 
             # Read grid state
             grid_ents = cfg.grid.ellevio
-            grid_batch = await self._ha_api.get_states_batch([
-                grid_ents.entity_weighted_avg,
-                grid_ents.entity_current_peak,
-                grid_ents.entity_dynamic_tak,
-                cfg.pricing.entity,
-                cfg.pv_forecast.entity_today,
-                cfg.pv_forecast.entity_tomorrow,
-            ])
+            grid_batch = await self._ha_api.get_states_batch(
+                [
+                    grid_ents.entity_weighted_avg,
+                    grid_ents.entity_current_peak,
+                    grid_ents.entity_dynamic_tak,
+                    cfg.pricing.entity,
+                    cfg.pv_forecast.entity_today,
+                    cfg.pv_forecast.entity_tomorrow,
+                ]
+            )
 
             def _grid_float(eid: str, default: float = 0.0) -> float:
                 s = grid_batch.get(eid, {}).get("state")
@@ -943,8 +991,7 @@ class CarmaBoxService:
                 grid=grid,
                 consumers=await self._collect_consumers(),
                 current_scenario=(
-                    self._engine.current_scenario
-                    if self._engine else Scenario.PV_SURPLUS_DAY
+                    self._engine.current_scenario if self._engine else Scenario.PV_SURPLUS_DAY
                 ),
                 hour=now.hour,
                 minute=now.minute,
@@ -975,12 +1022,14 @@ class CarmaBoxService:
                 if not snapshot.ev.charging:
                     domain = self._entity_domain(ev_cfg.entities.enabled)
                     await self._ha_api.call_service(
-                        domain, "turn_on",
+                        domain,
+                        "turn_on",
                         {"entity_id": ev_cfg.entities.enabled},
                     )
                     logger.info(
                         "PLAN EXEC: EV start (plan h%d-%d)",
-                        plan.ev_start_hour, plan.ev_stop_hour,
+                        plan.ev_start_hour,
+                        plan.ev_stop_hour,
                     )
 
             # Grid charge bat per plan
@@ -1001,7 +1050,9 @@ class CarmaBoxService:
                             )
                     logger.info(
                         "PLAN EXEC: grid charge bat %dW (plan h%d-%d)",
-                        rate_w, plan.bat_charge_start_hour, plan.bat_charge_stop_hour,
+                        rate_w,
+                        plan.bat_charge_start_hour,
+                        plan.bat_charge_stop_hour,
                     )
 
         # Clear night plan at morning
@@ -1016,8 +1067,7 @@ class CarmaBoxService:
 
         ev = snapshot.ev
         headroom_w = (
-            snapshot.grid.dynamic_tak_kw * _W_TO_KW
-            - snapshot.grid.weighted_avg_kw * _W_TO_KW
+            snapshot.grid.dynamic_tak_kw * _W_TO_KW - snapshot.grid.weighted_avg_kw * _W_TO_KW
         )
 
         # PV surplus = negative grid = export
@@ -1042,16 +1092,14 @@ class CarmaBoxService:
             logger.info("EV CONNECT: %s", result.reason)
             # Bump low-priority consumers to make room
             ev_cfg_ctrl = (
-                self._ev_controller._config
-                if self._ev_controller else EVControllerConfig()
+                self._ev_controller._config if self._ev_controller else EVControllerConfig()
             )
-            min_needed_w = float(
-                ev_cfg_ctrl.start_amps * ev_cfg_ctrl.voltage_v
-            )
+            min_needed_w = float(ev_cfg_ctrl.start_amps * ev_cfg_ctrl.voltage_v)
             if headroom_w < min_needed_w:
                 freed_w = 0.0
                 for cc in sorted(
-                    self._consumer_configs, key=lambda c: c.priority,
+                    self._consumer_configs,
+                    key=lambda c: c.priority,
                 ):
                     if freed_w >= (min_needed_w - headroom_w):
                         break
@@ -1063,18 +1111,21 @@ class CarmaBoxService:
                     if state.get("state") == "on":
                         domain = self._entity_domain(cc.entity_switch)
                         await self._ha_api.call_service(
-                            domain, "turn_off",
+                            domain,
+                            "turn_off",
                             {"entity_id": cc.entity_switch},
                         )
                         freed_w += cc.power_w
                         logger.info(
                             "EV BUMP: stopped %s (+%dW)",
-                            cc.name, cc.power_w,
+                            cc.name,
+                            cc.power_w,
                         )
             # Start EV charging
             ev_cfg = self._config.ev_charger
             await self._ha_api.call_service(
-                self._entity_domain(ev_cfg.entities.enabled), "turn_on",
+                self._entity_domain(ev_cfg.entities.enabled),
+                "turn_on",
                 {"entity_id": ev_cfg.entities.enabled},
             )
             logger.info("EV CONNECT: started charging at %dA", result.target_amps)
@@ -1082,21 +1133,24 @@ class CarmaBoxService:
         elif result.action == EVAction.START:
             ev_cfg = self._config.ev_charger
             await self._ha_api.call_service(
-                self._entity_domain(ev_cfg.entities.enabled), "turn_on",
+                self._entity_domain(ev_cfg.entities.enabled),
+                "turn_on",
                 {"entity_id": ev_cfg.entities.enabled},
             )
 
         elif result.action == EVAction.STOP:
             ev_cfg = self._config.ev_charger
             await self._ha_api.call_service(
-                self._entity_domain(ev_cfg.entities.enabled), "turn_off",
+                self._entity_domain(ev_cfg.entities.enabled),
+                "turn_off",
                 {"entity_id": ev_cfg.entities.enabled},
             )
 
         elif result.action == EVAction.EMERGENCY_CUT:
             ev_cfg = self._config.ev_charger
             await self._ha_api.call_service(
-                self._entity_domain(ev_cfg.entities.enabled), "turn_off",
+                self._entity_domain(ev_cfg.entities.enabled),
+                "turn_off",
                 {"entity_id": ev_cfg.entities.enabled},
             )
             logger.warning("EV EMERGENCY CUT: %s", result.reason)
@@ -1117,7 +1171,8 @@ class CarmaBoxService:
             state = await self._ha_api.get_state(entity)
             if state == "on":
                 await self._ha_api.call_service(
-                    self._entity_domain(entity), "turn_off",
+                    self._entity_domain(entity),
+                    "turn_off",
                     {"entity_id": entity},
                 )
                 logger.info("Force replan triggered via %s", entity)
@@ -1147,10 +1202,7 @@ class CarmaBoxService:
             scenario_str = await self._ha_api.get_state(
                 override_cfg.scenario_entity,
             )
-            if (
-                scenario_str is None
-                or scenario_str in ("", "Auto", "unknown", "unavailable")
-            ):
+            if scenario_str is None or scenario_str in ("", "Auto", "unknown", "unavailable"):
                 self._engine.set_manual_override(None)
                 return
 
@@ -1160,7 +1212,8 @@ class CarmaBoxService:
                 logger.info("Manual override active: %s", scenario.value)
             except ValueError:
                 logger.warning(
-                    "Invalid manual scenario: '%s'", scenario_str,
+                    "Invalid manual scenario: '%s'",
+                    scenario_str,
                 )
                 self._engine.set_manual_override(None)
         except Exception as exc:
@@ -1191,10 +1244,7 @@ class CarmaBoxService:
             if cc.entity_power:
                 power_state = batch.get(cc.entity_power, {})
                 power_str = power_state.get("state")
-                if (
-                    power_str is None
-                    or power_str in ("", "unavailable", "unknown")
-                ):
+                if power_str is None or power_str in ("", "unavailable", "unknown"):
                     power = 0.0
                 else:
                     try:
@@ -1208,16 +1258,18 @@ class CarmaBoxService:
                 # No switch — fall back to measured power.
                 active = power > _ACTIVE_POWER_THRESHOLD_W
 
-            consumers.append(ConsumerState(
-                consumer_id=cc.id,
-                name=cc.name,
-                active=active,
-                power_w=power if active else float(cc.power_w),
-                priority=cc.priority,
-                priority_shed=cc.priority_shed,
-                load_type=cc.type,
-                requires_active=cc.requires_active,
-            ))
+            consumers.append(
+                ConsumerState(
+                    consumer_id=cc.id,
+                    name=cc.name,
+                    active=active,
+                    power_w=power if active else float(cc.power_w),
+                    priority=cc.priority,
+                    priority_shed=cc.priority_shed,
+                    load_type=cc.type,
+                    requires_active=cc.requires_active,
+                )
+            )
 
         # Sort by priority (lower = higher priority)
         consumers.sort(key=lambda c: c.priority)
@@ -1230,9 +1282,11 @@ class CarmaBoxService:
 
         # PLAT-1541: Cold outdoor battery → start cold_heater consumer
         outdoor_bat = next(
-            (b for b in snapshot.batteries
-             if any(bc.id == b.battery_id and bc.is_outdoor
-                     for bc in self._config.batteries)),
+            (
+                b
+                for b in snapshot.batteries
+                if any(bc.id == b.battery_id and bc.is_outdoor for bc in self._config.batteries)
+            ),
             None,
         )
         heater_cfg = next(
@@ -1241,12 +1295,12 @@ class CarmaBoxService:
         )
         if outdoor_bat and heater_cfg and heater_cfg.entity_switch:
             bat_cfg_outdoor = next(
-                (bc for bc in self._config.batteries
-                 if bc.id == outdoor_bat.battery_id),
+                (bc for bc in self._config.batteries if bc.id == outdoor_bat.battery_id),
                 None,
             )
             cold_threshold = (
-                bat_cfg_outdoor.cold_temp_c if bat_cfg_outdoor
+                bat_cfg_outdoor.cold_temp_c
+                if bat_cfg_outdoor
                 else self._config.guards.g1_soc_floor.cold_floor_pct
             )
             if outdoor_bat.cell_temp_c < cold_threshold:
@@ -1258,12 +1312,14 @@ class CarmaBoxService:
                 if heater_state.get("state") != "on":
                     domain = self._entity_domain(heater_cfg.entity_switch)
                     await self._ha_api.call_service(
-                        domain, "turn_on",
+                        domain,
+                        "turn_on",
                         {"entity_id": heater_cfg.entity_switch},
                     )
                     logger.info(
                         "COLD HEATER: outdoor battery (%.1f°C < %.1f°C) → started",
-                        outdoor_bat.cell_temp_c, cold_threshold,
+                        outdoor_bat.cell_temp_c,
+                        cold_threshold,
                     )
 
         # Calculate available surplus: negative grid = export
@@ -1297,22 +1353,27 @@ class CarmaBoxService:
             if alloc.action == "start":
                 domain = self._entity_domain(cc.entity_switch)
                 await self._ha_api.call_service(
-                    domain, "turn_on",
+                    domain,
+                    "turn_on",
                     {"entity_id": cc.entity_switch},
                 )
                 logger.info(
-                    "Surplus: START %s (%s)", cc.name, alloc.reason,
+                    "Surplus: START %s (%s)",
+                    cc.name,
+                    alloc.reason,
                 )
             elif alloc.action == "stop":
                 domain = self._entity_domain(cc.entity_switch)
                 await self._ha_api.call_service(
-                    domain, "turn_off",
+                    domain,
+                    "turn_off",
                     {"entity_id": cc.entity_switch},
                 )
                 logger.info(
-                    "Surplus: STOP %s (%s)", cc.name, alloc.reason,
+                    "Surplus: STOP %s (%s)",
+                    cc.name,
+                    alloc.reason,
                 )
-
 
     async def _write_dashboard_state(
         self,
@@ -1326,10 +1387,7 @@ class CarmaBoxService:
         dash = self._config.dashboard
 
         # Scenario sensor with battery/grid attributes
-        bat_socs = {
-            b.battery_id: round(b.soc_pct, 1)
-            for b in snapshot.batteries
-        }
+        bat_socs = {b.battery_id: round(b.soc_pct, 1) for b in snapshot.batteries}
         attrs: dict[str, object] = {
             "friendly_name": "CARMA Box Scenario",
             "cycle": self._cycle_count,
@@ -1359,9 +1417,7 @@ class CarmaBoxService:
         # Rules sensor — active guards summary
         rules = "OK"
         if cycle_result.guard and cycle_result.guard.commands:
-            rules = ", ".join(
-                c.command_type.value for c in cycle_result.guard.commands
-            )
+            rules = ", ".join(c.command_type.value for c in cycle_result.guard.commands)
         await self._ha_api.set_state(
             dash.entity_rules,
             rules,
@@ -1374,17 +1430,18 @@ class CarmaBoxService:
             f"Price {snapshot.grid.price_ore:.0f}ore "
             f"Scenario {cycle_result.scenario.value}"
         )
-        plan_tomorrow = (
-            f"PV tomorrow {snapshot.grid.pv_forecast_tomorrow_kwh:.0f}kWh"
+        plan_tomorrow = f"PV tomorrow {snapshot.grid.pv_forecast_tomorrow_kwh:.0f}kWh"
+        await self._ha_api.set_input_text(
+            dash.entity_plan_today,
+            plan_today,
         )
         await self._ha_api.set_input_text(
-            dash.entity_plan_today, plan_today,
+            dash.entity_plan_tomorrow,
+            plan_tomorrow,
         )
         await self._ha_api.set_input_text(
-            dash.entity_plan_tomorrow, plan_tomorrow,
-        )
-        await self._ha_api.set_input_text(
-            dash.entity_plan_day3, "",
+            dash.entity_plan_day3,
+            "",
         )
 
         # Export limit — open during PV, close at evening
@@ -1398,13 +1455,14 @@ class CarmaBoxService:
                 continue
             if pv_producing and snapshot.hour < evening_hour:
                 await self._ha_api.call_service(
-                    self._entity_domain(export_entity), "set_value",
-                    {"entity_id": export_entity,
-                     "value": int(bat_cfg.max_discharge_kw * _W_TO_KW)},
+                    self._entity_domain(export_entity),
+                    "set_value",
+                    {"entity_id": export_entity, "value": int(bat_cfg.max_discharge_kw * _W_TO_KW)},
                 )
             elif snapshot.hour >= evening_hour or not pv_producing:
                 await self._ha_api.call_service(
-                    self._entity_domain(export_entity), "set_value",
+                    self._entity_domain(export_entity),
+                    "set_value",
                     {"entity_id": export_entity, "value": 0},
                 )
 
@@ -1425,7 +1483,7 @@ class CarmaBoxService:
                 self._entity_domain(pv_high_tomorrow_entity),
                 "turn_on" if pv_tomorrow >= pv_high_threshold else "turn_off",
                 {"entity_id": pv_high_tomorrow_entity},
-        )
+            )
 
         # DayPlan sensor — write current day plan (PLAT-1627)
         # LÄRDOM [dead-code-guard]: always init in __init__, never use hasattr()
@@ -1438,7 +1496,8 @@ class CarmaBoxService:
                 "slots": plan.to_dict()["slots"],
                 "can_discharge_fm": plan.can_discharge_fm,
                 "total_expected_export_kwh": round(
-                    plan.total_expected_export_kwh, 2,
+                    plan.total_expected_export_kwh,
+                    2,
                 ),
                 "bat_target_soc_pct": plan.bat_target_soc_pct,
                 "ev_target_soc_pct": plan.ev_target_soc_pct,

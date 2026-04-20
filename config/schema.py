@@ -11,12 +11,15 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from core.budget import BudgetConfig
+from core.grid_tuner import GridTunerConfig
 from core.models import CTPlacement
 
 
 # ---------------------------------------------------------------------------
 # Site
 # ---------------------------------------------------------------------------
+
 
 class SiteConfig(BaseModel):
     """Top-level site identification."""
@@ -32,6 +35,7 @@ class SiteConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Home Assistant
 # ---------------------------------------------------------------------------
+
 
 class HAConfig(BaseModel):
     """Home Assistant REST API connection settings."""
@@ -52,6 +56,7 @@ class HAConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Grid / Ellevio
 # ---------------------------------------------------------------------------
+
 
 class EllevioConfig(BaseModel):
     """Ellevio peak shaving tariff configuration."""
@@ -98,6 +103,7 @@ class GridConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Battery / GoodWe
 # ---------------------------------------------------------------------------
+
 
 class GoodWeConfig(BaseModel):
     """GoodWe inverter-specific Modbus settings."""
@@ -161,14 +167,13 @@ class BatteryConfig(BaseModel):
             return CTPlacement(v)
         except ValueError:
             allowed = {e.value for e in CTPlacement}
-            raise ValueError(
-                f"ct_placement must be one of {allowed}, got '{v}'"
-            )
+            raise ValueError(f"ct_placement must be one of {allowed}, got '{v}'")
 
 
 # ---------------------------------------------------------------------------
 # EV Charger
 # ---------------------------------------------------------------------------
+
 
 class EVChargerRampConfig(BaseModel):
     """EV charger ramp-up/ramp-down settings."""
@@ -236,6 +241,7 @@ class EVChargerConfig(BaseModel):
 # EV
 # ---------------------------------------------------------------------------
 
+
 class EVEntities(BaseModel):
     """Home Assistant entity IDs for the electric vehicle."""
 
@@ -267,11 +273,15 @@ class ApplianceConfig(BaseModel):
     name: str = Field(..., min_length=1)
     entity_id: str = Field(..., min_length=1, description="HA power sensor entity ID")
     start_threshold_w: float = Field(
-        default=50.0, ge=0.0, le=10000.0,
+        default=50.0,
+        ge=0.0,
+        le=10000.0,
         description="Power above this (W) -> appliance considered active",
     )
     stop_threshold_w: float = Field(
-        default=10.0, ge=0.0, le=1000.0,
+        default=10.0,
+        ge=0.0,
+        le=1000.0,
         description="Power below this (W) -> appliance considered stopped",
     )
 
@@ -290,6 +300,7 @@ class ApplianceMonitorConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Consumers
 # ---------------------------------------------------------------------------
+
 
 class ConsumerConfig(BaseModel):
     """Configuration for a single dispatchable consumer."""
@@ -369,6 +380,7 @@ class ConsumerConfig(BaseModel):
 # Surplus
 # ---------------------------------------------------------------------------
 
+
 class ClimateBoostConfig(BaseModel):
     """Climate boost surplus configuration."""
 
@@ -396,6 +408,7 @@ class SurplusConfig(BaseModel):
 # Pricing
 # ---------------------------------------------------------------------------
 
+
 class PricingConfig(BaseModel):
     """Electricity price data source configuration."""
 
@@ -409,6 +422,7 @@ class PricingConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # PV Forecast
 # ---------------------------------------------------------------------------
+
 
 class P10SafetyConfig(BaseModel):
     """P10 safety floor for conservative discharge in low-confidence forecasts."""
@@ -436,6 +450,7 @@ class PVForecastConfig(BaseModel):
 # Weather
 # ---------------------------------------------------------------------------
 
+
 class WeatherConfig(BaseModel):
     """Weather data source configuration."""
 
@@ -449,6 +464,7 @@ class WeatherConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Night / Evening planning
 # ---------------------------------------------------------------------------
+
 
 class NightPlanConfig(BaseModel):
     """Night planning window configuration."""
@@ -516,6 +532,7 @@ class BatSupportControllerConfig(BaseModel):
 # Control loop
 # ---------------------------------------------------------------------------
 
+
 class DeadbandConfig(BaseModel):
     """Deadband configuration to prevent oscillation."""
 
@@ -545,7 +562,9 @@ class BatteryGateConfig(BaseModel):
     """
 
     charge_stop_soc_pct: float = Field(
-        default=95.0, ge=50.0, le=100.0,
+        default=95.0,
+        ge=50.0,
+        le=100.0,
         description="Stop bat charging at this SoC (percent). Matches S8 entry.",
     )
 
@@ -574,6 +593,7 @@ class ControlConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Guards
 # ---------------------------------------------------------------------------
+
 
 class G0Config(BaseModel):
     """Guard G0: Grid charging detection."""
@@ -660,6 +680,7 @@ class GuardsConfig(BaseModel):
 # Storage
 # ---------------------------------------------------------------------------
 
+
 class SQLiteConfig(BaseModel):
     """SQLite local storage configuration."""
 
@@ -691,6 +712,7 @@ class StorageConfig(BaseModel):
 # Notifications
 # ---------------------------------------------------------------------------
 
+
 class SlackConfig(BaseModel):
     """Slack notification configuration."""
 
@@ -718,6 +740,7 @@ class NotificationsConfig(BaseModel):
 # Manual Override
 # ---------------------------------------------------------------------------
 
+
 class ManualOverrideConfig(BaseModel):
     """Manual override entity configuration."""
 
@@ -732,6 +755,7 @@ class ManualOverrideConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
+
 
 class LoggingConfig(BaseModel):
     """Logging configuration."""
@@ -759,6 +783,7 @@ class LoggingConfig(BaseModel):
 # Health Check
 # ---------------------------------------------------------------------------
 
+
 class HealthConfig(BaseModel):
     """Health-check endpoint configuration."""
 
@@ -783,8 +808,291 @@ class DashboardConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Budget Allocator — PLAT-1748
+# ---------------------------------------------------------------------------
+
+
+class BudgetGridTunerSection(BaseModel):
+    """Pydantic schema for grid-tuner tunables (mirrors GridTunerConfig).
+
+    All fields default to the current GridTunerConfig defaults so that
+    omitting ``grid_tuner:`` from site.yaml preserves existing behaviour.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Enable tiered grid-sensor fine-tuner (PLAT-1737).",
+    )
+    tiers_w: list[float] = Field(
+        default=[50.0, 75.0, 100.0],
+        description="Ascending |grid| thresholds (W) where each correction tier starts.",
+    )
+    corrections_w: list[int] = Field(
+        default=[100, 300, 500],
+        description="Correction magnitude per tier (W); must be same length as tiers_w.",
+    )
+    rolling_window_s: int = Field(
+        default=300,
+        ge=30,
+        le=900,
+        description="Rolling window duration (s) for anti-flap mode-change guard.",
+    )
+    mode_change_stability_w: float = Field(
+        default=50.0,
+        ge=0.0,
+        le=500.0,
+        description="Block mode-change when |rolling avg| < this (W).",
+    )
+
+    @model_validator(mode="after")
+    def validate_tiers_and_corrections(self) -> "BudgetGridTunerSection":
+        """Tiers must be ascending; corrections length must match tiers length."""
+        if any(self.tiers_w[i] >= self.tiers_w[i + 1] for i in range(len(self.tiers_w) - 1)):
+            raise ValueError(f"tiers_w must be strictly ascending, got {self.tiers_w}")
+        if len(self.corrections_w) != len(self.tiers_w):
+            raise ValueError(
+                f"corrections_w length ({len(self.corrections_w)}) must match "
+                f"tiers_w length ({len(self.tiers_w)})"
+            )
+        return self
+
+    def to_grid_tuner_config(self) -> GridTunerConfig:
+        """Convert to the immutable GridTunerConfig dataclass used by core."""
+        return GridTunerConfig(
+            enabled=self.enabled,
+            tiers_w=tuple(self.tiers_w),
+            corrections_w=tuple(self.corrections_w),
+            rolling_window_s=self.rolling_window_s,
+            mode_change_stability_w=self.mode_change_stability_w,
+        )
+
+
+class BudgetCascadeSection(BaseModel):
+    """Consumer cascade tunables — prevents flapping, controls ramp-up pacing."""
+
+    cooldown_s: float = Field(
+        default=60.0,
+        ge=0.0,
+        le=3600.0,
+        description="Minimum seconds between two switches of the same consumer.",
+    )
+    sustained_cycles: int = Field(
+        default=2,
+        ge=1,
+        le=20,
+        description="Consecutive export cycles required before starting next consumer.",
+    )
+    bat_at_max_headroom_w: int = Field(
+        default=500,
+        ge=0,
+        le=5000,
+        description=(
+            "Battery counts as saturated when allocated charge-limit is within "
+            "this many W of its physical max (W)."
+        ),
+    )
+
+
+class BudgetSmoothingSection(BaseModel):
+    """Grid-sensor median smoothing — rejects spurious single-cycle spikes."""
+
+    grid_smoothing_window: int = Field(
+        default=3,
+        ge=1,
+        le=30,
+        description=(
+            "Median window size (cycles). Rejects isolated sensor spikes. "
+            "1 = no smoothing; 3 = good default."
+        ),
+    )
+
+
+class BudgetAggressiveSpreadSection(BaseModel):
+    """Battery SoC spread tuning — drives balancing between battery strings."""
+
+    bat_spread_max_pct: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=100.0,
+        description=(
+            "SoC spread (pp) above which zero_grid uses aggressive P/S split. "
+            "1.0 pp matches the user rule 'SoC diff > 1%% = P1'."
+        ),
+    )
+    bat_aggressive_spread_pct: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=100.0,
+        description="Backward-compat alias for bat_spread_max_pct; defaults to same value.",
+    )
+
+
+class BudgetEmergencySection(BaseModel):
+    """Emergency limits and capacity fallback parameters."""
+
+    bat_discharge_min_soc_pct: float = Field(
+        default=15.0,
+        ge=5.0,
+        le=50.0,
+        description="Absolute SoC floor for discharge (%). GoodWe cuts AC output below 15%.",
+    )
+    bat_default_cap_kwh: float = Field(
+        default=10.0,
+        gt=0.0,
+        le=200.0,
+        description="Fallback battery capacity (kWh) when caller omits bat_caps.",
+    )
+    bat_default_max_charge_w: int = Field(
+        default=5000,
+        gt=0,
+        le=25000,
+        description="Fallback max charge rate (W) per battery when not supplied by caller.",
+    )
+    bat_default_max_discharge_w: int = Field(
+        default=5000,
+        gt=0,
+        le=25000,
+        description="Fallback max discharge rate (W) per battery when not supplied by caller.",
+    )
+
+
+class BudgetSection(BaseModel):
+    """Full power-budget allocator configuration.
+
+    Maps 1:1 to ``BudgetConfig`` in core/budget.py.  All fields default to
+    the current BudgetConfig defaults so that omitting ``budget:`` from
+    site.yaml is fully backwards-compatible.
+
+    Sub-sections group related tunables:
+      - grid_tuner: tiered grid-sensor fine-tuner (PLAT-1737)
+      - cascade: consumer priority cascade pacing
+      - smoothing: grid-sensor median smoothing
+      - aggressive_spread: battery SoC spread control
+      - emergency: discharge floor and capacity fallbacks
+    """
+
+    # EV charging amps
+    ev_min_amps: int = Field(
+        default=6,
+        ge=6,
+        le=32,
+        description="Minimum EV charging current (A).",
+    )
+    ev_max_amps: int = Field(
+        default=16,
+        ge=6,
+        le=32,
+        description="Maximum EV charging current (A).",
+    )
+    # Battery SoC levels
+    bat_soc_full_pct: float = Field(
+        default=100.0,
+        ge=50.0,
+        le=100.0,
+        description="Battery is physically full at this SoC (%). Stops bat-discharge-support path.",
+    )
+    # NOTE: bat_charge_stop_soc_pct is intentionally absent from BudgetSection.
+    # It is ALWAYS sourced from control.battery_gate.charge_stop_soc_pct (PLAT-1695
+    # invariant: must match S8 surplus_entry_soc_pct in the state machine).
+    # main.py applies it as an override after calling to_budget_config().
+    # Spread ratios
+    bat_lower_ratio: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of power routed to lower-SoC battery when spread is active.",
+    )
+    bat_higher_ratio: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of power routed to higher-SoC battery when spread is active.",
+    )
+    # EV ramp hold cycles
+    ev_ramp_up_hold_cycles: int = Field(
+        default=2,
+        ge=1,
+        le=20,
+        description="Consecutive export cycles required before ramping EV current up.",
+    )
+    ev_ramp_down_hold_cycles: int = Field(
+        default=1,
+        ge=1,
+        le=20,
+        description="Consecutive import cycles required before ramping EV current down.",
+    )
+    # Battery discharge support
+    bat_discharge_support: bool = Field(
+        default=True,
+        description="Allow battery to discharge to support EV charging when PV is insufficient.",
+    )
+    # Time-of-day boundary
+    evening_cutoff_h: int = Field(
+        default=17,
+        ge=12,
+        le=22,
+        description="Hour (local) after which battery priority takes precedence over EV.",
+    )
+    # Sub-sections
+    grid_tuner: BudgetGridTunerSection = Field(
+        default_factory=BudgetGridTunerSection,
+        description="Tiered grid-sensor fine-tuner settings (PLAT-1737).",
+    )
+    cascade: BudgetCascadeSection = Field(
+        default_factory=BudgetCascadeSection,
+        description="Consumer cascade pacing and anti-flap tunables.",
+    )
+    smoothing: BudgetSmoothingSection = Field(
+        default_factory=BudgetSmoothingSection,
+        description="Grid-sensor median smoothing window.",
+    )
+    aggressive_spread: BudgetAggressiveSpreadSection = Field(
+        default_factory=BudgetAggressiveSpreadSection,
+        description="Battery SoC spread control thresholds.",
+    )
+    emergency: BudgetEmergencySection = Field(
+        default_factory=BudgetEmergencySection,
+        description="Discharge floor and capacity fallback parameters.",
+    )
+
+    def to_budget_config(self) -> BudgetConfig:
+        """Convert this schema section to the immutable BudgetConfig dataclass.
+
+        Maps every field explicitly — no **kwargs magic — so mypy can verify
+        that all BudgetConfig fields are accounted for.
+
+        Note: ``bat_charge_stop_soc_pct`` is NOT set here. It is always
+        derived from ``control.battery_gate.charge_stop_soc_pct`` in main.py
+        to maintain the PLAT-1695 invariant (must match S8 entry SoC).
+        """
+        return BudgetConfig(
+            ev_min_amps=self.ev_min_amps,
+            ev_max_amps=self.ev_max_amps,
+            bat_soc_full_pct=self.bat_soc_full_pct,
+            bat_spread_max_pct=self.aggressive_spread.bat_spread_max_pct,
+            bat_aggressive_spread_pct=self.aggressive_spread.bat_aggressive_spread_pct,
+            bat_lower_ratio=self.bat_lower_ratio,
+            bat_higher_ratio=self.bat_higher_ratio,
+            ev_ramp_up_hold_cycles=self.ev_ramp_up_hold_cycles,
+            ev_ramp_down_hold_cycles=self.ev_ramp_down_hold_cycles,
+            bat_discharge_support=self.bat_discharge_support,
+            evening_cutoff_h=self.evening_cutoff_h,
+            bat_discharge_min_soc_pct=self.emergency.bat_discharge_min_soc_pct,
+            bat_default_cap_kwh=self.emergency.bat_default_cap_kwh,
+            bat_default_max_charge_w=self.emergency.bat_default_max_charge_w,
+            bat_default_max_discharge_w=self.emergency.bat_default_max_discharge_w,
+            cascade_cooldown_s=self.cascade.cooldown_s,
+            cascade_sustained_cycles=self.cascade.sustained_cycles,
+            bat_at_max_headroom_w=self.cascade.bat_at_max_headroom_w,
+            grid_smoothing_window=self.smoothing.grid_smoothing_window,
+            grid_tuner=self.grid_tuner.to_grid_tuner_config(),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Root Config
 # ---------------------------------------------------------------------------
+
 
 class CarmaConfig(BaseModel):
     """Root configuration model — represents the entire site.yaml."""
@@ -814,6 +1122,14 @@ class CarmaConfig(BaseModel):
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
+    budget: BudgetSection = Field(
+        default_factory=BudgetSection,
+        description=(
+            "Power budget allocator tunables (PLAT-1748). "
+            "All fields default to current BudgetConfig defaults — "
+            "omitting this section is backwards-compatible."
+        ),
+    )
 
 
 def load_config(path: str) -> CarmaConfig:

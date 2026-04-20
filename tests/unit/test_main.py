@@ -82,6 +82,7 @@ class TestCarmaBoxService:
     @pytest.fixture()
     def config(self):  # type: ignore[no-untyped-def]
         from config.schema import load_config
+
         config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
         return load_config(config_path)
 
@@ -119,6 +120,7 @@ class TestSetupLogging:
 
     def test_console_handler_added(self, config):  # type: ignore[no-untyped-def]
         from config.schema import load_config
+
         config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
         cfg = load_config(config_path)
 
@@ -349,6 +351,7 @@ class TestHealthHandlers:
 
         assert response.content_type == "application/json"
         import json
+
         body = json.loads(response.text)
         assert "status" in body
         assert "scenario" in body
@@ -388,6 +391,7 @@ class TestHealthHandlers:
         response = await service._handle_health(mock_request)
 
         import json
+
         body = json.loads(response.text)
         assert body["guard_level"] == "freeze"
 
@@ -409,9 +413,9 @@ class TestEngineeringStandardsDoc:
         assert doc.exists(), "docs/ENGINEERING_STANDARDS.md missing"
         lines = doc.read_text().splitlines()
         _MIN_SUBSTANTIAL_DOC_LINES: int = 50
-        assert len(lines) > _MIN_SUBSTANTIAL_DOC_LINES, (
-            f"Doc too short: {len(lines)} lines (need >{_MIN_SUBSTANTIAL_DOC_LINES})"
-        )
+        assert (
+            len(lines) > _MIN_SUBSTANTIAL_DOC_LINES
+        ), f"Doc too short: {len(lines)} lines (need >{_MIN_SUBSTANTIAL_DOC_LINES})"
 
 
 class TestNoNaked1000InMain:
@@ -425,8 +429,8 @@ class TestNoNaked1000InMain:
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
-            has_1000 = re.search(r'\b1000\b', stripped)
-            if has_1000 and '_W_TO_KW' not in stripped and '_MS_PER_S' not in stripped:
+            has_1000 = re.search(r"\b1000\b", stripped)
+            if has_1000 and "_W_TO_KW" not in stripped and "_MS_PER_S" not in stripped:
                 assert False, f"Naked 1000 at main.py:{i}: {stripped}"
 
 
@@ -523,13 +527,20 @@ class TestCollectConsumers:
         with patch.object(service, "_execute_surplus", new_callable=AsyncMock) as mock_surplus:
             # Patch _collect_snapshot to return a snapshot with consumers
             from tests.conftest import make_snapshot
-            snap = make_snapshot(consumers=[
-                ConsumerState(
-                    consumer_id="miner", name="Miner", active=True,
-                    power_w=400.0, priority=1, priority_shed=1,
-                    load_type="on_off",
-                ),
-            ])
+
+            snap = make_snapshot(
+                consumers=[
+                    ConsumerState(
+                        consumer_id="miner",
+                        name="Miner",
+                        active=True,
+                        power_w=400.0,
+                        priority=1,
+                        priority_shed=1,
+                        load_type="on_off",
+                    ),
+                ]
+            )
             with patch.object(service, "_collect_snapshot", return_value=snap):
                 await service._run_cycle()
 
@@ -566,7 +577,8 @@ class TestDashboardWriteBack:
             elapsed_s=0.1,
             scenario=Scenario.PV_SURPLUS_DAY,
             guard=GuardEvaluation(
-                level=GuardLevel.OK, commands=[],
+                level=GuardLevel.OK,
+                commands=[],
             ),
         )
 
@@ -578,16 +590,12 @@ class TestDashboardWriteBack:
         assert mock_api.set_input_text.call_count == 3
 
         # Verify entity IDs
-        state_entities = [
-            c.args[0] for c in mock_api.set_state.call_args_list
-        ]
+        state_entities = [c.args[0] for c in mock_api.set_state.call_args_list]
         assert cfg.dashboard.entity_scenario in state_entities
         assert cfg.dashboard.entity_decision_reason in state_entities
         assert cfg.dashboard.entity_rules in state_entities
 
-        text_entities = [
-            c.args[0] for c in mock_api.set_input_text.call_args_list
-        ]
+        text_entities = [c.args[0] for c in mock_api.set_input_text.call_args_list]
         assert cfg.dashboard.entity_plan_today in text_entities
         assert cfg.dashboard.entity_plan_tomorrow in text_entities
         assert cfg.dashboard.entity_plan_day3 in text_entities
@@ -624,6 +632,7 @@ class TestManualOverride:
 
         # Engine should have manual override set
         from core.models import Scenario
+
         assert service._engine is not None
         assert service._engine._sm._manual_override == Scenario.EVENING_DISCHARGE
 
@@ -696,6 +705,7 @@ class TestGenerate48hPlan:
 
     def _make_service(self) -> CarmaBoxService:
         from config.schema import load_config
+
         config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
         cfg = load_config(config_path)
         return CarmaBoxService(cfg)
@@ -703,6 +713,7 @@ class TestGenerate48hPlan:
     def test_plan_format(self) -> None:
         service = self._make_service()
         from tests.conftest import make_snapshot
+
         snap = make_snapshot(hour=22, minute=0)
         today, tomorrow = service._plan_executor.generate_48h(snap, 22)
         for entry in today.split("|"):
@@ -713,6 +724,7 @@ class TestGenerate48hPlan:
     def test_plan_split_by_day(self) -> None:
         service = self._make_service()
         from tests.conftest import make_snapshot
+
         snap = make_snapshot(hour=0, minute=0)
         today, tomorrow = service._plan_executor.generate_48h(snap, 0)
         today_hours = [e.split(":")[0] for e in today.split("|")]
@@ -721,8 +733,10 @@ class TestGenerate48hPlan:
     def test_plan_night_ev_charge(self) -> None:
         service = self._make_service()
         from tests.conftest import make_snapshot, make_ev_state
+
         snap = make_snapshot(
-            hour=22, minute=0,
+            hour=22,
+            minute=0,
             ev=make_ev_state(soc_pct=50.0, connected=True),
         )
         today, _ = service._plan_executor.generate_48h(snap, 22)
@@ -733,15 +747,19 @@ class TestGenerate48hPlan:
         service = self._make_service()
         from datetime import date as _date
         from tests.conftest import make_snapshot, make_grid_state
+
         # LÄRDOM: inject deterministic date (Tuesday) — NEVER depend on
         # system clock for weekday logic. Friday evening broke this test.
         _TUESDAY: _date = _date(2026, 4, 14)  # known Tuesday
         snap = make_snapshot(
-            hour=8, minute=0,
+            hour=8,
+            minute=0,
             grid=make_grid_state(pv_forecast_today_kwh=30.0),
         )
         today, _ = service._plan_executor.generate_48h(
-            snap, 8, reference_date=_TUESDAY,
+            snap,
+            8,
+            reference_date=_TUESDAY,
         )
         # First hours (8-9) should be CHG with 30kWh PV forecast
         entries = {e.split(":")[0]: e for e in today.split("|")}
@@ -751,10 +769,13 @@ class TestGenerate48hPlan:
         service = self._make_service()
         from datetime import date as _date
         from tests.conftest import make_snapshot
+
         _TUESDAY: _date = _date(2026, 4, 14)  # known Tuesday
         snap = make_snapshot(hour=17, minute=0)
         today, _ = service._plan_executor.generate_48h(
-            snap, 17, reference_date=_TUESDAY,
+            snap,
+            17,
+            reference_date=_TUESDAY,
         )
         first = today.split("|")[0]
         assert ":DIS:" in first or ":STB:" in first
@@ -772,9 +793,8 @@ class TestGenerateDayPlan:
 
     def _make_service(self) -> CarmaBoxService:
         from config.schema import load_config
-        config_path = str(
-            Path(__file__).resolve().parents[2] / "config" / "site.yaml"
-        )
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
         cfg = load_config(config_path)
         return CarmaBoxService(cfg)
 
@@ -815,7 +835,11 @@ class TestBudgetConfigGuard:
     """PLAT-1686: BudgetConfig None-guard when ev_charger missing."""
 
     def test_budget_config_wiring_in_source(self) -> None:
-        """Guard: main.py has 'if config.ev_charger:' before BudgetConfig."""
+        """Guard: main.py wires BudgetSection inside 'if config.ev_charger:' guard.
+
+        PLAT-1748: budget config is now built via config.budget.to_budget_config()
+        instead of direct BudgetConfig() construction.
+        """
         source = Path(__file__).resolve().parents[2] / "main.py"
         lines = source.read_text().splitlines()
         found_guard = False
@@ -823,10 +847,139 @@ class TestBudgetConfigGuard:
         for line in lines:
             if "if config.ev_charger:" in line:
                 found_guard = True
-            if "BudgetConfig(" in line and found_guard:
+            if "to_budget_config()" in line and found_guard:
                 found_budget = True
                 break
         assert found_guard, "main.py missing 'if config.ev_charger:' guard"
-        assert found_budget, (
-            "BudgetConfig() must be INSIDE 'if config.ev_charger:' block"
+        assert (
+            found_budget
+        ), "config.budget.to_budget_config() must be INSIDE 'if config.ev_charger:' block"
+
+
+# ===========================================================================
+# PLAT-1748: BudgetConfig mapping — all fields from BudgetSection
+# ===========================================================================
+
+
+class TestBudgetConfigMapping:
+    """Verify that CarmaBoxService wires all BudgetSection fields to BudgetConfig.
+
+    These tests construct a config with non-default budget values and check that
+    the resulting _engine._budget_config reflects them — proving the mapping in
+    __init__() is complete.
+    """
+
+    @pytest.fixture()
+    def cfg_and_service(self):  # type: ignore[no-untyped-def]
+        """Returns (cfg, service) with non-default budget values and a mock HA API."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from config.schema import (
+            BudgetAggressiveSpreadSection,
+            BudgetCascadeSection,
+            BudgetEmergencySection,
+            BudgetGridTunerSection,
+            BudgetSection,
+            BudgetSmoothingSection,
+            load_config,
         )
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+        patched = BudgetSection(
+            ev_min_amps=8,
+            ev_max_amps=14,
+            bat_lower_ratio=0.75,
+            bat_higher_ratio=0.25,
+            ev_ramp_up_hold_cycles=3,
+            ev_ramp_down_hold_cycles=2,
+            bat_discharge_support=False,
+            evening_cutoff_h=18,
+            grid_tuner=BudgetGridTunerSection(enabled=True),
+            cascade=BudgetCascadeSection(cooldown_s=120.0, sustained_cycles=4),
+            smoothing=BudgetSmoothingSection(grid_smoothing_window=5),
+            aggressive_spread=BudgetAggressiveSpreadSection(
+                bat_spread_max_pct=2.0, bat_aggressive_spread_pct=4.0
+            ),
+            emergency=BudgetEmergencySection(bat_discharge_min_soc_pct=18.0),
+        )
+        object.__setattr__(cfg, "budget", patched)
+        mock_api = MagicMock()
+        mock_api.get_state = AsyncMock(return_value="unknown")
+        mock_api.health_check = AsyncMock(return_value=True)
+        service = CarmaBoxService(cfg, ha_api=mock_api)
+        return cfg, service
+
+    def test_ev_min_amps_mapped(self, cfg_and_service):  # type: ignore[no-untyped-def]
+        """ev_min_amps from BudgetSection reaches BudgetConfig."""
+        _, service = cfg_and_service
+        assert service._engine._budget_config.ev_min_amps == 8
+
+    def test_ev_max_amps_mapped(self, cfg_and_service):  # type: ignore[no-untyped-def]
+        """ev_max_amps from BudgetSection reaches BudgetConfig."""
+        _, service = cfg_and_service
+        assert service._engine._budget_config.ev_max_amps == 14
+
+    def test_bat_charge_stop_soc_comes_from_battery_gate(self, cfg_and_service) -> None:  # type: ignore[no-untyped-def]
+        """bat_charge_stop_soc_pct must come from control.battery_gate (PLAT-1695).
+
+        BudgetSection does NOT expose bat_charge_stop_soc_pct to prevent
+        drift between S8 surplus_entry_soc_pct and budget stop SoC.
+        main.py applies control.battery_gate.charge_stop_soc_pct as override.
+        """
+        cfg, service = cfg_and_service
+        expected = cfg.control.battery_gate.charge_stop_soc_pct
+        assert service._engine._budget_config.bat_charge_stop_soc_pct == expected
+
+    def test_bat_lower_higher_ratio_mapped(self, cfg_and_service):  # type: ignore[no-untyped-def]
+        """bat_lower_ratio / bat_higher_ratio reach BudgetConfig."""
+        _, service = cfg_and_service
+        assert service._engine._budget_config.bat_lower_ratio == 0.75
+        assert service._engine._budget_config.bat_higher_ratio == 0.25
+
+    def test_ev_ramp_hold_cycles_mapped(self, cfg_and_service):  # type: ignore[no-untyped-def]
+        """ev_ramp_up/down_hold_cycles reach BudgetConfig."""
+        _, service = cfg_and_service
+        assert service._engine._budget_config.ev_ramp_up_hold_cycles == 3
+        assert service._engine._budget_config.ev_ramp_down_hold_cycles == 2
+
+    def test_bat_discharge_support_mapped(self, cfg_and_service):  # type: ignore[no-untyped-def]
+        """bat_discharge_support=False reaches BudgetConfig."""
+        _, service = cfg_and_service
+        assert service._engine._budget_config.bat_discharge_support is False
+
+    def test_evening_cutoff_h_mapped(self, cfg_and_service):  # type: ignore[no-untyped-def]
+        """evening_cutoff_h reaches BudgetConfig."""
+        _, service = cfg_and_service
+        assert service._engine._budget_config.evening_cutoff_h == 18
+
+    def test_grid_tuner_enabled_mapped(self, cfg_and_service):  # type: ignore[no-untyped-def]
+        """grid_tuner.enabled=True reaches BudgetConfig.grid_tuner."""
+        _, service = cfg_and_service
+        assert service._engine._budget_config.grid_tuner.enabled is True
+
+    def test_cascade_cooldown_mapped(self, cfg_and_service):  # type: ignore[no-untyped-def]
+        """cascade.cooldown_s reaches BudgetConfig.cascade_cooldown_s."""
+        _, service = cfg_and_service
+        assert service._engine._budget_config.cascade_cooldown_s == 120.0
+
+    def test_cascade_sustained_cycles_mapped(self, cfg_and_service):  # type: ignore[no-untyped-def]
+        """cascade.sustained_cycles reaches BudgetConfig.cascade_sustained_cycles."""
+        _, service = cfg_and_service
+        assert service._engine._budget_config.cascade_sustained_cycles == 4
+
+    def test_smoothing_window_mapped(self, cfg_and_service):  # type: ignore[no-untyped-def]
+        """smoothing.grid_smoothing_window reaches BudgetConfig.grid_smoothing_window."""
+        _, service = cfg_and_service
+        assert service._engine._budget_config.grid_smoothing_window == 5
+
+    def test_aggressive_spread_mapped(self, cfg_and_service):  # type: ignore[no-untyped-def]
+        """aggressive_spread fields reach BudgetConfig."""
+        _, service = cfg_and_service
+        assert service._engine._budget_config.bat_spread_max_pct == 2.0
+        assert service._engine._budget_config.bat_aggressive_spread_pct == 4.0
+
+    def test_emergency_min_soc_mapped(self, cfg_and_service):  # type: ignore[no-untyped-def]
+        """emergency.bat_discharge_min_soc_pct reaches BudgetConfig."""
+        _, service = cfg_and_service
+        assert service._engine._budget_config.bat_discharge_min_soc_pct == 18.0
