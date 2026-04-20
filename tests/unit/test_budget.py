@@ -1831,3 +1831,297 @@ def test_plat1754_allocate_passes_cfg_spread_to_plan_zero_grid() -> None:
         f"allocate() forwarded spread={forwarded!r} but expected cfg value {custom_spread!r}. "
         "Remove the keyword arg from the plan_zero_grid call and the default (5.0) silently wins."
     )
+
+
+# -------------------------------------------------------------------
+# PLAT-1752: Grid-tuner step 3 — mode-change-guard via 5-min rolling avg.
+#
+# Post-process zero_grid.modes after grid_tuner: when grid_tuner is
+# enabled and |rolling_avg| < mode_change_stability_w (50 W default),
+# suppress charge ↔ discharge mode flips.  Standby transitions always
+# pass through.  When tuner is disabled, guard is a no-op.
+# -------------------------------------------------------------------
+
+
+def _make_cfg_with_guard(
+    *,
+    stability_w: float = 50.0,
+) -> "BudgetConfig":
+    """BudgetConfig with grid_tuner enabled and the guard active."""
+    from core.grid_tuner import GridTunerConfig
+
+    return BudgetConfig(
+        grid_tuner=GridTunerConfig(
+            enabled=True,
+            tiers_w=(50.0, 75.0, 100.0),
+            corrections_w=(100, 300, 500),
+            rolling_window_s=300,
+            mode_change_stability_w=stability_w,
+        ),
+    )
+
+
+def _seed_rolling(state: "BudgetState", values: list[float]) -> None:
+    """Directly seed BudgetState.grid_rolling with specific grid readings."""
+    import time
+
+    ts = time.monotonic()
+    for i, v in enumerate(values):
+        state.grid_rolling.add(ts + float(i), v, 300)
+
+
+def test_plat1752_guard_disabled_does_not_block() -> None:
+    """grid_tuner.enabled=False → guard never fires, mode changes proceed."""
+    from core.grid_tuner import GridTunerConfig
+
+    cfg = BudgetConfig(
+        grid_tuner=GridTunerConfig(enabled=False, mode_change_stability_w=50.0),
+    )
+    # Rolling avg ≈ 0 → would trigger guard IF enabled (300 zeros dilute any reading)
+    state = BudgetState()
+    _seed_rolling(state, [0.0] * 300)
+
+    # Current mode = discharge_pv, zero_grid will plan charge_battery
+    # (big export forces charge). Guard disabled → mode change emitted.
+    inp = _inp(
+        hour=12,
+        pv_w=8000,
+        house_w=500,
+        grid_w=-3000.0,  # big export → zero_grid plans charge_battery
+        bat_k_soc=50,
+        bat_f_soc=50,
+        bat_k_mode="discharge_pv",
+        bat_f_mode="discharge_pv",
+    )
+    result = allocate(inp, cfg, state)
+    mode_cmds = [c for c in result.commands if c.command_type.name == "SET_EMS_MODE"]
+    # At least one battery should get a SET_EMS_MODE (discharge→charge)
+    assert mode_cmds, "PLAT-1752: guard disabled — SET_EMS_MODE must be emitted when mode changes"
+
+
+def test_plat1752_guard_blocks_charge_to_discharge_when_stable() -> None:
+    """stable rolling avg (|avg| < 50 W) → charge→discharge flip blocked.
+
+    300 zero-samples dilute the current big import reading so the rolling
+    avg stays within ±stability_w even when zero_grid plans discharge.
+    """
+    cfg = _make_cfg_with_guard(stability_w=50.0)
+    state = BudgetState()
+    # 300 zeros simulate 5 min of balanced grid — avg stays near 0
+    # even after the current +3000 W cycle is added (avg ≈ +10 W < 50 W).
+    _seed_rolling(state, [0.0] * 300)
+
+    # Current mode = charge_battery, big import drives zero_grid to discharge
+    inp = _inp(
+        hour=12,
+        pv_w=2000,
+        house_w=500,
+        grid_w=3000.0,  # big import → zero_grid plans discharge_pv
+        bat_k_soc=80,
+        bat_f_soc=80,
+        bat_k_mode="charge_battery",
+        bat_f_mode="charge_battery",
+    )
+    result = allocate(inp, cfg, state)
+    mode_cmds = [c for c in result.commands if c.command_type.name == "SET_EMS_MODE"]
+    assert (
+        not mode_cmds
+    ), "PLAT-1752: rolling avg stable → charge→discharge mode flip must be blocked"
+
+
+def test_plat1752_guard_blocks_discharge_to_charge_when_stable() -> None:
+    """stable rolling avg → discharge→charge flip blocked.
+
+    300 zero-samples dilute the current big export reading so the rolling
+    avg stays within ±stability_w even when zero_grid plans charge.
+    """
+    cfg = _make_cfg_with_guard(stability_w=50.0)
+    state = BudgetState()
+    # 300 zeros → rolling avg ≈ -10 W after adding current -3000 W → guard fires
+    _seed_rolling(state, [0.0] * 300)
+
+    # Current mode = discharge_pv, big export drives zero_grid to charge
+    inp = _inp(
+        hour=12,
+        pv_w=8000,
+        house_w=500,
+        grid_w=-3000.0,  # big export → zero_grid plans charge_battery
+        bat_k_soc=50,
+        bat_f_soc=50,
+        bat_k_mode="discharge_pv",
+        bat_f_mode="discharge_pv",
+    )
+    result = allocate(inp, cfg, state)
+    mode_cmds = [c for c in result.commands if c.command_type.name == "SET_EMS_MODE"]
+    assert (
+        not mode_cmds
+    ), "PLAT-1752: rolling avg stable → discharge→charge mode flip must be blocked"
+
+
+def test_plat1752_guard_allows_change_when_trend_is_real() -> None:
+    """|rolling_avg| >= stability_w → trend is real, mode change is allowed.
+
+    Seed with sustained high import readings so the rolling avg stays well
+    above the stability threshold even after the current cycle is added.
+    """
+    cfg = _make_cfg_with_guard(stability_w=50.0)
+    state = BudgetState()
+    # 300 samples at +200 W → avg stays ≈ +200 W after adding +3000 W.
+    # |avg| >> 50 W → guard does NOT fire → mode change passes through.
+    _seed_rolling(state, [200.0] * 300)
+
+    # Current mode = charge_battery, sustained import → zero_grid plans discharge
+    inp = _inp(
+        hour=12,
+        pv_w=2000,
+        house_w=500,
+        grid_w=3000.0,  # big import → discharge planned
+        bat_k_soc=80,
+        bat_f_soc=80,
+        bat_k_mode="charge_battery",
+        bat_f_mode="charge_battery",
+    )
+    result = allocate(inp, cfg, state)
+    mode_cmds = [c for c in result.commands if c.command_type.name == "SET_EMS_MODE"]
+    assert mode_cmds, "PLAT-1752: |avg|≈200W > 50W — trend is real, mode change must be emitted"
+
+
+def test_plat1752_guard_allows_transition_to_standby() -> None:
+    """Transition INTO battery_standby always passes through guard.
+
+    Even with a stable rolling avg (guard fires), going to standby must
+    be emitted — standby is a safety state, never suppressed.
+    """
+    cfg = _make_cfg_with_guard(stability_w=50.0)
+    state = BudgetState()
+    # 300 zeros → guard fires (avg ≈ -1 W after -300 W added → |avg| < 50 W)
+    _seed_rolling(state, [0.0] * 300)
+
+    # Scenario: bat SoC at charge stop → zero_grid will plan battery_standby
+    # Current mode = charge_battery → guard must NOT block this standby transition
+    inp = _inp(
+        hour=12,
+        pv_w=5000,
+        house_w=500,
+        grid_w=-300.0,
+        bat_k_soc=cfg.bat_charge_stop_soc_pct,  # at charge stop → standby
+        bat_f_soc=cfg.bat_charge_stop_soc_pct,
+        bat_k_mode="charge_battery",
+        bat_f_mode="charge_battery",
+    )
+    result = allocate(inp, cfg, state)
+    mode_cmds = [c for c in result.commands if c.command_type.name == "SET_EMS_MODE"]
+    # At least one bat must receive standby command (charge_battery → battery_standby)
+    standby_cmds = [c for c in mode_cmds if c.value == "battery_standby"]
+    assert standby_cmds, (
+        "PLAT-1752: transition TO battery_standby must always be emitted "
+        "even when rolling avg is stable"
+    )
+
+
+def test_plat1752_guard_allows_transition_from_standby() -> None:
+    """Transition OUT OF battery_standby always passes through guard.
+
+    300 zero-samples keep the rolling avg stable, but the guard must let
+    standby→charge pass regardless, because standby is always a safe exit.
+    """
+    cfg = _make_cfg_with_guard(stability_w=50.0)
+    state = BudgetState()
+    # 300 zeros → avg ≈ -10 W after adding -3000 W → guard fires
+    _seed_rolling(state, [0.0] * 300)
+
+    # Current mode = battery_standby. Big export → zero_grid plans charge_battery.
+    # Guard must allow standby→charge even though avg is stable.
+    inp = _inp(
+        hour=12,
+        pv_w=8000,
+        house_w=500,
+        grid_w=-3000.0,  # export → charge
+        bat_k_soc=50,
+        bat_f_soc=50,
+        bat_k_mode="battery_standby",
+        bat_f_mode="battery_standby",
+    )
+    result = allocate(inp, cfg, state)
+    mode_cmds = [c for c in result.commands if c.command_type.name == "SET_EMS_MODE"]
+    assert mode_cmds, (
+        "PLAT-1752: transition FROM battery_standby must always be emitted "
+        "even when rolling avg is stable"
+    )
+
+
+def test_plat1752_oscillation_suppressed_below_1_per_5min() -> None:
+    """AC: oscillation charge↔discharge < 1/5 min.
+
+    300 alternating ±10 W samples keep the rolling avg near 0.  Each
+    new large cycle reading (±3 000 W) is diluted by 300 existing samples,
+    so avg stays within ±stability_w and the guard fires every cycle.
+    Result: no mode-change commands are emitted despite alternating import/
+    export signals — the inverter stays in one mode.
+    """
+    cfg = _make_cfg_with_guard(stability_w=50.0)
+    state = BudgetState()
+
+    # 300 alternating ±10 W → avg = 0 W.  Adding ±3000 W: avg = ±3000/301 ≈ ±10 W.
+    # |avg| < 50 W → guard fires on EVERY cycle.
+    alternating = [10.0 if i % 2 == 0 else -10.0 for i in range(300)]
+    _seed_rolling(state, alternating)
+
+    # Cycle A: big import → zero_grid plans discharge_pv. Guard suppresses.
+    inp_import = _inp(
+        hour=12,
+        pv_w=2000,
+        house_w=500,
+        grid_w=3000.0,
+        bat_k_soc=70,
+        bat_f_soc=70,
+        bat_k_mode="charge_battery",
+        bat_f_mode="charge_battery",
+    )
+    result_a = allocate(inp_import, cfg, state)
+    mode_cmds_a = [c for c in result_a.commands if c.command_type.name == "SET_EMS_MODE"]
+    assert (
+        not mode_cmds_a
+    ), "PLAT-1752 oscillation: alternating avg≈0 → charge→discharge must be suppressed"
+
+    # Cycle B: big export → zero_grid plans charge_battery.
+    # Current mode is still charge_battery (guard held it) → idempotent, no cmd.
+    inp_export = _inp(
+        hour=12,
+        pv_w=8000,
+        house_w=500,
+        grid_w=-3000.0,
+        bat_k_soc=70,
+        bat_f_soc=70,
+        bat_k_mode="charge_battery",
+        bat_f_mode="charge_battery",
+    )
+    result_b = allocate(inp_export, cfg, state)
+    mode_cmds_b = [c for c in result_b.commands if c.command_type.name == "SET_EMS_MODE"]
+    assert (
+        not mode_cmds_b
+    ), "PLAT-1752 oscillation: stayed in charge_battery → no mode cmd on export cycle"
+
+
+def test_plat1752_guard_no_op_when_mode_already_matches() -> None:
+    """Guard must not interfere when plan mode == current mode (idempotent)."""
+    cfg = _make_cfg_with_guard(stability_w=50.0)
+    state = BudgetState()
+    _seed_rolling(state, [0.0] * 300)
+
+    # Current = charge_battery, plan will also be charge_battery (export → charge)
+    inp = _inp(
+        hour=12,
+        pv_w=8000,
+        house_w=500,
+        grid_w=-300.0,
+        bat_k_soc=50,
+        bat_f_soc=50,
+        bat_k_mode="charge_battery",
+        bat_f_mode="charge_battery",
+    )
+    result = allocate(inp, cfg, state)
+    mode_cmds = [c for c in result.commands if c.command_type.name == "SET_EMS_MODE"]
+    assert (
+        not mode_cmds
+    ), "PLAT-1752: plan==current → no SET_EMS_MODE (idempotency, guard must not break this)"
