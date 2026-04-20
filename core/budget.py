@@ -326,6 +326,8 @@ def allocate(
                 battery_id=bid,
                 power_w=inp.bat_powers.get(bid, 0.0),
                 soc_pct=soc,
+                # PLAT-1755: pass cap_kwh so _distribute() weights by capacity
+                cap_kwh=inp.bat_caps.get(bid, cfg.bat_default_cap_kwh),
             )
             for bid, soc in inp.bat_socs.items()
         ]

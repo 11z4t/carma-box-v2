@@ -170,8 +170,10 @@ def test_discharge_allowed_above_soc_min_buffer() -> None:
 def test_soc_min_buffer_is_configurable() -> None:
     """Customer sites can override the buffer (e.g. larger hardware lag)."""
     strict_limits = BatLimits(
-        max_charge_w=5000, max_discharge_w=5000,
-        soc_min_pct=15.0, soc_max_pct=95.0,
+        max_charge_w=5000,
+        max_discharge_w=5000,
+        soc_min_pct=15.0,
+        soc_max_pct=95.0,
         soc_min_buffer_pct=3.0,  # bigger margin
     )
     bats = [_snap("kontor", power_w=0, soc_pct=17.5)]
@@ -195,7 +197,7 @@ def test_emergency_recovery_flag_set_when_below_floor() -> None:
     bats = [_snap("kontor", power_w=0, soc_pct=14.2)]
     plan = plan_zero_grid(
         gain=1.0,
-        grid_power_w=-2000.0,     # export — normally would charge anyway
+        grid_power_w=-2000.0,  # export — normally would charge anyway
         bats=bats,
         limits_by_id={"kontor": _DEFAULT_LIMITS},
     )
@@ -215,7 +217,7 @@ def test_emergency_recovery_overrides_grid_target() -> None:
     bats = [_snap("kontor", power_w=0, soc_pct=12.0)]
     plan = plan_zero_grid(
         gain=1.0,
-        grid_power_w=3000.0,     # big import — would normally discharge
+        grid_power_w=3000.0,  # big import — would normally discharge
         bats=bats,
         limits_by_id={"kontor": _DEFAULT_LIMITS},
     )
@@ -227,8 +229,8 @@ def test_emergency_recovery_overrides_grid_target() -> None:
 def test_emergency_recovery_per_bat_only() -> None:
     """Only the bat below floor is in emergency mode; the other runs normal."""
     bats = [
-        _snap("kontor", power_w=0, soc_pct=14.0),   # below
-        _snap("forrad", power_w=0, soc_pct=60.0),   # healthy
+        _snap("kontor", power_w=0, soc_pct=14.0),  # below
+        _snap("forrad", power_w=0, soc_pct=60.0),  # healthy
     ]
     limits = {
         "kontor": _DEFAULT_LIMITS,
@@ -302,7 +304,9 @@ def test_two_bats_large_spread_aggressive_on_charge() -> None:
     }
     plan = plan_zero_grid(
         gain=1.0,
-        grid_power_w=-3000.0, bats=bats, limits_by_id=limits,
+        grid_power_w=-3000.0,
+        bats=bats,
+        limits_by_id=limits,
     )
     assert plan.modes["kontor"] == "charge_battery"
     assert plan.limits_w["kontor"] == 3000
@@ -322,7 +326,9 @@ def test_two_bats_large_spread_aggressive_on_discharge() -> None:
     }
     plan = plan_zero_grid(
         gain=1.0,
-        grid_power_w=2000.0, bats=bats, limits_by_id=limits,
+        grid_power_w=2000.0,
+        bats=bats,
+        limits_by_id=limits,
     )
     assert plan.modes["forrad"] == "discharge_pv"
     assert plan.limits_w["forrad"] == 2000
@@ -348,7 +354,9 @@ def test_aggressive_charge_spills_overflow_to_secondary_bat() -> None:
     }
     plan = plan_zero_grid(
         gain=1.0,
-        grid_power_w=-7000.0, bats=bats, limits_by_id=limits,
+        grid_power_w=-7000.0,
+        bats=bats,
+        limits_by_id=limits,
     )
     assert plan.limits_w["kontor"] == _DEFAULT_LIMITS.max_charge_w
     assert plan.modes["kontor"] == "charge_battery"
@@ -370,7 +378,9 @@ def test_aggressive_discharge_spills_overflow_to_secondary_bat() -> None:
     }
     plan = plan_zero_grid(
         gain=1.0,
-        grid_power_w=6500.0, bats=bats, limits_by_id=limits,
+        grid_power_w=6500.0,
+        bats=bats,
+        limits_by_id=limits,
     )
     assert plan.limits_w["forrad"] == _DEFAULT_LIMITS.max_discharge_w
     assert plan.modes["forrad"] == "discharge_pv"
@@ -386,17 +396,23 @@ def test_two_bats_small_spread_proportional_by_capacity() -> None:
     ]
     limits = {
         "kontor": BatLimits(
-            max_charge_w=5000, max_discharge_w=5000,
-            soc_min_pct=15.0, soc_max_pct=95.0,
+            max_charge_w=5000,
+            max_discharge_w=5000,
+            soc_min_pct=15.0,
+            soc_max_pct=95.0,
         ),
         "forrad": BatLimits(
-            max_charge_w=2500, max_discharge_w=2500,  # half the capacity
-            soc_min_pct=15.0, soc_max_pct=95.0,
+            max_charge_w=2500,
+            max_discharge_w=2500,  # half the capacity
+            soc_min_pct=15.0,
+            soc_max_pct=95.0,
         ),
     }
     plan = plan_zero_grid(
         gain=1.0,
-        grid_power_w=-3000.0, bats=bats, limits_by_id=limits,
+        grid_power_w=-3000.0,
+        bats=bats,
+        limits_by_id=limits,
     )
     # 2:1 split → 2000 kontor / 1000 forrad
     assert plan.limits_w["kontor"] == pytest.approx(2000, abs=1)
@@ -414,10 +430,12 @@ def test_convergence_to_zero_grid_within_three_cycles() -> None:
     house_w = 1000.0
     pv_w = 5000.0
     limits = BatLimits(
-        max_charge_w=5000, max_discharge_w=5000,
-        soc_min_pct=15.0, soc_max_pct=95.0,
+        max_charge_w=5000,
+        max_discharge_w=5000,
+        soc_min_pct=15.0,
+        soc_max_pct=95.0,
     )
-    bat_power_w = 0.0   # starts idle
+    bat_power_w = 0.0  # starts idle
     soc = 60.0
     grids: list[float] = []
 
@@ -425,7 +443,7 @@ def test_convergence_to_zero_grid_within_three_cycles() -> None:
         grid_w = house_w - pv_w - bat_power_w  # import minus export
         grids.append(grid_w)
         plan = plan_zero_grid(
-        gain=1.0,
+            gain=1.0,
             grid_power_w=grid_w,
             bats=[BatSnapshot("k", bat_power_w, soc)],
             limits_by_id={"k": limits},
@@ -433,14 +451,54 @@ def test_convergence_to_zero_grid_within_three_cycles() -> None:
         mode = plan.modes["k"]
         limit = plan.limits_w["k"]
         # Apply the plan: bat_power_w becomes mode-signed limit
-        bat_power_w = -limit if mode == "charge_battery" else (
-            limit if mode == "discharge_pv" else 0.0
+        bat_power_w = (
+            -limit if mode == "charge_battery" else (limit if mode == "discharge_pv" else 0.0)
         )
 
     final_grid = house_w - pv_w - bat_power_w
-    assert abs(final_grid) <= 50.0, (
-        f"Did not converge: grids across cycles={grids}, final={final_grid}"
+    assert (
+        abs(final_grid) <= 50.0
+    ), f"Did not converge: grids across cycles={grids}, final={final_grid}"
+
+
+def test_proportional_by_capacity_asymmetric() -> None:
+    """PLAT-1755 kärnfix: balanced split uses cap_kwh, not max_charge_w.
+
+    kontor = 15 kWh, förråd = 5 kWh — same max_charge_w (5 kW each).
+    Without cap_kwh weighting: 50/50 split → förråd fills 3x faster.
+    With cap_kwh weighting: 15/(15+5)=75 % → kontor, 25 % → förråd.
+
+    Reference: PLAT-1715 (Highest prio).
+    """
+    bats = [
+        BatSnapshot(battery_id="kontor", power_w=0.0, soc_pct=50.0, cap_kwh=15.0),
+        BatSnapshot(battery_id="forrad", power_w=0.0, soc_pct=51.0, cap_kwh=5.0),
+    ]
+    limits = {
+        "kontor": BatLimits(
+            max_charge_w=5000,
+            max_discharge_w=5000,
+            soc_min_pct=15.0,
+            soc_max_pct=95.0,
+        ),
+        "forrad": BatLimits(
+            max_charge_w=5000,
+            max_discharge_w=5000,  # same power cap, different cap_kwh
+            soc_min_pct=15.0,
+            soc_max_pct=95.0,
+        ),
+    }
+    plan = plan_zero_grid(
+        gain=1.0,
+        grid_power_w=-3000.0,
+        bats=bats,
+        limits_by_id=limits,
     )
+    # 15/(15+5) * 3000 = 2250 W kontor, 5/20 * 3000 = 750 W förråd
+    assert plan.limits_w["kontor"] == pytest.approx(2250, abs=1)
+    assert plan.limits_w["forrad"] == pytest.approx(750, abs=1)
+    assert plan.modes["kontor"] == "charge_battery"
+    assert plan.modes["forrad"] == "charge_battery"
 
 
 def test_plan_contains_reason_for_logging() -> None:
@@ -448,7 +506,8 @@ def test_plan_contains_reason_for_logging() -> None:
     bats = [_snap("kontor", power_w=-500, soc_pct=50)]
     plan: ZeroGridPlan = plan_zero_grid(
         gain=1.0,
-        grid_power_w=-1000.0, bats=bats,
+        grid_power_w=-1000.0,
+        bats=bats,
         limits_by_id={"kontor": _DEFAULT_LIMITS},
     )
     assert "grid=" in plan.reason

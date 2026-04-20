@@ -371,11 +371,10 @@ def test_evening_discharge_covers_house_load(cfg: BudgetConfig) -> None:
 
 
 def test_evening_discharge_proportional(cfg: BudgetConfig) -> None:
-    """Evening discharge proportional by max_discharge_w (zero-grid).
+    """Evening discharge proportional by cap_kwh (PLAT-1755).
 
-    Both default bats have the same max_discharge_w → 50/50 split.
-    Previously (legacy) used bat_caps-weighted split; zero-grid uses
-    inverter rate capacity because that is the real physical constraint.
+    kontor=15 kWh, förråd=5 kWh → 75/25 split so SoC rises at equal rate.
+    PLAT-1755: weighting switched from max_discharge_w to cap_kwh.
     """
     inp = _inp(
         hour=_EVENING_DISCHARGE_HOUR,
@@ -389,9 +388,10 @@ def test_evening_discharge_proportional(cfg: BudgetConfig) -> None:
     result = allocate(inp, cfg, state)
     k = result.bat_allocations.get("kontor", 0)
     f = result.bat_allocations.get("forrad", 0)
-    # Equal split with default max_discharge_w (5000 each), gain=0.7.
-    assert k == f
-    assert k + f == int(_EVENING_GRID_IMPORT_W * 0.7)
+    # 15/(15+5) * 1400 = 1050 W kontor, 5/20 * 1400 = 350 W förråd (gain=0.7).
+    total = int(_EVENING_GRID_IMPORT_W * 0.7)
+    assert k == pytest.approx(total * 15 / 20, abs=1)
+    assert f == pytest.approx(total * 5 / 20, abs=1)
 
 
 def test_evening_discharge_discharge_pv_commands(cfg: BudgetConfig) -> None:
@@ -1314,7 +1314,7 @@ def test_plat1738_cascade_fires_when_bat_alloc_at_physical_max() -> None:
         ev_soc_pct=50.0,
         ev_target_soc_pct=100.0,
         bat_socs={"k": 88.0, "f": 88.0},  # under stop-SoC
-        bat_caps={"k": 15.0, "f": 5.0},
+        bat_caps={"k": 10.0, "f": 10.0},  # equal caps → equal split → both saturate
         bat_powers={"k": -4800.0, "f": -4800.0},  # each charging near max
         bat_modes={"k": "charge_battery", "f": "charge_battery"},
         consumers=(_c("vp", active=False, priority=2, priority_shed=2),),
@@ -1792,7 +1792,9 @@ def test_grid_spike_rejected_by_median(cfg: BudgetConfig) -> None:
     assert state.grid_history_w == [2500.0, 2500.0, 12900.0]
     # bat_discharge should reflect the 2500 W MEDIAN, not the 12900 W spike.
     # With gain=0.7: discharge ≈ 0.7 × 2500 = 1750 W.
-    assert spike_result.bat_discharge_w == int(2500.0 * 0.7)
+    # ±2 W tolerance: PLAT-1755 cap_kwh split produces int() rounding on
+    # each bat's share, so the sum can be 1 W below the nominal total.
+    assert spike_result.bat_discharge_w == pytest.approx(int(2500.0 * 0.7), abs=2)
 
 
 # -------------------------------------------------------------------

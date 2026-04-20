@@ -64,11 +64,20 @@ class BatLimits:
 
 @dataclass(frozen=True)
 class BatSnapshot:
-    """Current measured state of one battery."""
+    """Current measured state of one battery.
+
+    ``cap_kwh`` is the usable energy capacity of the battery.  When set
+    (> 0) the balanced-proportional path in _distribute() weights by
+    capacity so batteries with different sizes charge/discharge at the
+    same *SoC rate* (PLAT-1755).  Defaults to 0.0 for backward
+    compatibility; zero triggers the legacy max_charge_w / max_discharge_w
+    weighting.
+    """
 
     battery_id: str
     power_w: float  # positive = discharge, negative = charge
     soc_pct: float
+    cap_kwh: float = 0.0  # PLAT-1755: usable capacity; 0 = legacy fallback
 
 
 @dataclass(frozen=True)
@@ -229,17 +238,19 @@ def _distribute(
                 alloc[b.battery_id] = sign * share
         return alloc
 
-    # Balanced — proportional by capacity against each bat's relevant cap.
+    # Balanced — proportional by capacity.
+    # PLAT-1755: weight by cap_kwh when available so bats with different
+    # energy capacities charge/discharge at the same SoC rate.  Fall back
+    # to max_charge_w / max_discharge_w for callers that don't supply
+    # cap_kwh (zero value = legacy path).
     charging_balanced = total_target_net_w < 0
     weights = {
-        b.battery_id: _cap(b, charging=charging_balanced)
+        b.battery_id: (b.cap_kwh if b.cap_kwh > 0.0 else _cap(b, charging=charging_balanced))
         for b in bats
     }
     total_weight = sum(weights.values()) or 1.0
     for b in bats:
-        alloc[b.battery_id] = (
-            total_target_net_w * weights[b.battery_id] / total_weight
-        )
+        alloc[b.battery_id] = total_target_net_w * weights[b.battery_id] / total_weight
     return alloc
 
 
@@ -280,13 +291,14 @@ def plan_zero_grid(
             forced_limits[b.battery_id] = int(limits.max_charge_w)
 
     # Normal path — only runs for bats NOT in emergency recovery.
-    current_net = sum(
-        b.power_w for b in bats if b.battery_id not in below_floor
-    )
+    current_net = sum(b.power_w for b in bats if b.battery_id not in below_floor)
     normal_bats = [b for b in bats if b.battery_id not in below_floor]
     target_net = _target_net_w(current_net, grid_power_w, deadband_w, gain)
     per_bat = _distribute(
-        target_net, normal_bats, limits_by_id, spread_aggressive_pct,
+        target_net,
+        normal_bats,
+        limits_by_id,
+        spread_aggressive_pct,
     )
 
     modes: dict[str, str] = {}
@@ -308,9 +320,7 @@ def plan_zero_grid(
         limits_out[b.battery_id] = limit_w
         final_net_total += clamped
 
-    reason_suffix = (
-        f" emergency_recovery={sorted(below_floor)}" if below_floor else ""
-    )
+    reason_suffix = f" emergency_recovery={sorted(below_floor)}" if below_floor else ""
     reason = (
         f"zero_grid: grid={grid_power_w:.0f}W "
         f"bat_now={current_net:.0f}W target={target_net:.0f}W "
