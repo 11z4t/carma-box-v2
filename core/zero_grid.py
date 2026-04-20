@@ -225,17 +225,20 @@ def _distribute(
         primary_cap = sum(_cap(b, charging=charging) for b in primary)
         primary_mag = min(target_mag, primary_cap)
         if primary:
-            share = primary_mag / len(primary)
+            # PLAT-1756: weight by individual cap, not equal share.
+            # Equal split overflows a weaker bat when caps are asymmetric.
             for b in primary:
-                alloc[b.battery_id] = sign * share
+                bat_cap = _cap(b, charging=charging)
+                alloc[b.battery_id] = sign * primary_mag * (bat_cap / (primary_cap or 1.0))
 
         overflow = target_mag - primary_mag
         if overflow > 0 and secondary:
             secondary_cap = sum(_cap(b, charging=charging) for b in secondary)
             secondary_mag = min(overflow, secondary_cap)
-            share = secondary_mag / len(secondary)
+            # PLAT-1756: same per-bat cap weighting for secondary group.
             for b in secondary:
-                alloc[b.battery_id] = sign * share
+                bat_cap = _cap(b, charging=charging)
+                alloc[b.battery_id] = sign * secondary_mag * (bat_cap / (secondary_cap or 1.0))
         return alloc
 
     # Balanced — proportional by capacity.
