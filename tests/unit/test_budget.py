@@ -969,6 +969,89 @@ def test_plat1715_cascade_no_start_without_sustained_export() -> None:
 
 
 # -------------------------------------------------------------------
+# SET_FAST_CHARGING safety-steady-state command-stream coverage.
+# Since PLAT-1696 (4172f81) Budget emits SET_FAST_CHARGING=True on
+# emergency bats (SoC < soc_min_pct) and =False on all others, every
+# cycle for ALL batteries. This is a safety-critical stream that drives
+# GoodWe firmware behaviour:
+#   - True + charge_battery → force grid-charge (recovery from SoC dip)
+#   - False + discharge_pv → honours INV-3 (no fast_charging in discharge)
+# Tests below cover both paths via allocate() so the stream never goes
+# untested across refactors.
+# -------------------------------------------------------------------
+
+
+def test_emergency_bat_gets_fast_charging_true_via_allocate() -> None:
+    """SoC below floor → allocate() emits SET_FAST_CHARGING=True for that
+    bat. The twin bat (healthy SoC) must get SET_FAST_CHARGING=False in
+    the same cycle (INV-3 invariant — no fast_charging outside recovery).
+    """
+    cfg = BudgetConfig(bat_discharge_min_soc_pct=15.0)
+    # Need a scenario where zero_grid_active and daytime so bat emit path
+    # is reachable. EM + modest surplus does the job.
+    inp = _inp(
+        hour=14, pv_w=3000, house_w=500, grid_w=-500,
+        bat_k_soc=10.0,   # below floor (15) → emergency
+        bat_f_soc=60.0,   # healthy
+    )
+    result = allocate(inp, cfg)
+
+    fc_cmds = [c for c in result.commands
+               if c.command_type == CommandType.SET_FAST_CHARGING]
+    fc_map = {c.target_id: c.value for c in fc_cmds}
+
+    assert "kontor" in fc_map, (
+        "Expected SET_FAST_CHARGING emitted for emergency bat 'kontor'"
+    )
+    assert fc_map["kontor"] is True, (
+        f"Emergency bat (SoC=10 < floor=15) must get fast_charging=True, "
+        f"got {fc_map['kontor']!r}"
+    )
+    assert "forrad" in fc_map, (
+        "Expected SET_FAST_CHARGING also emitted for non-emergency bat "
+        "(INV-3: explicit OFF elsewhere)"
+    )
+    assert fc_map["forrad"] is False, (
+        f"Non-emergency bat must get fast_charging=False (INV-3), "
+        f"got {fc_map['forrad']!r}"
+    )
+
+    # Reason-string sanity: emergency reason is explicit
+    emergency_cmd = next(c for c in fc_cmds if c.target_id == "kontor")
+    assert "EMERGENCY" in emergency_cmd.reason or "floor" in emergency_cmd.reason
+    normal_cmd = next(c for c in fc_cmds if c.target_id == "forrad")
+    assert "INV-3" in normal_cmd.reason or "OFF" in normal_cmd.reason
+
+
+def test_normal_bat_gets_fast_charging_false_via_allocate() -> None:
+    """No bat below floor → allocate() emits SET_FAST_CHARGING=False for
+    EVERY bat. The stream runs every cycle regardless of mode (charge,
+    discharge, standby) — we verify both bats receive the False command.
+    """
+    cfg = BudgetConfig(bat_discharge_min_soc_pct=15.0)
+    inp = _inp(
+        hour=14, pv_w=3000, house_w=500, grid_w=-500,
+        bat_k_soc=60.0,
+        bat_f_soc=60.0,
+    )
+    result = allocate(inp, cfg)
+
+    fc_cmds = [c for c in result.commands
+               if c.command_type == CommandType.SET_FAST_CHARGING]
+    fc_map = {c.target_id: c.value for c in fc_cmds}
+
+    assert set(fc_map.keys()) == {"kontor", "forrad"}, (
+        f"Expected SET_FAST_CHARGING for both bats, got {set(fc_map.keys())}"
+    )
+    assert fc_map["kontor"] is False
+    assert fc_map["forrad"] is False
+    for c in fc_cmds:
+        assert "INV-3" in c.reason or "OFF" in c.reason, (
+            f"Reason must reference INV-3 invariant, got: {c.reason!r}"
+        )
+
+
+# -------------------------------------------------------------------
 # PLAT-1738: cascade must verify bat is truly at max before turning on
 # consumers. Prior behaviour triggered on 2 sustained export cycles
 # regardless of bat headroom — miner turned on during cloud-dip even

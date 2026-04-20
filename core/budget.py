@@ -21,6 +21,7 @@ Pure module — no I/O. Caller (engine) executes returned commands.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -363,9 +364,8 @@ def allocate(
         #                negative (export) increases alloc.
         #   discharge-mode: opposite.
         # All limits clamped to [0, bat_default_max_{charge,discharge}_w].
-        import time as _time_pltu  # noqa: PLC0415
         state.grid_rolling.add(
-            _time_pltu.monotonic(),
+            time.monotonic(),
             inp.grid_power_w,
             cfg.grid_tuner.rolling_window_s,
         )
@@ -788,9 +788,8 @@ def _cascade_consumers(
     """
     if not inp.consumers:
         return []
-    import time as _time  # noqa: PLC0415
 
-    now_ts = _time.monotonic()
+    now_ts = time.monotonic()
     cooldown_s = cfg.cascade_cooldown_s
     grid_w = inp.grid_power_w
     cmds: list[Command] = []
