@@ -871,11 +871,17 @@ class CarmaBoxService:
             # cached response, ensuring every sensor reflects the same instant.
             await self._ha_api.warm_batch_cache()
 
-            # Read battery states
-            batteries: list[BatteryState] = []
+            # PLAT-1757 + PLAT-1753: Atomic battery sensor read.
+            # warm_batch_cache() (above, PLAT-1753) pre-fetches all HA states
+            # in one GET /api/states. Collecting ALL battery entity IDs into a
+            # single get_states_batch() call (PLAT-1757) ensures every battery
+            # reads from the exact same HA snapshot — eliminating the 50-100 ms
+            # sensor-skew race where sequential per-battery calls saw divergent
+            # SoC that did not exist in hardware.
+            all_bat_entity_ids: list[str] = []
             for bat_cfg in cfg.batteries:
                 ents = bat_cfg.entities
-                batch = await self._ha_api.get_states_batch(
+                all_bat_entity_ids.extend(
                     [
                         ents.soc,
                         ents.power,
@@ -889,20 +895,25 @@ class CarmaBoxService:
                         ents.soh,
                     ]
                 )
+            bat_batch = await self._ha_api.get_states_batch(all_bat_entity_ids)
 
-                def _float(eid: str, default: float = 0.0) -> float:
-                    s = batch.get(eid, {}).get("state")
-                    if s in (None, "unavailable", "unknown"):
-                        return default
-                    try:
-                        return float(s)
-                    except (ValueError, TypeError):
-                        return default
+            def _float(eid: str, default: float = 0.0) -> float:
+                s = bat_batch.get(eid, {}).get("state")
+                if s in (None, "unavailable", "unknown"):
+                    return default
+                try:
+                    return float(s)
+                except (ValueError, TypeError):
+                    return default
+
+            batteries: list[BatteryState] = []
+            for bat_cfg in cfg.batteries:
+                ents = bat_cfg.entities
 
                 soc = _float(ents.soc)
 
                 # PLAT-1539: Detect GoodWe bridge offline
-                soc_state = batch.get(ents.soc, {}).get("state")
+                soc_state = bat_batch.get(ents.soc, {}).get("state")
                 if soc_state in ("unavailable", "unknown"):
                     logger.warning(
                         "GoodWe %s OFFLINE — sensor unavailable",
@@ -929,10 +940,10 @@ class CarmaBoxService:
                         grid_power_w=_float(ents.grid_power),
                         load_power_w=max(0.0, _float(ents.load_power)),
                         ems_mode=EMSMode(
-                            batch.get(ents.ems_mode, {}).get("state", "battery_standby")
+                            bat_batch.get(ents.ems_mode, {}).get("state", "battery_standby")
                         ),
                         ems_power_limit_w=int(_float(ents.ems_power_limit)),
-                        fast_charging=batch.get(ents.fast_charging, {}).get("state") == "on",
+                        fast_charging=bat_batch.get(ents.fast_charging, {}).get("state") == "on",
                         soh_pct=_float(ents.soh, bat_cfg.default_soh_pct),
                         cap_kwh=bat_cfg.cap_kwh,
                         ct_placement=bat_cfg.ct_placement,
