@@ -1320,6 +1320,133 @@ def test_plat1740_night_mode_does_not_touch_intended_state() -> None:
     assert state.intended_ev_enabled is True
 
 
+# -------------------------------------------------------------------
+# PLAT-1737 step 2: grid_tuner integration in Budget.
+# Budget applies tune_grid_delta() to bat_alloc after zero_grid runs,
+# gated by cfg.grid_tuner.enabled. Rolling window is always updated
+# (cheap, enables future mode-change guard).
+# -------------------------------------------------------------------
+
+
+def test_plat1737_tuner_disabled_no_change_to_bat_alloc() -> None:
+    """grid_tuner.enabled=False → bat_alloc unchanged vs baseline."""
+    from core.grid_tuner import GridTunerConfig
+    cfg = BudgetConfig(grid_tuner=GridTunerConfig(enabled=False))
+    inp = _inp(
+        hour=12, pv_w=5000, house_w=500,
+        grid_w=-500.0,  # big enough export so zero_grid allocates real charge
+        bat_k_soc=60, bat_f_soc=60,
+    )
+    state = BudgetState()
+    result = allocate(inp, cfg, state)
+    baseline_total = sum(result.bat_allocations.values())
+
+    # Now with enabled=True (tier3 + 500 W correction added to charge)
+    cfg_on = BudgetConfig(
+        grid_tuner=GridTunerConfig(enabled=True,
+                                    tiers_w=(50.0, 75.0, 100.0),
+                                    corrections_w=(100, 300, 500),
+                                    rolling_window_s=300,
+                                    mode_change_stability_w=50.0),
+    )
+    state2 = BudgetState()
+    result_on = allocate(inp, cfg_on, state2)
+    tuned_total = sum(result_on.bat_allocations.values())
+
+    # With tuner on, grid export > tier3 → negative delta (more charge)
+    # so bat_alloc total should be HIGHER (charge more)
+    assert tuned_total > baseline_total, (
+        f"Tuner should increase charge on export. baseline={baseline_total}W "
+        f"tuned={tuned_total}W"
+    )
+
+
+def test_plat1737_tuner_respects_bat_max_on_charge() -> None:
+    """Delta applied to charge-mode must not push alloc past max_charge_w."""
+    from core.grid_tuner import GridTunerConfig
+    cfg = BudgetConfig(
+        bat_default_max_charge_w=3000,  # low cap for test
+        grid_tuner=GridTunerConfig(
+            enabled=True,
+            tiers_w=(50.0, 75.0, 100.0),
+            corrections_w=(100, 300, 2000),  # huge tier3 correction
+            rolling_window_s=300,
+            mode_change_stability_w=50.0,
+        ),
+    )
+    inp = _inp(
+        hour=12, pv_w=10000, house_w=500,
+        grid_w=-3000.0,  # big export → tier3
+        bat_k_soc=60, bat_f_soc=60,
+    )
+    state = BudgetState()
+    result = allocate(inp, cfg, state)
+    for bid, alloc in result.bat_allocations.items():
+        assert alloc <= cfg.bat_default_max_charge_w, (
+            f"PLAT-1737: {bid} alloc {alloc}W > max {cfg.bat_default_max_charge_w}W"
+        )
+
+
+def test_plat1737_tuner_floors_alloc_at_zero() -> None:
+    """Delta on charge-mode with big import must not drive alloc below 0."""
+    from core.grid_tuner import GridTunerConfig
+    cfg = BudgetConfig(
+        grid_tuner=GridTunerConfig(
+            enabled=True,
+            tiers_w=(50.0, 75.0, 100.0),
+            corrections_w=(100, 300, 10000),  # huge tier3 correction
+            rolling_window_s=300,
+            mode_change_stability_w=50.0,
+        ),
+    )
+    inp = _inp(
+        hour=12, pv_w=3000, house_w=500,
+        grid_w=500.0,  # import → tier3 positive delta → reduce charge
+        bat_k_soc=60, bat_f_soc=60,
+    )
+    state = BudgetState()
+    result = allocate(inp, cfg, state)
+    for bid, alloc in result.bat_allocations.items():
+        assert alloc >= 0, f"PLAT-1737: {bid} alloc {alloc}W < 0"
+
+
+def test_plat1737_rolling_window_accumulates_in_budget_state() -> None:
+    """BudgetState.grid_rolling must accumulate samples each cycle, always
+    (regardless of grid_tuner.enabled)."""
+    cfg = BudgetConfig()  # default: tuner disabled
+    state = BudgetState()
+    for gw in (100.0, 200.0, 300.0):
+        inp = _inp(hour=12, grid_w=gw, pv_w=1000, house_w=500)
+        allocate(inp, cfg, state)
+    # Rolling window has 3 samples
+    assert len(state.grid_rolling.history) == 3
+
+
+def test_plat1737_tuner_deadband_no_change() -> None:
+    """|grid| < tier1 (50 W) → delta=0 → bat_alloc unchanged."""
+    from core.grid_tuner import GridTunerConfig
+    cfg_baseline = BudgetConfig()
+    cfg_tuner = BudgetConfig(
+        grid_tuner=GridTunerConfig(
+            enabled=True,
+            tiers_w=(50.0, 75.0, 100.0),
+            corrections_w=(100, 300, 500),
+            rolling_window_s=300,
+            mode_change_stability_w=50.0,
+        ),
+    )
+    inp = _inp(
+        hour=12, pv_w=3000, house_w=500,
+        grid_w=-30.0,  # below tier1
+        bat_k_soc=60, bat_f_soc=60,
+    )
+    r1 = allocate(inp, cfg_baseline, BudgetState())
+    r2 = allocate(inp, cfg_tuner, BudgetState())
+    assert r1.bat_allocations == r2.bat_allocations, (
+        "PLAT-1737: inside deadband → tuner must be no-op"
+    )
+
+
 def test_plat1738_cascade_reason_reflects_soc_state() -> None:
     """Reason-string must NOT lie — include actual bat SoC/headroom info."""
     cfg = BudgetConfig(

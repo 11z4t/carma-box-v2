@@ -24,6 +24,11 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from core.grid_tuner import (
+    GridRollingState,
+    GridTunerConfig,
+    tune_grid_delta,
+)
 from core.models import Command, CommandType, ConsumerState, EMSMode
 from core.zero_grid import BatLimits, BatSnapshot, plan_zero_grid
 
@@ -114,6 +119,11 @@ class BudgetConfig:
     # enough to reject isolated spikes, small enough to react to real
     # load shifts within ~2 cycles.
     grid_smoothing_window: int = 3
+    # PLAT-1737: tiered grid-sensor fine-tuner. Applied AFTER zero_grid so
+    # zero_grid owns mode/direction (stable) while the tuner nudges the
+    # allocated power to kill grid-drift within-cycle. Default disabled —
+    # enable via site.yaml once a site has stabilised on zero_grid alone.
+    grid_tuner: GridTunerConfig = field(default_factory=GridTunerConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +183,10 @@ class BudgetState:
     # cycle, then feeds the MEDIAN of the window to zero_grid so single
     # spurious spikes (HA sensor glitch) are rejected.
     grid_history_w: list[float] = field(default_factory=list)
+    # PLAT-1737: 5-min rolling window for grid-tuner anti-flap guard.
+    # Updated EVERY cycle (regardless of grid_tuner.enabled) so the data
+    # is ready the moment the tuner is enabled without a warm-up wait.
+    grid_rolling: GridRollingState = field(default_factory=GridRollingState)
 
 
 @dataclass(frozen=True)
@@ -340,6 +354,51 @@ def allocate(
             if zero_grid_plan.modes[bid] == "discharge_pv"
         )
         reasons.append(zero_grid_plan.reason)
+
+        # PLAT-1737: grid_tuner — fine-tune bat_alloc using RAW grid
+        # (not smoothed) for fast response to moln-dip transients.
+        # Rolling window is always updated so mode-change guard is ready
+        # when enabled. Delta distribution respects each bat's mode:
+        #   charge-mode: positive grid delta (import) reduces alloc,
+        #                negative (export) increases alloc.
+        #   discharge-mode: opposite.
+        # All limits clamped to [0, bat_default_max_{charge,discharge}_w].
+        import time as _time_pltu  # noqa: PLC0415
+        state.grid_rolling.add(
+            _time_pltu.monotonic(),
+            inp.grid_power_w,
+            cfg.grid_tuner.rolling_window_s,
+        )
+        if cfg.grid_tuner.enabled:
+            tune_delta = tune_grid_delta(inp.grid_power_w, cfg.grid_tuner)
+            if tune_delta != 0:
+                active_bats = [
+                    bid for bid, mode in zero_grid_plan.modes.items()
+                    if mode in ("charge_battery", "discharge_pv")
+                ]
+                if active_bats:
+                    per_bat_delta = tune_delta // len(active_bats)
+                    for bid in active_bats:
+                        mode = zero_grid_plan.modes[bid]
+                        current = bat_alloc[bid]
+                        if mode == "charge_battery":
+                            # Charge semantics inverts the sign.
+                            new_alloc = current - per_bat_delta
+                            cap = cfg.bat_default_max_charge_w
+                        else:  # discharge_pv
+                            new_alloc = current + per_bat_delta
+                            cap = cfg.bat_default_max_discharge_w
+                        bat_alloc[bid] = max(0, min(cap, new_alloc))
+                    reasons.append(
+                        f"grid_tuner: raw={inp.grid_power_w:.0f}W "
+                        f"delta={tune_delta:+d}W "
+                        f"per_bat={per_bat_delta:+d}W over {len(active_bats)} bats",
+                    )
+                    # Keep bat_discharge in sync after tuning
+                    bat_discharge = sum(
+                        alloc for bid, alloc in bat_alloc.items()
+                        if zero_grid_plan.modes[bid] == "discharge_pv"
+                    )
 
     if not daytime:
         # Night — defers to night controller
