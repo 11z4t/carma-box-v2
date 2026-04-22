@@ -362,9 +362,14 @@ class CarmaBoxService:
         )
 
         # EV controller
+        # HOTFIX 2026-04-20: start_headroom_w raised from 1000 to 1_000_000 to
+        # effectively disable headroom-based EV starts. User rule: EV charges
+        # ONLY from PV surplus (via EVSurplusController), never from Ellevio
+        # headroom triggers. See PLAT-XXXX for permanent migration.
         self._ev_controller = EVController(
             EVControllerConfig(
                 target_soc_pct=config.ev.daily_target_soc_pct,
+                start_headroom_w=1_000_000.0,
             )
         )
 
