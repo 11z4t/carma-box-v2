@@ -925,6 +925,16 @@ class BudgetAggressiveSpreadSection(BaseModel):
         le=100.0,
         description="Backward-compat alias for bat_spread_max_pct; defaults to same value.",
     )
+    bat_need_based_enabled: bool = Field(
+        default=False,
+        description=(
+            "PLAT-1766: when True, balanced-path bat distribution weights by "
+            "instantaneous energy need ((1-soc)*cap for charging, soc*cap for "
+            "discharge) instead of pure capacity (PLAT-1755). Drives SoC "
+            "convergence across banks. Default False preserves PLAT-1755 "
+            "cap-only behaviour."
+        ),
+    )
 
 
 class BudgetEmergencySection(BaseModel):
@@ -1071,6 +1081,7 @@ class BudgetSection(BaseModel):
             bat_soc_full_pct=self.bat_soc_full_pct,
             bat_spread_max_pct=self.aggressive_spread.bat_spread_max_pct,
             bat_aggressive_spread_pct=self.aggressive_spread.bat_aggressive_spread_pct,
+            bat_need_based_enabled=self.aggressive_spread.bat_need_based_enabled,
             bat_lower_ratio=self.bat_lower_ratio,
             bat_higher_ratio=self.bat_higher_ratio,
             ev_ramp_up_hold_cycles=self.ev_ramp_up_hold_cycles,

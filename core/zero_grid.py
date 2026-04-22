@@ -48,6 +48,11 @@ _CORRECTION_GAIN: float = 0.7
 _MOMENTUM_WINDOW: int = 3          # rolling history length (cycles)
 _MOMENTUM_DAMPING_FACTOR: float = 0.5  # gain multiplier when converging
 
+# PLAT-1766 — SoC (0-100 %) is divided by this to obtain the 0-1 fraction
+# used for need-based weighting. Named so the intent is explicit rather
+# than `soc_pct / 100.0` scattered inline.
+_PCT_TO_FRACTION: float = 100.0
+
 
 @dataclass(frozen=True)
 class ZeroGridState:
@@ -245,6 +250,7 @@ def _distribute(
     bats: list[BatSnapshot],
     limits_by_id: dict[str, BatLimits],
     spread_aggressive_pct: float = 5.0,
+    need_based_enabled: bool = False,
 ) -> dict[str, float]:
     """Split a total net target (W) across N batteries.
 
@@ -255,6 +261,17 @@ def _distribute(
         goes to standby. For discharge the opposite: upper-SoC
         discharges, lower-SoC holds (protects low bat).
       - Otherwise proportional by capacity across all eligible bats.
+
+    PLAT-1766: when ``need_based_enabled`` is True, balanced-path weights
+    reflect the remaining energy *need* per bank rather than pure capacity:
+
+        charging : weights[b] = max(0, (1 − soc[b]/100) · cap_kwh[b])
+        discharge: weights[b] = max(0,  soc[b]/100  · cap_kwh[b])
+
+    This drives SoC convergence (emptier/fuller bat gets proportionally
+    more). Falls back to PLAT-1755 cap-only when the summed need is zero
+    (all bats at the relevant limit) to preserve dispatch for residual
+    spread that the aggressive path did not consume.
     """
     if not bats:
         return {}
@@ -312,10 +329,35 @@ def _distribute(
     # to max_charge_w / max_discharge_w for callers that don't supply
     # cap_kwh (zero value = legacy path).
     charging_balanced = total_target_net_w < 0
-    weights = {
-        b.battery_id: (b.cap_kwh if b.cap_kwh > 0.0 else _cap(b, charging=charging_balanced))
-        for b in bats
-    }
+    weights: dict[str, float]
+    if need_based_enabled:
+        # PLAT-1766: weight by instantaneous energy need per bank.
+        if charging_balanced:
+            weights = {
+                b.battery_id: max(0.0, (1.0 - b.soc_pct / _PCT_TO_FRACTION) * b.cap_kwh)
+                for b in bats
+            }
+        else:
+            weights = {
+                b.battery_id: max(0.0, (b.soc_pct / _PCT_TO_FRACTION) * b.cap_kwh)
+                for b in bats
+            }
+        if sum(weights.values()) == 0.0:
+            # All bats at the relevant limit (full when charging, empty when
+            # discharging). Fall back to cap-only weighting so any residual
+            # target still reaches a bank — clamping will zero it if the
+            # physical envelope forbids the action.
+            weights = {
+                b.battery_id: (
+                    b.cap_kwh if b.cap_kwh > 0.0 else _cap(b, charging=charging_balanced)
+                )
+                for b in bats
+            }
+    else:
+        weights = {
+            b.battery_id: (b.cap_kwh if b.cap_kwh > 0.0 else _cap(b, charging=charging_balanced))
+            for b in bats
+        }
     total_weight = sum(weights.values()) or 1.0
     for b in bats:
         alloc[b.battery_id] = total_target_net_w * weights[b.battery_id] / total_weight
@@ -330,6 +372,7 @@ def plan_zero_grid(
     spread_aggressive_pct: float = 5.0,
     gain: float = _CORRECTION_GAIN,
     state: ZeroGridState | None = None,
+    need_based_enabled: bool = False,
 ) -> ZeroGridPlan:
     """Compute the per-battery plan that drives ``grid_power_w`` to 0.
 
@@ -371,6 +414,7 @@ def plan_zero_grid(
         normal_bats,
         limits_by_id,
         spread_aggressive_pct,
+        need_based_enabled=need_based_enabled,
     )
 
     modes: dict[str, str] = {}

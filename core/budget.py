@@ -84,6 +84,11 @@ class BudgetConfig:
     # to the same value so tests keep their boundary semantics clear.
     bat_spread_max_pct: float = 1.0
     bat_aggressive_spread_pct: float = 1.0
+    # PLAT-1766: need-based balanced-path weighting. When True, the balanced
+    # (non-aggressive) distribution weights by (1-soc)*cap / soc*cap so banks
+    # converge to the same SoC rather than just the same rate-of-change.
+    # Default False preserves PLAT-1755 cap-only behaviour.
+    bat_need_based_enabled: bool = False
     bat_lower_ratio: float = 0.8
     bat_higher_ratio: float = 0.2
     # EV ramp tröghet: ramp UP kräver N konsekutiva export-cykler
@@ -406,6 +411,7 @@ def allocate(
             bats=zg_bats,
             limits_by_id=zg_limits,
             spread_aggressive_pct=cfg.bat_aggressive_spread_pct,
+            need_based_enabled=cfg.bat_need_based_enabled,
         )
         bat_alloc = dict(zero_grid_plan.limits_w)
         bat_discharge = sum(
