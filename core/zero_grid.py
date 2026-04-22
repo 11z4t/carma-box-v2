@@ -48,6 +48,11 @@ _CORRECTION_GAIN: float = 0.7
 _MOMENTUM_WINDOW: int = 3          # rolling history length (cycles)
 _MOMENTUM_DAMPING_FACTOR: float = 0.5  # gain multiplier when converging
 
+# PLAT-1766 — SoC (0-100 %) is divided by this to obtain the 0-1 fraction
+# used for need-based weighting. Named so the intent is explicit rather
+# than `soc_pct / 100.0` scattered inline.
+_PCT_TO_FRACTION: float = 100.0
+
 
 @dataclass(frozen=True)
 class ZeroGridState:
@@ -329,12 +334,12 @@ def _distribute(
         # PLAT-1766: weight by instantaneous energy need per bank.
         if charging_balanced:
             weights = {
-                b.battery_id: max(0.0, (1.0 - b.soc_pct / 100.0) * b.cap_kwh)
+                b.battery_id: max(0.0, (1.0 - b.soc_pct / _PCT_TO_FRACTION) * b.cap_kwh)
                 for b in bats
             }
         else:
             weights = {
-                b.battery_id: max(0.0, (b.soc_pct / 100.0) * b.cap_kwh)
+                b.battery_id: max(0.0, (b.soc_pct / _PCT_TO_FRACTION) * b.cap_kwh)
                 for b in bats
             }
         if sum(weights.values()) == 0.0:

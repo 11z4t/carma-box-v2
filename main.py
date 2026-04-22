@@ -95,6 +95,11 @@ _PRICE_DEFAULT_ORE: float = 100.0
 _CYCLE_DURATION_WINDOW: int = 100
 _P95_PERCENTILE: float = 0.95
 _CYCLE_P95_LOG_INTERVAL: int = 20
+# PLAT-1786 hotfix constant: headroom threshold above which EV-start-by-
+# Ellevio-headroom will never trigger. Set effectively-infinite so the
+# headroom path in core.ev_controller is disabled — EV charging is driven
+# by EVSurplusController + NightEV only. Permanent fix in PLAT-1790.
+_EV_HEADROOM_DISABLED_W: float = 1_000_000.0
 
 
 def setup_logging(config: CarmaConfig) -> None:
@@ -362,14 +367,14 @@ class CarmaBoxService:
         )
 
         # EV controller
-        # HOTFIX 2026-04-20: start_headroom_w raised from 1000 to 1_000_000 to
-        # effectively disable headroom-based EV starts. User rule: EV charges
+        # HOTFIX 2026-04-20 (PLAT-1786): start_headroom_w = _EV_HEADROOM_DISABLED_W
+        # to effectively disable headroom-based EV starts. User rule: EV charges
         # ONLY from PV surplus (via EVSurplusController), never from Ellevio
-        # headroom triggers. See PLAT-XXXX for permanent migration.
+        # headroom triggers. Permanent fix in PLAT-1790.
         self._ev_controller = EVController(
             EVControllerConfig(
                 target_soc_pct=config.ev.daily_target_soc_pct,
-                start_headroom_w=1_000_000.0,
+                start_headroom_w=_EV_HEADROOM_DISABLED_W,
             )
         )
 
