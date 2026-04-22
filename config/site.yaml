@@ -526,6 +526,7 @@ budget:
   aggressive_spread:
     bat_spread_max_pct: 5.0          # PLAT-1749: 5 pp spread before P/S split (was 1.0)
     bat_aggressive_spread_pct: 5.0   # PLAT-1749: backward-compat alias (kept = bat_spread_max_pct)
+    bat_need_based_enabled: false    # PLAT-1766: feature flag (balanced-path need-based weighting)
 
   # Emergency + capacity fallbacks
   emergency:

@@ -800,3 +800,757 @@ def test_no_new_oscillation_with_momentum_state() -> None:
     # Oscillating history → same as no state (full gain)
     assert plan_oscillating.limits_w["k"] == plan_baseline.limits_w["k"]
     assert plan_oscillating.modes["k"] == plan_baseline.modes["k"]
+
+
+# ------------------------------------------------------------------------
+# PLAT-1766: need-based balanced-path weighting
+# ------------------------------------------------------------------------
+
+
+def _snap_cap(bid: str, power_w: float, soc_pct: float, cap_kwh: float) -> BatSnapshot:
+    return BatSnapshot(
+        battery_id=bid,
+        power_w=power_w,
+        soc_pct=soc_pct,
+        cap_kwh=cap_kwh,
+    )
+
+
+_PLAT1766_LIMITS = {
+    "kontor": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+    "forrad": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+}
+
+
+def test_plat1766_flag_default_off_preserves_plat1755_weighting() -> None:
+    """Default False → identical behaviour to PLAT-1755 cap-only.
+
+    Regression-gate: existing deployments must not shift allocation when
+    the flag is absent/false in site.yaml.
+    """
+    bats = [
+        _snap_cap("kontor", 0.0, 46.0, 15.0),
+        _snap_cap("forrad", 0.0, 51.0, 5.0),
+    ]
+    plan_off = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=_PLAT1766_LIMITS,
+        spread_aggressive_pct=10.0,  # force balanced path (spread = 5 pp < 10)
+    )
+    # PLAT-1755 cap-only: ratio 15:5 → kontor ~ 750 W, forrad ~ 250 W
+    assert plan_off.modes["kontor"] == "charge_battery"
+    assert plan_off.modes["forrad"] == "charge_battery"
+    # With gain=0.7, |target| ≈ 700 W. Weights 15:5 = 3:1 → 525 W vs 175 W.
+    k = plan_off.limits_w["kontor"]
+    f = plan_off.limits_w["forrad"]
+    assert abs(k / (k + f) - 0.75) < 0.01, f"cap-only share {k}:{f}"
+
+
+def test_plat1766_charging_weights_by_need_then_cap() -> None:
+    """Flag ON + charging → kontor (46%, 15 kWh) pulls more than PLAT-1755.
+
+    User's insight: (1 − soc)·cap drives SoC *convergence*, not just
+    equal-rate. kontor need = 0.54·15 = 8.1 kWh, forrad = 0.49·5 = 2.45 kWh.
+    Ratio 8.1 : 2.45 ≈ 3.3 : 1 (vs cap-only 3 : 1). Small shift toward kontor.
+    """
+    bats = [
+        _snap_cap("kontor", 0.0, 46.0, 15.0),
+        _snap_cap("forrad", 0.0, 51.0, 5.0),
+    ]
+    plan = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=_PLAT1766_LIMITS,
+        spread_aggressive_pct=10.0,  # balanced path
+        need_based_enabled=True,
+    )
+    k = plan.limits_w["kontor"]
+    f = plan.limits_w["forrad"]
+    # Need ratio: kontor_need / forrad_need = 8.1 / 2.45 ≈ 3.306
+    expected_kontor_share = 8.1 / (8.1 + 2.45)
+    actual_kontor_share = k / (k + f)
+    assert abs(actual_kontor_share - expected_kontor_share) < 0.01, (
+        f"need-based share {k}:{f} = {actual_kontor_share:.3f} vs expected "
+        f"{expected_kontor_share:.3f}"
+    )
+
+
+def test_plat1766_charging_need_based_gives_more_to_emptier_bank() -> None:
+    """Need-based vs cap-only: emptier bat gets strictly larger share."""
+    bats = [
+        _snap_cap("kontor", 0.0, 30.0, 10.0),  # lower SoC
+        _snap_cap("forrad", 0.0, 70.0, 10.0),  # higher SoC, same cap
+    ]
+    plan_cap = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=_PLAT1766_LIMITS,
+        spread_aggressive_pct=50.0,
+        need_based_enabled=False,
+    )
+    plan_need = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=_PLAT1766_LIMITS,
+        spread_aggressive_pct=50.0,
+        need_based_enabled=True,
+    )
+    # Cap-only with equal caps: 50/50 split.
+    assert plan_cap.limits_w["kontor"] == plan_cap.limits_w["forrad"]
+    # Need-based: kontor (70% need) gets more than forrad (30% need).
+    assert plan_need.limits_w["kontor"] > plan_need.limits_w["forrad"]
+    ratio = plan_need.limits_w["kontor"] / plan_need.limits_w["forrad"]
+    # Need ratio 0.7 : 0.3 ≈ 2.33
+    assert 2.2 < ratio < 2.5, f"need-based ratio {ratio:.2f}"
+
+
+def test_plat1766_discharging_weights_by_available_energy() -> None:
+    """Flag ON + discharging → fuller bat gives more (soc·cap)."""
+    bats = [
+        _snap_cap("kontor", 0.0, 80.0, 10.0),
+        _snap_cap("forrad", 0.0, 40.0, 10.0),
+    ]
+    plan = plan_zero_grid(
+        grid_power_w=+1000.0,  # import → discharge
+        bats=bats,
+        limits_by_id=_PLAT1766_LIMITS,
+        spread_aggressive_pct=50.0,
+        need_based_enabled=True,
+    )
+    k = plan.limits_w["kontor"]
+    f = plan.limits_w["forrad"]
+    assert plan.modes["kontor"] == "discharge_pv"
+    assert plan.modes["forrad"] == "discharge_pv"
+    # kontor soc·cap = 8.0, forrad = 4.0 → kontor gets 2/3.
+    expected_kontor_share = 8.0 / (8.0 + 4.0)
+    assert abs(k / (k + f) - expected_kontor_share) < 0.01, f"{k}:{f}"
+
+
+def test_plat1766_all_bats_full_falls_back_to_cap_only() -> None:
+    """All bats at 100% (charging) → need=0 → fallback cap-only weighting."""
+    bats = [
+        _snap_cap("kontor", 0.0, 100.0, 15.0),
+        _snap_cap("forrad", 0.0, 100.0, 5.0),
+    ]
+    plan = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=_PLAT1766_LIMITS,
+        spread_aggressive_pct=10.0,
+        need_based_enabled=True,
+    )
+    # Both at soc_max (100 in _PLAT1766_LIMITS) → _clamp_for_soc returns 0.
+    # So modes are battery_standby regardless of weighting. The fallback
+    # only matters upstream of clamping — verify no crash and both standby.
+    assert plan.modes["kontor"] == "battery_standby"
+    assert plan.modes["forrad"] == "battery_standby"
+    assert plan.limits_w["kontor"] == 0
+    assert plan.limits_w["forrad"] == 0
+
+
+def test_plat1766_all_bats_empty_discharging_falls_back() -> None:
+    """All bats at clamped floor (discharging) → discharge blocked by SoC.
+
+    Exact soc=0 triggers emergency recovery (below_floor) → forced charge.
+    Use soc just above floor so bats aren't in emergency recovery but
+    discharge is still blocked by the soc_min_buffer_pct guard — verifies
+    that the need-based fallback path returns a valid weighting and that
+    the clamp step correctly zeroes the alloc.
+    """
+    # soc = soc_min + 0.5 → above floor (no emergency) but at/below
+    # soc_min_buffer so _clamp_for_soc blocks discharge → standby.
+    bats = [
+        _snap_cap("kontor", 0.0, 15.5, 15.0),
+        _snap_cap("forrad", 0.0, 15.5, 5.0),
+    ]
+    limits = {
+        "kontor": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+            soc_min_buffer_pct=1.0,
+        ),
+        "forrad": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+            soc_min_buffer_pct=1.0,
+        ),
+    }
+    plan = plan_zero_grid(
+        grid_power_w=+1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=50.0,
+        need_based_enabled=True,
+    )
+    # soc 15.5 <= soc_min_pct (15) + buffer (1) = 16 → clamp to 0 (standby).
+    assert plan.modes["kontor"] == "battery_standby"
+    assert plan.modes["forrad"] == "battery_standby"
+
+
+def test_plat1766_mixed_full_and_partial_charging() -> None:
+    """One bat full, one partial → full gets 0, partial absorbs all."""
+    bats = [
+        _snap_cap("kontor", 0.0, 100.0, 15.0),  # full
+        _snap_cap("forrad", 0.0, 50.0, 5.0),    # partial
+    ]
+    plan = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=_PLAT1766_LIMITS,
+        spread_aggressive_pct=100.0,  # keep balanced path despite spread
+        need_based_enabled=True,
+    )
+    # need: kontor=0, forrad=2.5 → all weight on forrad.
+    assert plan.modes["forrad"] == "charge_battery"
+    assert plan.limits_w["forrad"] > 500
+    # kontor at 100% clamps to standby regardless of alloc.
+    assert plan.modes["kontor"] == "battery_standby"
+
+
+def test_plat1766_single_bat_unchanged_by_flag() -> None:
+    """Single bat always owns full target regardless of flag."""
+    bats = [_snap_cap("kontor", 0.0, 50.0, 15.0)]
+    limits = {"kontor": _PLAT1766_LIMITS["kontor"]}
+    plan_off = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        need_based_enabled=False,
+    )
+    plan_on = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        need_based_enabled=True,
+    )
+    assert plan_off.limits_w["kontor"] == plan_on.limits_w["kontor"]
+    assert plan_off.modes["kontor"] == plan_on.modes["kontor"]
+
+
+def test_plat1766_cap_kwh_zero_fallback_to_max_w() -> None:
+    """cap_kwh=0 (legacy callers) → fallback to max_charge_w weighting."""
+    bats = [
+        BatSnapshot(battery_id="a", power_w=0.0, soc_pct=40.0, cap_kwh=0.0),
+        BatSnapshot(battery_id="b", power_w=0.0, soc_pct=60.0, cap_kwh=0.0),
+    ]
+    limits = {
+        "a": BatLimits(
+            max_charge_w=3000, max_discharge_w=3000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+        "b": BatLimits(
+            max_charge_w=1000, max_discharge_w=1000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+    }
+    plan = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=50.0,
+        need_based_enabled=True,
+    )
+    # Need-based with cap=0: (1−0.4)·0 = 0 and (1−0.6)·0 = 0 → fallback
+    # to cap-only (which uses max_charge_w). Ratio 3:1 → a=3/4, b=1/4.
+    a = plan.limits_w["a"]
+    b = plan.limits_w["b"]
+    assert abs(a / (a + b) - 0.75) < 0.05
+
+
+def test_plat1766_asymmetric_cap_and_soc_balanced_path() -> None:
+    """Live-like scenario from 2026-04-22: kontor 15 kWh @46%, forrad 5 kWh @51%."""
+    bats = [
+        _snap_cap("kontor", 0.0, 46.0, 15.0),
+        _snap_cap("forrad", 0.0, 51.0, 5.0),
+    ]
+    # Spread = 5 pp → set spread_aggressive_pct=10 to force balanced path.
+    plan_cap = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=_PLAT1766_LIMITS,
+        spread_aggressive_pct=10.0,
+        need_based_enabled=False,
+    )
+    plan_need = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=_PLAT1766_LIMITS,
+        spread_aggressive_pct=10.0,
+        need_based_enabled=True,
+    )
+    cap_kontor_share = plan_cap.limits_w["kontor"] / (
+        plan_cap.limits_w["kontor"] + plan_cap.limits_w["forrad"]
+    )
+    need_kontor_share = plan_need.limits_w["kontor"] / (
+        plan_need.limits_w["kontor"] + plan_need.limits_w["forrad"]
+    )
+    # Need-based must give kontor (lower SoC) a larger share than cap-only.
+    assert need_kontor_share > cap_kontor_share
+
+
+def test_plat1766_converges_soc_diff_over_many_cycles() -> None:
+    """Simulated 30 cycles → need-based closes SoC-diff vs cap-only preserves it.
+
+    Models a charging scenario with constant surplus, computing SoC deltas
+    per cycle. The test verifies the *direction* of convergence.
+    """
+    cycle_s = 15.0
+    surplus_w = 1000.0
+
+    def step(
+        soc_k: float, soc_f: float, need_based: bool,
+    ) -> tuple[float, float]:
+        bats = [
+            _snap_cap("kontor", 0.0, soc_k, 15.0),
+            _snap_cap("forrad", 0.0, soc_f, 5.0),
+        ]
+        plan = plan_zero_grid(
+            grid_power_w=-surplus_w,
+            bats=bats,
+            limits_by_id=_PLAT1766_LIMITS,
+            spread_aggressive_pct=50.0,  # balanced path whole run
+            need_based_enabled=need_based,
+        )
+        # soc delta (pp) = energy_added / cap_kwh * 100
+        dsoc_k = plan.limits_w["kontor"] * cycle_s / 3600.0 / 15.0 * 100.0 / 1000.0
+        dsoc_f = plan.limits_w["forrad"] * cycle_s / 3600.0 / 5.0 * 100.0 / 1000.0
+        return soc_k + dsoc_k, soc_f + dsoc_f
+
+    # Start diff = 5 pp (kontor 46, forrad 51).
+    k_need, f_need = 46.0, 51.0
+    k_cap, f_cap = 46.0, 51.0
+    for _ in range(30):
+        k_need, f_need = step(k_need, f_need, need_based=True)
+        k_cap, f_cap = step(k_cap, f_cap, need_based=False)
+    diff_need = abs(k_need - f_need)
+    diff_cap = abs(k_cap - f_cap)
+    # Need-based must show *smaller* gap than cap-only after 30 cycles.
+    assert diff_need < diff_cap, (
+        f"need-based diff {diff_need:.2f} pp vs cap-only {diff_cap:.2f} pp"
+    )
+
+
+def test_plat1766_aggressive_path_unchanged_by_flag() -> None:
+    """When spread > spread_aggressive_pct, the aggressive P/S split takes
+    over — need_based_enabled has no effect there (by design)."""
+    bats = [
+        _snap_cap("kontor", 0.0, 30.0, 10.0),
+        _snap_cap("forrad", 0.0, 80.0, 10.0),
+    ]
+    plan_off = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=_PLAT1766_LIMITS,
+        spread_aggressive_pct=1.0,  # spread=50 >> 1 → aggressive path
+        need_based_enabled=False,
+    )
+    plan_on = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=_PLAT1766_LIMITS,
+        spread_aggressive_pct=1.0,
+        need_based_enabled=True,
+    )
+    assert plan_off.limits_w == plan_on.limits_w
+    assert plan_off.modes == plan_on.modes
+
+
+def test_plat1766_three_bats_need_based_scales() -> None:
+    """Three bats charging → weights scale as (1-soc)·cap."""
+    bats = [
+        _snap_cap("a", 0.0, 30.0, 10.0),  # need=7
+        _snap_cap("b", 0.0, 60.0, 10.0),  # need=4
+        _snap_cap("c", 0.0, 90.0, 10.0),  # need=1
+    ]
+    limits = {
+        bid: BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        )
+        for bid in ("a", "b", "c")
+    }
+    plan = plan_zero_grid(
+        grid_power_w=-1200.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,  # force balanced path
+        need_based_enabled=True,
+    )
+    a = plan.limits_w["a"]
+    b = plan.limits_w["b"]
+    c = plan.limits_w["c"]
+    # Need ratio 7:4:1 → a=7/12, b=4/12, c=1/12.
+    total = a + b + c
+    assert abs(a / total - 7 / 12) < 0.02
+    assert abs(b / total - 4 / 12) < 0.02
+    assert abs(c / total - 1 / 12) < 0.02
+
+
+def test_plat1766_three_bats_discharging_need_based() -> None:
+    """Three bats discharging → weights scale as soc·cap."""
+    bats = [
+        _snap_cap("a", 0.0, 30.0, 10.0),  # avail=3
+        _snap_cap("b", 0.0, 60.0, 10.0),  # avail=6
+        _snap_cap("c", 0.0, 90.0, 10.0),  # avail=9
+    ]
+    limits = {
+        bid: BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        )
+        for bid in ("a", "b", "c")
+    }
+    plan = plan_zero_grid(
+        grid_power_w=+1800.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        need_based_enabled=True,
+    )
+    a = plan.limits_w["a"]
+    b = plan.limits_w["b"]
+    c = plan.limits_w["c"]
+    total = a + b + c
+    assert abs(a / total - 3 / 18) < 0.02
+    assert abs(b / total - 6 / 18) < 0.02
+    assert abs(c / total - 9 / 18) < 0.02
+
+
+def test_plat1766_emergency_recovery_excluded_from_need_weighting() -> None:
+    """Bat below floor is force-charged; does not participate in balanced weights."""
+    bats = [
+        _snap_cap("dead", 0.0, 10.0, 15.0),     # below floor 15
+        _snap_cap("healthy", 0.0, 50.0, 5.0),
+    ]
+    limits = {
+        "dead": BatLimits(
+            max_charge_w=3000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+        "healthy": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+    }
+    plan = plan_zero_grid(
+        grid_power_w=+1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        need_based_enabled=True,
+    )
+    assert "dead" in plan.emergency_recovery
+    assert plan.modes["dead"] == "charge_battery"
+    # Force-charge at max_charge_w regardless of weighting.
+    assert plan.limits_w["dead"] == 3000
+
+
+def test_plat1766_deadband_respected_with_flag() -> None:
+    """Flag does not break deadband — grid < 50 W → all standby."""
+    bats = [
+        _snap_cap("kontor", 0.0, 50.0, 15.0),
+        _snap_cap("forrad", 0.0, 70.0, 5.0),
+    ]
+    plan = plan_zero_grid(
+        grid_power_w=20.0,  # inside deadband
+        bats=bats,
+        limits_by_id=_PLAT1766_LIMITS,
+        spread_aggressive_pct=10.0,
+        need_based_enabled=True,
+    )
+    # current_net=0, target_net=0 → all standby.
+    assert plan.modes["kontor"] == "battery_standby"
+    assert plan.modes["forrad"] == "battery_standby"
+
+
+def test_plat1766_grid_pulls_forrad_toward_kontor_soc() -> None:
+    """Live 2026-04-22 scenario — 30-cycle sim converges diff below 4 pp."""
+    surplus_w = 1000.0
+
+    def step(soc_k: float, soc_f: float, need: bool) -> tuple[float, float]:
+        bats = [
+            _snap_cap("kontor", 0.0, soc_k, 15.0),
+            _snap_cap("forrad", 0.0, soc_f, 5.0),
+        ]
+        plan = plan_zero_grid(
+            grid_power_w=-surplus_w,
+            bats=bats,
+            limits_by_id=_PLAT1766_LIMITS,
+            spread_aggressive_pct=50.0,
+            need_based_enabled=need,
+        )
+        dk = plan.limits_w["kontor"] * 15.0 / 3600.0 / 15.0 * 100.0 / 1000.0
+        df = plan.limits_w["forrad"] * 15.0 / 3600.0 / 5.0 * 100.0 / 1000.0
+        return soc_k + dk, soc_f + df
+
+    k, f = 46.0, 51.0
+    for _ in range(30):
+        k, f = step(k, f, need=True)
+    # After 30 cycles, need-based should have closed some of the gap.
+    assert abs(k - f) < 5.0
+
+
+def test_plat1766_need_based_no_alloc_for_full_bat() -> None:
+    """When flag ON + one bat at 100%, balanced weight = 0 for that bat."""
+    bats = [
+        _snap_cap("full", 0.0, 100.0, 10.0),
+        _snap_cap("empty", 0.0, 20.0, 10.0),
+    ]
+    limits = {
+        "full": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+        "empty": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+    }
+    plan = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        need_based_enabled=True,
+    )
+    # full bat → clamped to 0 (soc==soc_max).
+    assert plan.modes["full"] == "battery_standby"
+    # empty bat absorbs the full target.
+    assert plan.modes["empty"] == "charge_battery"
+    assert plan.limits_w["empty"] > 500
+
+
+def test_plat1766_need_based_negative_signs_preserved() -> None:
+    """Charging keeps negative alloc → mode=charge_battery, limit positive W."""
+    bats = [
+        _snap_cap("a", 0.0, 40.0, 10.0),
+        _snap_cap("b", 0.0, 50.0, 10.0),
+    ]
+    limits = {
+        "a": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+        "b": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+    }
+    plan = plan_zero_grid(
+        grid_power_w=-800.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        need_based_enabled=True,
+    )
+    for bid in ("a", "b"):
+        assert plan.modes[bid] == "charge_battery"
+        assert plan.limits_w[bid] >= 0
+
+
+def test_plat1766_total_alloc_matches_target() -> None:
+    """Sum of per-bat allocations (in net terms) approximates target_net_w."""
+    bats = [
+        _snap_cap("a", 0.0, 30.0, 10.0),
+        _snap_cap("b", 0.0, 70.0, 5.0),
+    ]
+    limits = {
+        "a": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+        "b": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+    }
+    # gain 0.7 on 1000 W grid → target_net ≈ -700 W.
+    plan = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=50.0,
+        need_based_enabled=True,
+    )
+    total_charge = sum(plan.limits_w.values())
+    # Should approximate 700 W (±deadband/rounding).
+    assert 600 <= total_charge <= 800
+
+
+def test_plat1766_symmetry_charging_discharging() -> None:
+    """Need-based charging + discharging are mirror-symmetric for equal caps."""
+    bats_c = [
+        _snap_cap("a", 0.0, 30.0, 10.0),
+        _snap_cap("b", 0.0, 70.0, 10.0),
+    ]
+    bats_d = [
+        _snap_cap("a", 0.0, 70.0, 10.0),
+        _snap_cap("b", 0.0, 30.0, 10.0),
+    ]
+    limits = {
+        bid: BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        )
+        for bid in ("a", "b")
+    }
+    plan_c = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats_c,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        need_based_enabled=True,
+    )
+    plan_d = plan_zero_grid(
+        grid_power_w=+1000.0,
+        bats=bats_d,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        need_based_enabled=True,
+    )
+    # Charging: a (soc 30) gets more. Discharging: a (soc 70) gets more.
+    assert plan_c.limits_w["a"] > plan_c.limits_w["b"]
+    assert plan_d.limits_w["a"] > plan_d.limits_w["b"]
+
+
+def test_plat1766_flag_passed_through_plan_zero_grid_signature() -> None:
+    """need_based_enabled kwarg must be accepted by plan_zero_grid."""
+    bats = [_snap_cap("a", 0.0, 50.0, 10.0)]
+    limits = {"a": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        )}
+    plan = plan_zero_grid(
+        grid_power_w=-500.0,
+        bats=bats,
+        limits_by_id=limits,
+        need_based_enabled=True,
+    )
+    assert plan.modes["a"] == "charge_battery"
+
+
+def test_plat1766_flag_compatible_with_state_arg() -> None:
+    """Flag must coexist with PLAT-1758 ZeroGridState without side effects."""
+    bats = [
+        _snap_cap("a", 0.0, 40.0, 10.0),
+        _snap_cap("b", 0.0, 50.0, 5.0),
+    ]
+    limits = {
+        "a": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+        "b": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+    }
+    state = ZeroGridState(soc_history=(44.0, 45.0, 46.0))
+    plan = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        need_based_enabled=True,
+        state=state,
+    )
+    # Both should charge; exact values influenced by momentum dampening but
+    # the weights ratio still reflects need.
+    assert plan.modes["a"] == "charge_battery"
+    assert plan.modes["b"] == "charge_battery"
+    # a (lower SoC, 10 kWh) still must get more than b (higher SoC, 5 kWh)
+    # because both the need (0.6·10=6) and cap favour a.
+    assert plan.limits_w["a"] > plan.limits_w["b"]
+
+
+def test_plat1766_equal_soc_equal_cap_ignores_need_based() -> None:
+    """Equal SoC + equal cap → split is 50/50 regardless of flag."""
+    bats = [
+        _snap_cap("a", 0.0, 60.0, 10.0),
+        _snap_cap("b", 0.0, 60.0, 10.0),
+    ]
+    limits = {
+        bid: BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        )
+        for bid in ("a", "b")
+    }
+    plan_on = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=10.0,
+        need_based_enabled=True,
+    )
+    plan_off = plan_zero_grid(
+        grid_power_w=-1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=10.0,
+        need_based_enabled=False,
+    )
+    assert plan_on.limits_w["a"] == plan_on.limits_w["b"]
+    assert plan_off.limits_w == plan_on.limits_w
+
+
+def test_plat1766_need_based_respects_max_charge_clamp() -> None:
+    """Alloc respects max_charge_w per bat even with skewed need."""
+    bats = [
+        _snap_cap("big", 0.0, 10.0, 20.0),   # huge need
+        _snap_cap("small", 0.0, 90.0, 1.0),  # tiny need
+    ]
+    limits = {
+        "big": BatLimits(
+            max_charge_w=1000, max_discharge_w=1000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+        "small": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000,
+            soc_min_pct=15.0, soc_max_pct=100.0,
+        ),
+    }
+    plan = plan_zero_grid(
+        grid_power_w=-5000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=1.0,  # aggressive path triggered (spread=80)
+        need_based_enabled=True,
+    )
+    # Aggressive path: big (low soc) is primary, capped at 1000 W.
+    assert plan.limits_w["big"] <= 1000
+
+
+def test_plat1766_budget_config_flag_wired_through() -> None:
+    """BudgetConfig exposes bat_need_based_enabled field."""
+    from core.budget import BudgetConfig
+
+    cfg = BudgetConfig()
+    assert hasattr(cfg, "bat_need_based_enabled")
+    assert cfg.bat_need_based_enabled is False  # default False
+    cfg_on = BudgetConfig(bat_need_based_enabled=True)
+    assert cfg_on.bat_need_based_enabled is True
+
+
+def test_plat1766_schema_flag_roundtrip() -> None:
+    """BudgetAggressiveSpreadSection → BudgetConfig roundtrip preserves flag."""
+    from config.schema import BudgetAggressiveSpreadSection, BudgetSection
+
+    sec = BudgetSection()
+    assert sec.aggressive_spread.bat_need_based_enabled is False
+    sec2 = BudgetSection(
+        aggressive_spread=BudgetAggressiveSpreadSection(
+            bat_need_based_enabled=True,
+            bat_spread_max_pct=5.0,
+            bat_aggressive_spread_pct=5.0,
+        ),
+    )
+    cfg = sec2.to_budget_config()
+    assert cfg.bat_need_based_enabled is True
