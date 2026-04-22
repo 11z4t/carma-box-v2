@@ -45,7 +45,7 @@ _CORRECTION_GAIN: float = 0.7
 # PLAT-1758 — SoC momentum dampening.
 # When SoC trends consistently (same sign delta every cycle), the current
 # correction is already working. Reduce gain to prevent overshoot oscillation.
-_MOMENTUM_WINDOW: int = 3          # rolling history length (cycles)
+_MOMENTUM_WINDOW: int = 3  # rolling history length (cycles)
 _MOMENTUM_DAMPING_FACTOR: float = 0.5  # gain multiplier when converging
 
 
@@ -100,8 +100,7 @@ def _momentum_gain(
     if state is None or len(state.soc_history) < 2:
         return base_gain
     deltas = [
-        state.soc_history[i + 1] - state.soc_history[i]
-        for i in range(len(state.soc_history) - 1)
+        state.soc_history[i + 1] - state.soc_history[i] for i in range(len(state.soc_history) - 1)
     ]
     if all(d > 0 for d in deltas) or all(d < 0 for d in deltas):
         return base_gain * damping_factor
@@ -245,6 +244,7 @@ def _distribute(
     bats: list[BatSnapshot],
     limits_by_id: dict[str, BatLimits],
     spread_aggressive_pct: float = 5.0,
+    need_based: bool = False,
 ) -> dict[str, float]:
     """Split a total net target (W) across N batteries.
 
@@ -255,6 +255,16 @@ def _distribute(
         goes to standby. For discharge the opposite: upper-SoC
         discharges, lower-SoC holds (protects low bat).
       - Otherwise proportional by capacity across all eligible bats.
+
+    ``need_based`` (PLAT-1766): When ``True``, the balanced-proportional
+    path weights by remaining energy need rather than raw capacity so
+    batteries with different SoC levels converge toward the same fill
+    fraction over time:
+      - Charging:   weight = max(0, (1 - soc/100) * cap_kwh)
+      - Discharging: weight = max(0, (soc/100) * cap_kwh)
+    Falls back to PLAT-1755 cap-proportional when all weights are zero
+    (e.g. all batteries at 100 % SoC for charging).
+    The aggressive primary/secondary split path is unaffected.
     """
     if not bats:
         return {}
@@ -306,12 +316,36 @@ def _distribute(
                 alloc[b.battery_id] = sign * secondary_mag * (bat_cap / (secondary_cap or 1.0))
         return alloc
 
-    # Balanced — proportional by capacity.
+    # Balanced — proportional weighting.
+    charging_balanced = total_target_net_w < 0
+
+    if need_based:
+        # PLAT-1766: weight by energy *need* so batteries with different SoC
+        # converge toward the same fill fraction instead of charging at the
+        # same pp/h rate (which preserves the gap).
+        #   Charging:    need = (1 - soc/100) * cap_kwh  (how much room left)
+        #   Discharging: need = (soc/100) * cap_kwh       (how much energy left)
+        # cap_kwh=0 (legacy path) contributes zero weight — that battery is
+        # excluded from need-based and treated as if full/empty.
+        if charging_balanced:
+            need_weights = {
+                b.battery_id: max(0.0, (1.0 - b.soc_pct / 100.0) * b.cap_kwh) for b in bats
+            }
+        else:
+            need_weights = {b.battery_id: max(0.0, (b.soc_pct / 100.0) * b.cap_kwh) for b in bats}
+        total_need = sum(need_weights.values())
+        if total_need > 0.0:
+            # Need-based weights are valid — use them.
+            for b in bats:
+                alloc[b.battery_id] = total_target_net_w * need_weights[b.battery_id] / total_need
+            return alloc
+        # All weights are zero (e.g. every bat is at 100 % SoC for a charge
+        # request) → fall through to PLAT-1755 cap-proportional below.
+
     # PLAT-1755: weight by cap_kwh when available so bats with different
     # energy capacities charge/discharge at the same SoC rate.  Fall back
     # to max_charge_w / max_discharge_w for callers that don't supply
     # cap_kwh (zero value = legacy path).
-    charging_balanced = total_target_net_w < 0
     weights = {
         b.battery_id: (b.cap_kwh if b.cap_kwh > 0.0 else _cap(b, charging=charging_balanced))
         for b in bats
@@ -330,6 +364,7 @@ def plan_zero_grid(
     spread_aggressive_pct: float = 5.0,
     gain: float = _CORRECTION_GAIN,
     state: ZeroGridState | None = None,
+    need_based: bool = False,
 ) -> ZeroGridPlan:
     """Compute the per-battery plan that drives ``grid_power_w`` to 0.
 
@@ -371,6 +406,7 @@ def plan_zero_grid(
         normal_bats,
         limits_by_id,
         spread_aggressive_pct,
+        need_based=need_based,
     )
 
     modes: dict[str, str] = {}

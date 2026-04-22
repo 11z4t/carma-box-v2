@@ -302,6 +302,43 @@ class ApplianceMonitorConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class MinerCycleLimitsConfig(BaseModel):
+    """Cycle-limit configuration for miner dispatch (PLAT-1735).
+    Protects ASIC hardware from excessive on/off cycling.
+    """
+
+    min_on_time_s: int = Field(
+        default=1800,
+        ge=60,
+        le=86400,
+        description="Min seconds miner must stay ON once started.",
+    )
+    min_off_time_s: int = Field(
+        default=900,
+        ge=60,
+        le=86400,
+        description="Min seconds miner must stay OFF before restart.",
+    )
+    start_sustained_surplus_s: int = Field(
+        default=300,
+        ge=30,
+        le=3600,
+        description="Seconds of sustained surplus required before starting miner.",
+    )
+    start_surplus_threshold_w: int = Field(
+        default=900,
+        ge=100,
+        le=20000,
+        description="Surplus must exceed this (W) for start_sustained_surplus_s seconds.",
+    )
+    daily_max_cycles: int = Field(
+        default=6,
+        ge=1,
+        le=48,
+        description="Maximum on/off cycles per calendar day.",
+    )
+
+
 class ConsumerConfig(BaseModel):
     """Configuration for a single dispatchable consumer."""
 
@@ -334,6 +371,20 @@ class ConsumerConfig(BaseModel):
     max_w: int = Field(default=0, ge=0, le=50000)
     entity_switch: str = Field(default="")
     entity_power: str = Field(default="")
+    mcb_host: str = Field(
+        default="",
+        description="Goldshell /mcb/newconfig host (IP or hostname). Empty = disabled.",
+    )
+    shelly_host: str = Field(
+        default="",
+        description="Shelly 1PMG4 direct RPC host for fallback. Empty = disabled.",
+    )
+    cycle_limits: MinerCycleLimitsConfig = Field(
+        default_factory=MinerCycleLimitsConfig,
+        description=(
+            "Miner ASIC protection cycle limits. " "Only used when adapter=goldshell_miner."
+        ),
+    )
     start_export_w: int = Field(default=200, ge=0, le=10000)
     stop_import_w: int = Field(default=500, ge=0, le=10000)
     requires_active: str = Field(default="", description="ID of prerequisite consumer")
@@ -584,6 +635,13 @@ class ControlConfig(BaseModel):
     start_scenario: str = Field(
         default="PV_SURPLUS_DAY",
         description="Scenario to enter at startup before first evaluation cycle.",
+    )
+    miner_smart_dispatch_enabled: bool = Field(
+        default=False,
+        description=(
+            "PLAT-1735: Enable Goldshell miner smart dispatch. "
+            "Default OFF — flip to True when network path to miner is verified."
+        ),
     )
     deadband: DeadbandConfig = Field(default_factory=DeadbandConfig)
     export_target: ExportTargetConfig = Field(default_factory=ExportTargetConfig)
@@ -1054,6 +1112,19 @@ class BudgetSection(BaseModel):
         default_factory=BudgetEmergencySection,
         description="Discharge floor and capacity fallback parameters.",
     )
+    # PLAT-1766: SoC need-based proportional charging. When True, batteries
+    # with lower SoC receive proportionally more charge so SoC levels converge
+    # over time. When False (default), PLAT-1755 cap-proportional weighting
+    # is used (maintains SoC diff — same pp/h rate for all batteries).
+    bat_need_based_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable SoC need-based charge distribution (PLAT-1766). "
+            "When True, lower-SoC batteries receive proportionally more charge "
+            "so SoC levels converge. When False (default), PLAT-1755 "
+            "cap-proportional weighting is used."
+        ),
+    )
 
     def to_budget_config(self) -> BudgetConfig:
         """Convert this schema section to the immutable BudgetConfig dataclass.
@@ -1086,6 +1157,7 @@ class BudgetSection(BaseModel):
             bat_at_max_headroom_w=self.cascade.bat_at_max_headroom_w,
             grid_smoothing_window=self.smoothing.grid_smoothing_window,
             grid_tuner=self.grid_tuner.to_grid_tuner_config(),
+            bat_need_based_enabled=self.bat_need_based_enabled,
         )
 
 

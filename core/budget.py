@@ -126,6 +126,11 @@ class BudgetConfig:
     # allocated power to kill grid-drift within-cycle. Default disabled —
     # enable via site.yaml once a site has stabilised on zero_grid alone.
     grid_tuner: GridTunerConfig = field(default_factory=GridTunerConfig)
+    # PLAT-1766: SoC need-based proportional charging. When True, batteries
+    # with lower SoC receive proportionally more charge (converging SoC levels
+    # across batteries). When False (default), PLAT-1755 cap-proportional
+    # weighting is used (same pp/h rate — preserves SoC diff).
+    bat_need_based_enabled: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +411,7 @@ def allocate(
             bats=zg_bats,
             limits_by_id=zg_limits,
             spread_aggressive_pct=cfg.bat_aggressive_spread_pct,
+            need_based=cfg.bat_need_based_enabled,
         )
         bat_alloc = dict(zero_grid_plan.limits_w)
         bat_discharge = sum(
