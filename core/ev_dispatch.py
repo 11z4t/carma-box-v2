@@ -18,7 +18,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from config.schema import EVDispatchV2Config
+    from config.schema import EVDispatchV2Config, NightModeConfig
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,6 +108,9 @@ class EVDispatchState:
     incidents_today: int = 0
     """R1 grid incidents today (reset at midnight)."""
 
+    night_charging: bool = False
+    """True when charging via R-natt (night window, grid primary). False = day charging."""
+
 
 @dataclass
 class EVDispatchInputs:
@@ -150,6 +153,23 @@ class EVDispatchInputs:
     now_monotonic: float = 0.0
     """time.monotonic() at call time — used for timing guards."""
 
+    hour_of_day: int = 12
+    """Current hour of day (0-23) — used for R-natt night window check. Default 12 = daytime."""
+
+    ev_soc: float = 0.0
+    """Current EV battery SoC in percent — used for R-natt soc_target_reached check."""
+
+    ev_target_soc: float = 100.0
+    """Target EV SoC in percent — R-natt stops charging when ev_soc >= this."""
+
+    grid_transient_w: float = 0.0
+    """Grid transient watts for R-natt-bat smoothing.
+
+    Computed by coordinator as max(0, grid_w_current - grid_w_prev) or similar delta.
+    Positive = sudden import spike (inverter ramp, motor start) to be smoothed by bat.
+    0 = grid is steady, no smoothing needed.
+    """
+
 
 @dataclass
 class EVDispatchResult:
@@ -189,7 +209,7 @@ def _reject(
     reason: str,
     inputs: EVDispatchInputs,
 ) -> EVDispatchResult:
-    """Build a rejection result with updated state."""
+    """Build a rejection result with updated state. Always clears night_charging."""
     new_state = EVDispatchState(
         phase=new_phase,
         ev_amps=0,
@@ -199,6 +219,7 @@ def _reject(
         cycles_in_phase=0 if new_phase != state.phase else state.cycles_in_phase + 1,
         last_reason=reason,
         incidents_today=state.incidents_today,
+        night_charging=False,
     )
     return EVDispatchResult(new_state=new_state, action=action, reason=reason)
 
@@ -211,6 +232,7 @@ def _advance(
     reason: str,
     inputs: EVDispatchInputs,
     bat_smoothing_w: float = 0.0,
+    night_charging: bool = False,
 ) -> EVDispatchResult:
     """Build a forward-transition result."""
     new_state = EVDispatchState(
@@ -222,6 +244,7 @@ def _advance(
         cycles_in_phase=0 if new_phase != state.phase else state.cycles_in_phase + 1,
         last_reason=reason,
         incidents_today=state.incidents_today,
+        night_charging=night_charging,
     )
     return EVDispatchResult(
         new_state=new_state,
@@ -334,6 +357,78 @@ def _optimal_amps(surplus_w: float, cfg: EVDispatchV2Config) -> int:
     available_amps = surplus_w / (voltage_per_phase * cfg.ev_phase_count)
     amps = int(available_amps)
     return max(cfg.ev_min_amps, min(cfg.ev_max_amps, amps))
+
+
+# ── R-natt helpers ──────────────────────────────────────────────────────────
+
+def _is_night_window(hour: int, start: int, end: int) -> bool:
+    """Return True if hour falls within the night window [start, end) wrapping midnight.
+
+    Example: start=22, end=6 → hours 22,23,0,1,2,3,4,5 → True; 6..21 → False.
+    """
+    if start > end:  # wraps midnight (normal case: 22 > 6)
+        return hour >= start or hour < end
+    return start <= hour < end  # does not wrap (unusual config)
+
+
+def _check_r_natt(
+    inputs: EVDispatchInputs,
+    cfg: EVDispatchV2Config,
+) -> str | None:
+    """Check R-natt entry conditions for night-window grid charging.
+
+    Night charging bypasses R9/R10/R11 (surplus/forecast). Only R2 + R12 apply,
+    plus time-window and EV SoC checks.
+
+    Returns:
+        Failure reason string, or None if all R-natt conditions are met.
+    """
+    nm = cfg.night_mode
+    if not nm.enabled:
+        return "R-natt: night_mode disabled"
+    if not _is_night_window(inputs.hour_of_day, nm.start_hour, nm.end_hour):
+        return (
+            f"R-natt: outside_window "
+            f"(hour={inputs.hour_of_day}, window={nm.start_hour}-{nm.end_hour})"
+        )
+    r2 = _check_r2_plug(inputs.ev_status)
+    if r2 is not None:
+        return r2
+    if inputs.ev_soc >= inputs.ev_target_soc:
+        return (
+            f"R-natt: soc_target_reached "
+            f"(ev_soc={inputs.ev_soc:.1f}% >= target={inputs.ev_target_soc:.1f}%)"
+        )
+    r12 = _check_r12_bat_ready(inputs.bat_soc, cfg.bat_ready_threshold_pct)
+    if r12 is not None:
+        return r12
+    return None
+
+
+def _compute_night_bat_smoothing(
+    inputs: EVDispatchInputs,
+    cfg: EVDispatchV2Config,
+) -> float:
+    """R-natt-bat (Alt B): compute bat smoothing for a night EV charging cycle.
+
+    Grid is the primary source. Battery only smooths transients (inverter ramps,
+    motor spikes) up to cap_w, and only when bat_soc > soc_floor_pct.
+
+    Args:
+        inputs: Current cycle inputs (grid_transient_w, bat_soc used).
+        cfg: Dispatch config (night_mode.bat_smoothing used).
+
+    Returns:
+        Watts bat should discharge for smoothing. 0 if no smoothing needed.
+    """
+    sm = cfg.night_mode.bat_smoothing
+    if not sm.enabled:
+        return 0.0
+    if inputs.bat_soc <= sm.soc_floor_pct:
+        return 0.0
+    if inputs.grid_transient_w <= 0:
+        return 0.0
+    return min(inputs.grid_transient_w, float(sm.cap_w))
 
 
 # ── Full acceptance check ───────────────────────────────────────────────────
@@ -453,21 +548,75 @@ def _evaluate_internal(
             _LOGGER.info("ev_dispatch_v2: CONNECTED → IDLE (%s)", reason)
             return _reject(state, EVPhase.IDLE, EVActionType.NOOP, reason, inputs)
 
-        # Run full acceptance formula
+        # Path 1: try daytime acceptance formula (R9/R10/R11/R12 + surplus)
         rejection = _run_acceptance_formula(inputs, cfg)
-        if rejection is not None:
-            _LOGGER.debug("ev_dispatch_v2: CONNECTED blocked: %s", rejection)
-            return _reject(state, EVPhase.CONNECTED, EVActionType.NOOP, rejection, inputs)
+        if rejection is None:
+            amps = _optimal_amps(inputs.surplus_w, cfg)
+            reason = f"all criteria met — starting at {amps}A"
+            _LOGGER.info("ev_dispatch_v2: CONNECTED → CHARGING day (%s)", reason)
+            return _advance(
+                state, EVPhase.CHARGING, EVActionType.EV_START, amps, reason, inputs,
+                night_charging=False,
+            )
 
-        # All criteria met — start charging
-        amps = _optimal_amps(inputs.surplus_w, cfg)
-        reason = f"all criteria met — starting at {amps}A"
-        _LOGGER.info("ev_dispatch_v2: CONNECTED → CHARGING (%s)", reason)
-        return _advance(state, EVPhase.CHARGING, EVActionType.EV_START, amps, reason, inputs)
+        # Path 2: try R-natt (night window, grid primary — bypasses R9/R10/R11)
+        r_natt_fail = _check_r_natt(inputs, cfg)
+        if r_natt_fail is None:
+            amps = cfg.ev_max_amps
+            reason = f"R-natt: night_window_charge (hour={inputs.hour_of_day})"
+            _LOGGER.info("ev_dispatch_v2: CONNECTED → CHARGING night (%s)", reason)
+            return _advance(
+                state, EVPhase.CHARGING, EVActionType.EV_START, amps, reason, inputs,
+                night_charging=True,
+            )
+
+        # Both paths failed — stay CONNECTED
+        _LOGGER.debug(
+            "ev_dispatch_v2: CONNECTED blocked day=%s night=%s", rejection, r_natt_fail
+        )
+        return _reject(state, EVPhase.CONNECTED, EVActionType.NOOP, rejection, inputs)
 
     # ── CHARGING ────────────────────────────────────────────────────────────
     if phase == EVPhase.CHARGING:
-        # R1: grid invariant check (hardest — checked first)
+
+        # ── Night charging path (R-natt) ─────────────────────────────────
+        if state.night_charging:
+            # R2: disconnect check
+            if inputs.ev_status not in EV_ACTIVE_STATUSES:
+                reason = f"R2: plug disconnected during night charging (status={inputs.ev_status!r})"
+                _LOGGER.warning("ev_dispatch_v2: CHARGING(night) → COMPLETING (disconnect): %s", reason)
+                return _advance(state, EVPhase.COMPLETING, EVActionType.EV_STOP, 0, reason, inputs)
+
+            # R-natt exit: EV reached SoC target
+            if inputs.ev_soc >= inputs.ev_target_soc:
+                reason = (
+                    f"R-natt: soc_target_reached "
+                    f"(ev_soc={inputs.ev_soc:.1f}% >= target={inputs.ev_target_soc:.1f}%)"
+                )
+                _LOGGER.info("ev_dispatch_v2: CHARGING(night) → COMPLETING (%s)", reason)
+                return _advance(state, EVPhase.COMPLETING, EVActionType.EV_STOP, 0, reason, inputs)
+
+            # R-natt exit: night window ended
+            nm = cfg.night_mode
+            if not _is_night_window(inputs.hour_of_day, nm.start_hour, nm.end_hour):
+                reason = (
+                    f"R-natt: outside_window "
+                    f"(hour={inputs.hour_of_day}, window={nm.start_hour}-{nm.end_hour})"
+                )
+                _LOGGER.info("ev_dispatch_v2: CHARGING(night) → COMPLETING (%s)", reason)
+                return _advance(state, EVPhase.COMPLETING, EVActionType.EV_STOP, 0, reason, inputs)
+
+            # Continue night charging — compute R-natt-bat smoothing
+            night_bat_w = _compute_night_bat_smoothing(inputs, cfg)
+            reason = f"R-natt: night_window_charge (hour={inputs.hour_of_day})"
+            return _advance(
+                state, EVPhase.CHARGING, EVActionType.NOOP, state.ev_amps, reason, inputs,
+                bat_smoothing_w=night_bat_w,
+                night_charging=True,
+            )
+
+        # ── Day charging path ────────────────────────────────────────────
+        # R1: grid invariant check (hardest — checked first, day-mode only)
         r1_fail = _check_r1_grid_incident(inputs.grid_w, cfg.grid_incident_threshold_w)
         if r1_fail is not None:
             _LOGGER.warning("ev_dispatch_v2: R1 INCIDENT during CHARGING: %s", r1_fail)
@@ -512,7 +661,7 @@ def _evaluate_internal(
             _LOGGER.info("ev_dispatch_v2: CHARGING → COMPLETING (%s)", rejection)
             return _advance(state, EVPhase.COMPLETING, EVActionType.EV_STOP, 0, rejection, inputs)
 
-        # Still good — compute optimal amps
+        # Still good — compute optimal amps + day bat smoothing (R3)
         optimal = _optimal_amps(inputs.surplus_w, cfg)
         bat_smoothing = _compute_bat_smoothing(
             inputs.pv_power_w,
