@@ -851,9 +851,7 @@ class TestBudgetConfigGuard:
                 found_budget = True
                 break
         assert found_guard, "main.py missing 'if config.ev_charger:' guard"
-        assert (
-            found_budget
-        ), "config.budget.to_budget_config() must be INSIDE 'if config.ev_charger:' block"
+        assert found_budget, "BudgetConfig() must be INSIDE 'if config.ev_charger:' block"
 
 
 # ===========================================================================
@@ -1280,3 +1278,270 @@ class TestAtomicBatBatchRead:
                 f"Battery {bat.battery_id}: expected SoC "
                 f"{expected_socs[bat.battery_id]}, got {bat.soc_pct}"
             )
+
+
+# ===========================================================================
+# PLAT-1790 F1: _evaluate_ev() wiring tests
+# Verify that hour_of_day/ev_soc/ev_target_soc/grid_transient_w are
+# computed and passed into EVDispatchInputs (regression: previously defaulted
+# to 12/0.0/100.0/0.0 → R-natt could never trigger in production).
+# ===========================================================================
+
+
+class TestEvaluateEvWiring:
+    """Verify _evaluate_ev() correctly wires Fas 2.5 fields into EVDispatchInputs."""
+
+    def _make_service_ev_enabled(self) -> "CarmaBoxService":
+        """Build a CarmaBoxService with ev_dispatch_v2.enabled=True."""
+        from config.schema import load_config
+        from unittest.mock import AsyncMock
+
+        config_path = str(Path(__file__).resolve().parents[2] / "config" / "site.yaml")
+        cfg = load_config(config_path)
+        object.__setattr__(cfg.ev_dispatch_v2, "enabled", True)
+        mock_api = AsyncMock()
+        mock_api.call_service.return_value = None
+        return CarmaBoxService(cfg, ha_api=mock_api)
+
+    @pytest.mark.asyncio()
+    async def test_evaluate_ev_wires_hour_of_day_from_datetime(self) -> None:
+        """hour_of_day in EVDispatchInputs must come from datetime (Europe/Stockholm).
+
+        Previously main.py never set hour_of_day → defaulted to 12 → R-natt
+        window (22-06) never matched → feature dead in production.
+        """
+        import zoneinfo
+        from datetime import datetime as _datetime
+        from unittest.mock import patch
+        from core.ev_dispatch import (
+            EVDispatchInputs,
+            EVDispatchResult,
+            EVActionType,
+            EVDispatchState,
+        )
+        from tests.conftest import make_snapshot, make_ev_state, make_grid_state
+
+        service = self._make_service_ev_enabled()
+        snap = make_snapshot(
+            ev=make_ev_state(soc_pct=40.0, charger_status="awaiting_start"),
+            grid=make_grid_state(grid_power_w=200.0),
+        )
+
+        captured: list[EVDispatchInputs] = []
+
+        def _fake_evaluate(state: object, inputs: object, cfg: object) -> object:
+            assert isinstance(inputs, EVDispatchInputs)
+            captured.append(inputs)
+            return EVDispatchResult(
+                action=EVActionType.NOOP,
+                amps=0,
+                reason="test",
+                new_state=EVDispatchState(),
+                is_shadow=False,
+            )
+
+        fixed_dt = _datetime(2026, 4, 23, 23, 15, 0, tzinfo=zoneinfo.ZoneInfo("Europe/Stockholm"))
+        with (
+            patch("main.evaluate_ev_action", side_effect=_fake_evaluate),
+            patch("main.datetime") as mock_dt,
+        ):
+            mock_dt.now.return_value = fixed_dt
+            await service._evaluate_ev(snap)
+
+        assert len(captured) == 1, "_evaluate_ev must call evaluate_ev_action once"
+        assert captured[0].hour_of_day == 23, f"hour_of_day={captured[0].hour_of_day}, expected 23"
+
+    @pytest.mark.asyncio()
+    async def test_evaluate_ev_wires_ev_soc_from_snapshot(self) -> None:
+        """ev_soc in EVDispatchInputs must equal snapshot.ev.soc_pct."""
+        from unittest.mock import patch
+        from tests.conftest import make_snapshot, make_ev_state, make_grid_state
+
+        service = self._make_service_ev_enabled()
+        snap = make_snapshot(
+            ev=make_ev_state(soc_pct=67.5, charger_status="awaiting_start"),
+            grid=make_grid_state(grid_power_w=200.0),
+        )
+
+        captured: list[object] = []
+
+        def _fake_evaluate(state: object, inputs: object, cfg: object) -> object:
+            from core.ev_dispatch import EVDispatchResult, EVActionType, EVDispatchState
+
+            captured.append(inputs)
+            return EVDispatchResult(
+                action=EVActionType.NOOP,
+                amps=0,
+                reason="test",
+                new_state=EVDispatchState(),
+                is_shadow=False,
+            )
+
+        with patch("main.evaluate_ev_action", side_effect=_fake_evaluate):
+            await service._evaluate_ev(snap)
+
+        assert len(captured) == 1
+        from core.ev_dispatch import EVDispatchInputs
+
+        assert isinstance(captured[0], EVDispatchInputs)
+        assert captured[0].ev_soc == pytest.approx(67.5), (  # type: ignore[attr-defined]
+            f"ev_soc={captured[0].ev_soc}, expected 67.5"  # type: ignore[attr-defined]
+        )
+
+    @pytest.mark.asyncio()
+    async def test_evaluate_ev_wires_grid_transient_w_delta(self) -> None:
+        """grid_transient_w = max(0, current_grid_w - prev_grid_w).
+
+        Verify: after one cycle with grid=800W the next cycle with grid=1100W
+        yields grid_transient_w=300W, and a drop (1100→900) yields 0.
+        """
+        from unittest.mock import patch
+        from tests.conftest import make_snapshot, make_ev_state, make_grid_state
+
+        service = self._make_service_ev_enabled()
+        captured: list[object] = []
+
+        def _fake_evaluate(state: object, inputs: object, cfg: object) -> object:
+            from core.ev_dispatch import EVDispatchResult, EVActionType, EVDispatchState
+
+            captured.append(inputs)
+            return EVDispatchResult(
+                action=EVActionType.NOOP,
+                amps=0,
+                reason="test",
+                new_state=EVDispatchState(),
+                is_shadow=False,
+            )
+
+        # Cycle 1: grid=800W (prev=0 → transient=800)
+        snap1 = make_snapshot(
+            ev=make_ev_state(charger_status="awaiting_start"),
+            grid=make_grid_state(grid_power_w=800.0),
+        )
+        with patch("main.evaluate_ev_action", side_effect=_fake_evaluate):
+            await service._evaluate_ev(snap1)
+
+        # Cycle 2: grid=1100W (delta=+300W)
+        snap2 = make_snapshot(
+            ev=make_ev_state(charger_status="awaiting_start"),
+            grid=make_grid_state(grid_power_w=1100.0),
+        )
+        with patch("main.evaluate_ev_action", side_effect=_fake_evaluate):
+            await service._evaluate_ev(snap2)
+
+        # Cycle 3: grid=900W (delta negative → clamped to 0)
+        snap3 = make_snapshot(
+            ev=make_ev_state(charger_status="awaiting_start"),
+            grid=make_grid_state(grid_power_w=900.0),
+        )
+        with patch("main.evaluate_ev_action", side_effect=_fake_evaluate):
+            await service._evaluate_ev(snap3)
+
+        from core.ev_dispatch import EVDispatchInputs
+
+        assert isinstance(captured[1], EVDispatchInputs)
+        assert isinstance(captured[2], EVDispatchInputs)
+        assert captured[1].grid_transient_w == pytest.approx(300.0), (  # type: ignore[attr-defined]
+            f"cycle2 transient={captured[1].grid_transient_w}, expected 300.0"  # type: ignore[attr-defined]
+        )
+        assert captured[2].grid_transient_w == pytest.approx(0.0), (  # type: ignore[attr-defined]
+            f"cycle3 transient={captured[2].grid_transient_w}, expected 0.0 (clamped)"  # type: ignore[attr-defined]
+        )
+
+    @pytest.mark.asyncio()
+    async def test_evaluate_ev_r_natt_triggers_at_23_00(self) -> None:
+        """R-natt must trigger at hour=23 when plug connected + SoC-gap exists.
+
+        With feature flag ON and hour_of_day=23 (inside 22:00-06:00 window),
+        evaluate_ev_action receives correct inputs and can return EV_START.
+        This test verifies main.py calls HA turn_on when EV_START is returned.
+        """
+        import zoneinfo
+        from datetime import datetime as _datetime
+        from unittest.mock import patch
+
+        from tests.conftest import make_snapshot, make_ev_state, make_grid_state
+
+        service = self._make_service_ev_enabled()
+        snap = make_snapshot(
+            ev=make_ev_state(soc_pct=40.0, charger_status="awaiting_start"),
+            grid=make_grid_state(grid_power_w=500.0),
+        )
+
+        fixed_dt = _datetime(2026, 4, 24, 23, 0, 0, tzinfo=zoneinfo.ZoneInfo("Europe/Stockholm"))
+
+        from core.ev_dispatch import EVDispatchResult, EVActionType, EVDispatchState
+
+        r_natt_result = EVDispatchResult(
+            action=EVActionType.EV_START,
+            amps=16,
+            reason="R-natt: night_window_charge (hour=23)",
+            new_state=EVDispatchState(night_charging=True),
+            is_shadow=False,
+        )
+
+        with (
+            patch("main.evaluate_ev_action", return_value=r_natt_result),
+            patch("main.datetime") as mock_dt,
+        ):
+            mock_dt.now.return_value = fixed_dt
+            await service._evaluate_ev(snap)
+
+        assert service._ha_api is not None
+        service._ha_api.call_service.assert_called_once()  # type: ignore[attr-defined]
+        call_args = service._ha_api.call_service.call_args  # type: ignore[attr-defined]
+        assert call_args[0][1] == "turn_on", f"Expected turn_on for EV_START, got {call_args[0][1]}"
+
+    @pytest.mark.asyncio()
+    async def test_evaluate_ev_r_natt_blocks_at_14_00(self) -> None:
+        """R-natt must NOT trigger at hour=14 (outside night window).
+
+        With hour_of_day=14 (daytime), evaluate_ev_action should see correct
+        inputs and return NOOP (no night trigger). No HA call_service expected.
+        """
+        import zoneinfo
+        from datetime import datetime as _datetime
+        from unittest.mock import patch
+
+        from tests.conftest import make_snapshot, make_ev_state, make_grid_state
+
+        service = self._make_service_ev_enabled()
+        snap = make_snapshot(
+            ev=make_ev_state(soc_pct=40.0, charger_status="awaiting_start"),
+            grid=make_grid_state(grid_power_w=500.0),
+        )
+
+        fixed_dt = _datetime(2026, 4, 24, 14, 0, 0, tzinfo=zoneinfo.ZoneInfo("Europe/Stockholm"))
+
+        from core.ev_dispatch import EVDispatchResult, EVActionType, EVDispatchState
+
+        noop_result = EVDispatchResult(
+            action=EVActionType.NOOP,
+            amps=0,
+            reason="R-natt: outside_window (hour=14, window=22-6)",
+            new_state=EVDispatchState(night_charging=False),
+            is_shadow=False,
+        )
+
+        captured: list[object] = []
+
+        def _fake_evaluate(state: object, inputs: object, cfg: object) -> object:
+            captured.append(inputs)
+            return noop_result
+
+        with (
+            patch("main.evaluate_ev_action", side_effect=_fake_evaluate),
+            patch("main.datetime") as mock_dt,
+        ):
+            mock_dt.now.return_value = fixed_dt
+            await service._evaluate_ev(snap)
+
+        assert len(captured) == 1
+        from core.ev_dispatch import EVDispatchInputs
+
+        assert isinstance(captured[0], EVDispatchInputs)
+        assert captured[0].hour_of_day == 14, (  # type: ignore[attr-defined]
+            f"hour_of_day={captured[0].hour_of_day}, expected 14"  # type: ignore[attr-defined]
+        )
+        assert service._ha_api is not None
+        service._ha_api.call_service.assert_not_called()  # type: ignore[attr-defined]

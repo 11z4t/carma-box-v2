@@ -4,7 +4,7 @@ strict = true
 ignore_missing_imports = false
 
 [[tool.mypy.overrides]]
-module = ["aiosqlite.*", "xlsxwriter.*"]
+module = ["aiosqlite.*", "xlsxwriter.*", "astral.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

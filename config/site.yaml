@@ -472,6 +472,29 @@ dashboard:
   entity_plan_tomorrow: "input_text.v6_battery_plan_tomorrow"
   entity_plan_day3: "input_text.v6_battery_plan_day3"
 
+# PLAT-1790: EV Dispatch v2 (feature flag OFF — safe rollout)
+ev_dispatch_v2:
+  enabled: false          # Master flag — explicitly set true only in Fas 5 (canary)
+  shadow_mode: false      # Set true for 48h shadow evaluation (Fas 4)
+  bat_ready_threshold_pct: 95.0
+  min_session_min: 15.0
+  margin_factor: 1.2
+  ev_min_amps: 6
+  ev_max_amps: 10
+  ev_phase_count: 3
+  bat_smoothing_threshold_w: 300.0
+  grid_incident_threshold_w: 100.0
+
+  night_mode:
+    enabled: true         # R-natt: night-window grid charging
+    start_hour: 22        # Night window opens at 22:00
+    end_hour: 6           # Night window closes at 06:00
+
+    bat_smoothing:
+      enabled: true       # R-natt-bat: Alt B smoothing
+      cap_w: 500          # Max bat discharge for transient smoothing (W)
+      soc_floor_pct: 80.0 # Bat SoC floor during night EV (preserves morning arbitrage)
+
 # Health check
 health:
   port: 8412

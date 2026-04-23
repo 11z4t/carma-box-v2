@@ -2,6 +2,11 @@
 
 PLAT-1673 Case 1.
 
+.. deprecated::
+    PLAT-1790: This module is superseded by core/ev_dispatch.py (ev_dispatch_v2).
+    Kept for backwards compatibility with NightEVConfig import in main.py.
+    Will be removed when ev_dispatch_v2.enabled=True in production.
+
 Inputs:  snapshot (EV state, grid weighted, time), config (thresholds), state (last action time)
 Outputs: list[Command] (START/STOP/SET_CURRENT) + decision_reason for logging
 
