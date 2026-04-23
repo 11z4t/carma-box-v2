@@ -851,9 +851,7 @@ class TestBudgetConfigGuard:
                 found_budget = True
                 break
         assert found_guard, "main.py missing 'if config.ev_charger:' guard"
-        assert (
-            found_budget
-        ), "config.budget.to_budget_config() must be INSIDE 'if config.ev_charger:' block"
+        assert found_budget, "BudgetConfig() must be INSIDE 'if config.ev_charger:' block"
 
 
 # ===========================================================================
@@ -1314,7 +1312,13 @@ class TestEvaluateEvWiring:
         """
         import zoneinfo
         from datetime import datetime as _datetime
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
+        from core.ev_dispatch import (
+            EVDispatchInputs,
+            EVDispatchResult,
+            EVActionType,
+            EVDispatchState,
+        )
         from tests.conftest import make_snapshot, make_ev_state, make_grid_state
 
         service = self._make_service_ev_enabled()
@@ -1323,10 +1327,9 @@ class TestEvaluateEvWiring:
             grid=make_grid_state(grid_power_w=200.0),
         )
 
-        captured: list["EVDispatchInputs"] = []  # type: ignore[name-defined]
+        captured: list[EVDispatchInputs] = []
 
         def _fake_evaluate(state: object, inputs: object, cfg: object) -> object:
-            from core.ev_dispatch import EVDispatchInputs, EVDispatchResult, EVActionType, EVDispatchState
             assert isinstance(inputs, EVDispatchInputs)
             captured.append(inputs)
             return EVDispatchResult(
@@ -1337,17 +1340,16 @@ class TestEvaluateEvWiring:
                 is_shadow=False,
             )
 
-        fixed_dt = _datetime(2026, 4, 23, 23, 15, 0,
-                             tzinfo=zoneinfo.ZoneInfo("Europe/Stockholm"))
-        with patch("main.evaluate_ev_action", side_effect=_fake_evaluate), \
-             patch("main.datetime") as mock_dt:
+        fixed_dt = _datetime(2026, 4, 23, 23, 15, 0, tzinfo=zoneinfo.ZoneInfo("Europe/Stockholm"))
+        with (
+            patch("main.evaluate_ev_action", side_effect=_fake_evaluate),
+            patch("main.datetime") as mock_dt,
+        ):
             mock_dt.now.return_value = fixed_dt
             await service._evaluate_ev(snap)
 
         assert len(captured) == 1, "_evaluate_ev must call evaluate_ev_action once"
-        assert captured[0].hour_of_day == 23, (
-            f"hour_of_day={captured[0].hour_of_day}, expected 23"
-        )
+        assert captured[0].hour_of_day == 23, f"hour_of_day={captured[0].hour_of_day}, expected 23"
 
     @pytest.mark.asyncio()
     async def test_evaluate_ev_wires_ev_soc_from_snapshot(self) -> None:
@@ -1365,10 +1367,14 @@ class TestEvaluateEvWiring:
 
         def _fake_evaluate(state: object, inputs: object, cfg: object) -> object:
             from core.ev_dispatch import EVDispatchResult, EVActionType, EVDispatchState
+
             captured.append(inputs)
             return EVDispatchResult(
-                action=EVActionType.NOOP, amps=0, reason="test",
-                new_state=EVDispatchState(), is_shadow=False,
+                action=EVActionType.NOOP,
+                amps=0,
+                reason="test",
+                new_state=EVDispatchState(),
+                is_shadow=False,
             )
 
         with patch("main.evaluate_ev_action", side_effect=_fake_evaluate):
@@ -1376,6 +1382,7 @@ class TestEvaluateEvWiring:
 
         assert len(captured) == 1
         from core.ev_dispatch import EVDispatchInputs
+
         assert isinstance(captured[0], EVDispatchInputs)
         assert captured[0].ev_soc == pytest.approx(67.5), (  # type: ignore[attr-defined]
             f"ev_soc={captured[0].ev_soc}, expected 67.5"  # type: ignore[attr-defined]
@@ -1396,10 +1403,14 @@ class TestEvaluateEvWiring:
 
         def _fake_evaluate(state: object, inputs: object, cfg: object) -> object:
             from core.ev_dispatch import EVDispatchResult, EVActionType, EVDispatchState
+
             captured.append(inputs)
             return EVDispatchResult(
-                action=EVActionType.NOOP, amps=0, reason="test",
-                new_state=EVDispatchState(), is_shadow=False,
+                action=EVActionType.NOOP,
+                amps=0,
+                reason="test",
+                new_state=EVDispatchState(),
+                is_shadow=False,
             )
 
         # Cycle 1: grid=800W (prev=0 → transient=800)
@@ -1427,6 +1438,7 @@ class TestEvaluateEvWiring:
             await service._evaluate_ev(snap3)
 
         from core.ev_dispatch import EVDispatchInputs
+
         assert isinstance(captured[1], EVDispatchInputs)
         assert isinstance(captured[2], EVDispatchInputs)
         assert captured[1].grid_transient_w == pytest.approx(300.0), (  # type: ignore[attr-defined]
@@ -1446,7 +1458,7 @@ class TestEvaluateEvWiring:
         """
         import zoneinfo
         from datetime import datetime as _datetime
-        from unittest.mock import patch, AsyncMock
+        from unittest.mock import patch
 
         from tests.conftest import make_snapshot, make_ev_state, make_grid_state
 
@@ -1456,10 +1468,10 @@ class TestEvaluateEvWiring:
             grid=make_grid_state(grid_power_w=500.0),
         )
 
-        fixed_dt = _datetime(2026, 4, 24, 23, 0, 0,
-                             tzinfo=zoneinfo.ZoneInfo("Europe/Stockholm"))
+        fixed_dt = _datetime(2026, 4, 24, 23, 0, 0, tzinfo=zoneinfo.ZoneInfo("Europe/Stockholm"))
 
         from core.ev_dispatch import EVDispatchResult, EVActionType, EVDispatchState
+
         r_natt_result = EVDispatchResult(
             action=EVActionType.EV_START,
             amps=16,
@@ -1468,17 +1480,17 @@ class TestEvaluateEvWiring:
             is_shadow=False,
         )
 
-        with patch("main.evaluate_ev_action", return_value=r_natt_result), \
-             patch("main.datetime") as mock_dt:
+        with (
+            patch("main.evaluate_ev_action", return_value=r_natt_result),
+            patch("main.datetime") as mock_dt,
+        ):
             mock_dt.now.return_value = fixed_dt
             await service._evaluate_ev(snap)
 
         assert service._ha_api is not None
         service._ha_api.call_service.assert_called_once()  # type: ignore[attr-defined]
         call_args = service._ha_api.call_service.call_args  # type: ignore[attr-defined]
-        assert call_args[0][1] == "turn_on", (
-            f"Expected turn_on for EV_START, got {call_args[0][1]}"
-        )
+        assert call_args[0][1] == "turn_on", f"Expected turn_on for EV_START, got {call_args[0][1]}"
 
     @pytest.mark.asyncio()
     async def test_evaluate_ev_r_natt_blocks_at_14_00(self) -> None:
@@ -1499,10 +1511,10 @@ class TestEvaluateEvWiring:
             grid=make_grid_state(grid_power_w=500.0),
         )
 
-        fixed_dt = _datetime(2026, 4, 24, 14, 0, 0,
-                             tzinfo=zoneinfo.ZoneInfo("Europe/Stockholm"))
+        fixed_dt = _datetime(2026, 4, 24, 14, 0, 0, tzinfo=zoneinfo.ZoneInfo("Europe/Stockholm"))
 
         from core.ev_dispatch import EVDispatchResult, EVActionType, EVDispatchState
+
         noop_result = EVDispatchResult(
             action=EVActionType.NOOP,
             amps=0,
@@ -1517,13 +1529,16 @@ class TestEvaluateEvWiring:
             captured.append(inputs)
             return noop_result
 
-        with patch("main.evaluate_ev_action", side_effect=_fake_evaluate), \
-             patch("main.datetime") as mock_dt:
+        with (
+            patch("main.evaluate_ev_action", side_effect=_fake_evaluate),
+            patch("main.datetime") as mock_dt,
+        ):
             mock_dt.now.return_value = fixed_dt
             await service._evaluate_ev(snap)
 
         assert len(captured) == 1
         from core.ev_dispatch import EVDispatchInputs
+
         assert isinstance(captured[0], EVDispatchInputs)
         assert captured[0].hour_of_day == 14, (  # type: ignore[attr-defined]
             f"hour_of_day={captured[0].hour_of_day}, expected 14"  # type: ignore[attr-defined]

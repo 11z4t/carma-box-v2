@@ -1168,9 +1168,7 @@ class CarmaBoxService:
                 ev_target_soc=ev_target_soc,
                 grid_transient_w=grid_transient_w,
             )
-            ev_result = evaluate_ev_action(
-                self._ev_dispatch_state, ev_inputs, ev_dispatch_cfg
-            )
+            ev_result = evaluate_ev_action(self._ev_dispatch_state, ev_inputs, ev_dispatch_cfg)
             self._ev_dispatch_state = ev_result.new_state
             self._prev_pv_power_w = pv_total_w
             self._prev_grid_w = grid_w
@@ -1186,14 +1184,17 @@ class CarmaBoxService:
             if ev_result.is_shadow:
                 logger.info(
                     "ev_dispatch_v2 SHADOW: would=%s amps=%d reason=%s",
-                    ev_result.action.value, ev_result.amps, ev_result.reason,
+                    ev_result.action.value,
+                    ev_result.amps,
+                    ev_result.reason,
                 )
                 return
 
             if ev_result.action == EVActionType.EV_START:
                 ev_cfg = self._config.ev_charger
                 await self._ha_api.call_service(
-                    self._entity_domain(ev_cfg.entities.enabled), "turn_on",
+                    self._entity_domain(ev_cfg.entities.enabled),
+                    "turn_on",
                     {"entity_id": ev_cfg.entities.enabled},
                 )
                 logger.info("ev_dispatch_v2 START: %dA — %s", ev_result.amps, ev_result.reason)
@@ -1201,20 +1202,17 @@ class CarmaBoxService:
             elif ev_result.action in (EVActionType.EV_STOP, EVActionType.EV_INCIDENT_ALERT):
                 ev_cfg = self._config.ev_charger
                 await self._ha_api.call_service(
-                    self._entity_domain(ev_cfg.entities.enabled), "turn_off",
+                    self._entity_domain(ev_cfg.entities.enabled),
+                    "turn_off",
                     {"entity_id": ev_cfg.entities.enabled},
                 )
                 if ev_result.action == EVActionType.EV_INCIDENT_ALERT:
-                    logger.warning(
-                        "ev_dispatch_v2 R1 INCIDENT: %s", ev_result.reason
-                    )
+                    logger.warning("ev_dispatch_v2 R1 INCIDENT: %s", ev_result.reason)
                 else:
                     logger.info("ev_dispatch_v2 STOP: %s", ev_result.reason)
 
             elif ev_result.action == EVActionType.EV_ADJUST:
-                logger.debug(
-                    "ev_dispatch_v2 ADJUST: %dA — %s", ev_result.amps, ev_result.reason
-                )
+                logger.debug("ev_dispatch_v2 ADJUST: %dA — %s", ev_result.amps, ev_result.reason)
 
             return
 
