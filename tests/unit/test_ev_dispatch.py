@@ -1,7 +1,7 @@
 """Tests for core/ev_dispatch.py — EV dispatch v2 state machine (PLAT-1790).
 
 Tests cover acceptance formula R1-R12, state transitions, bat smoothing,
-shadow mode, and feature flag behaviour.
+shadow mode, feature flag behaviour, and R-natt night-window charging.
 """
 
 from __future__ import annotations
@@ -434,3 +434,188 @@ def test_connected_plug_removed_returns_to_idle() -> None:
         _cfg(),
     )
     assert result.new_state.phase == EVPhase.IDLE
+
+
+# ── R-natt tests (PLAT-1790 Fas 2.5) ────────────────────────────────────────
+
+def _night_cfg(**kwargs: object) -> EVDispatchV2Config:
+    """Build config with night_mode enabled and permissive day-criteria defaults.
+
+    Night-mode is ON by default. Day-criteria (R9/R10/R11) are set to fail so that
+    only R-natt can trigger charging in night tests.
+    """
+    from config.schema import NightModeConfig, NightModeBatSmoothingConfig
+    defaults: dict[str, object] = {
+        "enabled": True,
+        "shadow_mode": False,
+        "bat_ready_threshold_pct": 95.0,
+        "min_session_min": 15.0,
+        "margin_factor": 1.2,
+        "ev_min_amps": 6,
+        "ev_max_amps": 10,
+        "ev_phase_count": 3,
+        "bat_smoothing_threshold_w": 300.0,
+        "grid_incident_threshold_w": 100.0,
+        "night_mode": NightModeConfig(
+            enabled=True,
+            start_hour=22,
+            end_hour=6,
+            bat_smoothing=NightModeBatSmoothingConfig(enabled=True, cap_w=500, soc_floor_pct=80.0),
+        ),
+    }
+    defaults.update(kwargs)
+    return EVDispatchV2Config(**defaults)  # type: ignore[arg-type]
+
+
+def _night_inputs(**kwargs: object) -> EVDispatchInputs:
+    """Build inputs that FAIL day-criteria but pass R-natt when hour is in window.
+
+    surplus_w=0, predicted_refill_kwh=0, planned_window_min=0, bat_soc_at_sunset=50
+    → R10/R11/R9 all fail → day path blocked.
+    bat_soc=97 → R12 passes.
+    ev_soc=40, ev_target_soc=80 → EV has charging need.
+    hour_of_day=23 → inside night window by default.
+    """
+    defaults: dict[str, object] = {
+        "ev_status": "connected",
+        "bat_soc": 97.0,           # R12 OK
+        "surplus_w": 0.0,          # no surplus (day path fails R10/R11)
+        "grid_w": 50.0,            # within deadband (irrelevant at night)
+        "predicted_refill_kwh": 0.0,     # R10 fails (intentional)
+        "predicted_bat_deficit_kwh": 5.0,
+        "planned_window_min": 0.0,       # R11 fails (intentional)
+        "bat_soc_at_sunset": 50.0,       # R9 fails (intentional)
+        "pv_power_w": 0.0,
+        "prev_pv_power_w": 0.0,
+        "now_monotonic": 1000.0,
+        "hour_of_day": 23,         # inside night window (22-06)
+        "ev_soc": 40.0,            # EV has charging need
+        "ev_target_soc": 80.0,
+        "grid_transient_w": 0.0,
+    }
+    defaults.update(kwargs)
+    return EVDispatchInputs(**defaults)  # type: ignore[arg-type]
+
+
+def _night_charging_state(amps: int = 10) -> EVDispatchState:
+    """CHARGING state with night_charging=True."""
+    return EVDispatchState(phase=EVPhase.CHARGING, ev_amps=amps, night_charging=True)
+
+
+# ── R-natt Test 1 ────────────────────────────────────────────────────────────
+
+def test_night_window_charges_when_plugged_low_soc_no_surplus() -> None:
+    """23:00, SoC 40%, no PV surplus → R-natt triggers EV_START."""
+    cfg = _night_cfg()
+    state = EVDispatchState(phase=EVPhase.CONNECTED)
+    inputs = _night_inputs(hour_of_day=23, ev_soc=40.0, ev_target_soc=80.0)
+
+    result = evaluate_ev_action(state, inputs, cfg)
+
+    assert result.action == EVActionType.EV_START, (
+        f"expected EV_START, got {result.action} ({result.reason})"
+    )
+    assert result.new_state.phase == EVPhase.CHARGING
+    assert result.new_state.night_charging is True
+    assert result.amps == cfg.ev_max_amps  # night charging uses max amps
+    assert "R-natt" in result.reason
+
+
+# ── R-natt Test 2 ────────────────────────────────────────────────────────────
+
+def test_night_window_stops_at_06_00() -> None:
+    """In night charging at 05:55, hour advances to 06 → EV_STOP with 'outside_window'."""
+    cfg = _night_cfg()
+    state = _night_charging_state()
+
+    # Hour 6 is the end of the window (exclusive) → outside
+    inputs = _night_inputs(hour_of_day=6, ev_soc=50.0, ev_target_soc=80.0)
+    result = evaluate_ev_action(state, inputs, cfg)
+
+    assert result.action == EVActionType.EV_STOP
+    assert result.new_state.phase == EVPhase.COMPLETING
+    assert "outside_window" in result.reason
+    assert result.new_state.night_charging is False
+
+
+# ── R-natt Test 3 ────────────────────────────────────────────────────────────
+
+def test_night_window_respects_ev_target_soc() -> None:
+    """23:00, ev_soc=90% already >= target=85% → R-natt does NOT start charging."""
+    cfg = _night_cfg()
+    state = EVDispatchState(phase=EVPhase.CONNECTED)
+    inputs = _night_inputs(hour_of_day=23, ev_soc=90.0, ev_target_soc=85.0)
+
+    result = evaluate_ev_action(state, inputs, cfg)
+
+    # Neither day nor night path should trigger charging
+    assert result.action == EVActionType.NOOP
+    assert result.new_state.phase == EVPhase.CONNECTED
+    assert result.new_state.night_charging is False
+
+
+# ── R-natt Test 4 ────────────────────────────────────────────────────────────
+
+def test_day_no_surplus_does_not_charge() -> None:
+    """14:00, no PV surplus → day path blocked, outside night window → NO CHARGE."""
+    cfg = _night_cfg()
+    state = EVDispatchState(phase=EVPhase.CONNECTED)
+    # Daytime hour — outside night window
+    inputs = _night_inputs(
+        hour_of_day=14,
+        ev_soc=40.0,
+        ev_target_soc=80.0,
+        surplus_w=0.0,
+        predicted_refill_kwh=0.0,
+        planned_window_min=0.0,
+        bat_soc_at_sunset=50.0,
+    )
+
+    result = evaluate_ev_action(state, inputs, cfg)
+
+    assert result.action == EVActionType.NOOP
+    assert result.new_state.phase == EVPhase.CONNECTED
+    assert result.new_state.night_charging is False
+
+
+# ── R-natt Test 5 ────────────────────────────────────────────────────────────
+
+def test_night_window_plug_out_stops() -> None:
+    """In night charging at 23:30, ev_status → disconnected → EV_STOP immediately."""
+    cfg = _night_cfg()
+    state = _night_charging_state()
+    inputs = _night_inputs(
+        hour_of_day=23,
+        ev_soc=50.0,
+        ev_target_soc=80.0,
+        ev_status="disconnected",  # plug removed
+    )
+
+    result = evaluate_ev_action(state, inputs, cfg)
+
+    assert result.action == EVActionType.EV_STOP
+    assert result.new_state.phase == EVPhase.COMPLETING
+    assert result.new_state.night_charging is False
+
+
+# ── R-natt Test 6 ────────────────────────────────────────────────────────────
+
+def test_night_window_config_disabled() -> None:
+    """night_mode.enabled=False → even at 23:00 with low SoC, NO CHARGE."""
+    from config.schema import NightModeConfig, NightModeBatSmoothingConfig
+    cfg = _night_cfg(
+        night_mode=NightModeConfig(
+            enabled=False,
+            start_hour=22,
+            end_hour=6,
+            bat_smoothing=NightModeBatSmoothingConfig(enabled=False),
+        )
+    )
+    state = EVDispatchState(phase=EVPhase.CONNECTED)
+    inputs = _night_inputs(hour_of_day=23, ev_soc=40.0, ev_target_soc=80.0)
+
+    result = evaluate_ev_action(state, inputs, cfg)
+
+    assert result.action == EVActionType.NOOP
+    assert result.new_state.phase == EVPhase.CONNECTED
+    assert result.new_state.night_charging is False
