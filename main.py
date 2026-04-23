@@ -66,6 +66,12 @@ from core.bat_support_controller import BatSupportConfig as BatSupportCtrlCfg
 
 # BudgetConfig no longer imported directly — constructed via config.budget.to_budget_config()
 from core.ev_night_controller import NightEVConfig
+from core.ev_dispatch import (  # PLAT-1790
+    EVActionType,
+    EVDispatchInputs,
+    EVDispatchState,
+    evaluate_ev_action,
+)
 from core.ev_surplus import EVSurplusConfig, EVSurplusController
 from core.surplus_dispatch import SurplusConfig as SurplusDispatchConfig, SurplusDispatch
 from health import HealthStatus, Metrics
@@ -168,6 +174,10 @@ class CarmaBoxService:
         self._last_pv_tomorrow: float = -1.0
         # DayPlan: set by generate_day_plan(), read by dashboard sensor (PLAT-1627)
         self._current_day_plan: Optional[Any] = None
+
+        # PLAT-1790: EV dispatch v2 persistent state
+        self._ev_dispatch_state: EVDispatchState = EVDispatchState()
+        self._prev_pv_power_w: float = 0.0
 
         # Create components only when HA API is available
         if ha_api is not None:
@@ -1112,8 +1122,91 @@ class CarmaBoxService:
             logger.info("PLAN: night plan cleared (morning)")
 
     async def _evaluate_ev(self, snapshot: SystemSnapshot) -> None:
-        """Evaluate EV charging — proactive connect trigger + ramp."""
-        if self._ev_controller is None or self._ha_api is None:
+        """Evaluate EV charging — ev_dispatch_v2 (PLAT-1790) or legacy path.
+
+        When config.ev_dispatch_v2.enabled=True: pure function state machine R1-R12.
+        When disabled (default): legacy EVController proactive connect + ramp.
+        """
+        if self._ha_api is None:
+            return
+
+        ev_dispatch_cfg = self._config.ev_dispatch_v2
+
+        # ── EV dispatch v2 path (PLAT-1790) ─────────────────────────────────
+        if ev_dispatch_cfg.enabled:
+            import time
+
+            ev = snapshot.ev
+            bat_soc = snapshot.total_battery_soc_pct
+            pv_total_w = snapshot.grid.pv_total_w
+
+            ev_inputs = EVDispatchInputs(
+                ev_status=ev.charger_status,
+                bat_soc=bat_soc,
+                surplus_w=max(0.0, -snapshot.grid.grid_power_w),
+                grid_w=snapshot.grid.grid_power_w,
+                # Forecast fields: computed by ForecastIntegrator in Fas 2.
+                # Safe defaults cause R9/R10/R11 rejection when feature first enabled
+                # without forecast wiring — conservative, no unintended EV starts.
+                predicted_refill_kwh=0.0,
+                predicted_bat_deficit_kwh=0.0,
+                planned_window_min=0.0,
+                bat_soc_at_sunset=0.0,
+                pv_power_w=pv_total_w,
+                prev_pv_power_w=self._prev_pv_power_w,
+                now_monotonic=time.monotonic(),
+            )
+            ev_result = evaluate_ev_action(
+                self._ev_dispatch_state, ev_inputs, ev_dispatch_cfg
+            )
+            self._ev_dispatch_state = ev_result.new_state
+            self._prev_pv_power_w = pv_total_w
+
+            logger.debug(
+                "ev_dispatch_v2: action=%s amps=%d reason=%s shadow=%s",
+                ev_result.action,
+                ev_result.amps,
+                ev_result.reason,
+                ev_result.is_shadow,
+            )
+
+            if ev_result.is_shadow:
+                logger.info(
+                    "ev_dispatch_v2 SHADOW: would=%s amps=%d reason=%s",
+                    ev_result.action.value, ev_result.amps, ev_result.reason,
+                )
+                return
+
+            if ev_result.action == EVActionType.EV_START:
+                ev_cfg = self._config.ev_charger
+                await self._ha_api.call_service(
+                    self._entity_domain(ev_cfg.entities.enabled), "turn_on",
+                    {"entity_id": ev_cfg.entities.enabled},
+                )
+                logger.info("ev_dispatch_v2 START: %dA — %s", ev_result.amps, ev_result.reason)
+
+            elif ev_result.action in (EVActionType.EV_STOP, EVActionType.EV_INCIDENT_ALERT):
+                ev_cfg = self._config.ev_charger
+                await self._ha_api.call_service(
+                    self._entity_domain(ev_cfg.entities.enabled), "turn_off",
+                    {"entity_id": ev_cfg.entities.enabled},
+                )
+                if ev_result.action == EVActionType.EV_INCIDENT_ALERT:
+                    logger.warning(
+                        "ev_dispatch_v2 R1 INCIDENT: %s", ev_result.reason
+                    )
+                else:
+                    logger.info("ev_dispatch_v2 STOP: %s", ev_result.reason)
+
+            elif ev_result.action == EVActionType.EV_ADJUST:
+                logger.debug(
+                    "ev_dispatch_v2 ADJUST: %dA — %s", ev_result.amps, ev_result.reason
+                )
+
+            return
+
+        # ── Legacy path (unchanged, gates behind feature flag disabled) ─────
+        if self._ev_controller is None:
             return
 
         ev = snapshot.ev
