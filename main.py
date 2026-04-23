@@ -178,6 +178,7 @@ class CarmaBoxService:
         # PLAT-1790: EV dispatch v2 persistent state
         self._ev_dispatch_state: EVDispatchState = EVDispatchState()
         self._prev_pv_power_w: float = 0.0
+        self._prev_grid_w: float = 0.0
 
         # Create components only when HA API is available
         if ha_api is not None:
@@ -1139,12 +1140,19 @@ class CarmaBoxService:
             ev = snapshot.ev
             bat_soc = snapshot.total_battery_soc_pct
             pv_total_w = snapshot.grid.pv_total_w
+            grid_w = snapshot.grid.grid_power_w
+
+            now_local = datetime.now(tz=zoneinfo.ZoneInfo("Europe/Stockholm"))
+            hour_of_day = now_local.hour
+            ev_soc = ev.soc_pct
+            ev_target_soc = self._config.ev.daily_target_soc_pct
+            grid_transient_w = max(0.0, grid_w - self._prev_grid_w)
 
             ev_inputs = EVDispatchInputs(
                 ev_status=ev.charger_status,
                 bat_soc=bat_soc,
-                surplus_w=max(0.0, -snapshot.grid.grid_power_w),
-                grid_w=snapshot.grid.grid_power_w,
+                surplus_w=max(0.0, -grid_w),
+                grid_w=grid_w,
                 # Forecast fields: computed by ForecastIntegrator in Fas 2.
                 # Safe defaults cause R9/R10/R11 rejection when feature first enabled
                 # without forecast wiring — conservative, no unintended EV starts.
@@ -1155,12 +1163,17 @@ class CarmaBoxService:
                 pv_power_w=pv_total_w,
                 prev_pv_power_w=self._prev_pv_power_w,
                 now_monotonic=time.monotonic(),
+                hour_of_day=hour_of_day,
+                ev_soc=ev_soc,
+                ev_target_soc=ev_target_soc,
+                grid_transient_w=grid_transient_w,
             )
             ev_result = evaluate_ev_action(
                 self._ev_dispatch_state, ev_inputs, ev_dispatch_cfg
             )
             self._ev_dispatch_state = ev_result.new_state
             self._prev_pv_power_w = pv_total_w
+            self._prev_grid_w = grid_w
 
             logger.debug(
                 "ev_dispatch_v2: action=%s amps=%d reason=%s shadow=%s",
