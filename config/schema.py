@@ -1093,6 +1093,63 @@ class BudgetSection(BaseModel):
 # PLAT-1790: EV Dispatch v2 — consumer wear limits + feature config
 # ---------------------------------------------------------------------------
 
+class NightModeBatSmoothingConfig(BaseModel):
+    """Battery smoothing configuration for R-natt-bat (Alt B).
+
+    During night EV charging, battery acts as smoothing-only buffer for
+    grid transients (inverter ramp, motor spikes). Grid is primary source.
+    """
+
+    enabled: bool = True
+    """Master switch for night bat smoothing. Default ON."""
+
+    cap_w: int = Field(default=500, ge=0, le=5000)
+    """Maximum instantaneous bat discharge for smoothing (W). Default 500 W."""
+
+    soc_floor_pct: float = Field(default=80.0, ge=0.0, le=100.0)
+    """Bat SoC floor during night EV charging. Smoothing stops below this.
+    Preserves bat for morning-peak arbitrage (06-09). Default 80%."""
+
+    window_s: float = Field(default=5.0, gt=0.0)
+    """Smoothing time window in seconds. Default 5 s."""
+
+
+class NightModeConfig(BaseModel):
+    """Night-window EV charging configuration (R-natt, 22:00-06:00).
+
+    Allows EV to charge from grid during off-peak hours even without PV surplus.
+    Bypasses daytime forecast criteria (R9/R10/R11) — only R2 + R12 apply.
+    """
+
+    enabled: bool = True
+    """Master switch for R-natt feature. Default ON (safe — ev_dispatch_v2.enabled=False anyway)."""
+
+    start_hour: int = Field(default=22, ge=0, le=23)
+    """Hour when night window opens (inclusive). Default 22 = 22:00."""
+
+    end_hour: int = Field(default=6, ge=0, le=23)
+    """Hour when night window closes (exclusive). Default 6 = 06:00."""
+
+    bat_smoothing: NightModeBatSmoothingConfig = Field(
+        default_factory=NightModeBatSmoothingConfig
+    )
+    """R-natt-bat: battery smoothing config for night EV charging."""
+
+    @model_validator(mode="after")
+    def _validate_night_window(self) -> "NightModeConfig":
+        """Night window must wrap midnight (start_hour > end_hour).
+
+        Example: start=22, end=6 means 22:00→06:00 (crosses midnight). Valid.
+        A window like start=6, end=22 would be daytime — invalid here.
+        """
+        if self.start_hour <= self.end_hour:
+            raise ValueError(
+                f"night_mode.start_hour ({self.start_hour}) must be greater than "
+                f"night_mode.end_hour ({self.end_hour}) — window must wrap midnight. "
+                f"Example: start=22, end=6 means 22:00→06:00."
+            )
+        return self
+
 class WearLimits(BaseModel):
     """Per-consumer wear protection limits.
 
@@ -1171,6 +1228,9 @@ class EVDispatchV2Config(BaseModel):
 
     grid_incident_threshold_w: float = Field(default=100.0, ge=0)
     """Grid export/import above this triggers a R1 incident log."""
+
+    night_mode: NightModeConfig = Field(default_factory=NightModeConfig)
+    """R-natt configuration: night-window grid charging + bat smoothing."""
 
     consumer_priority: list[ConsumerPriorityEntry] = Field(default_factory=list)
     """Priority chain for consumer cascade."""
