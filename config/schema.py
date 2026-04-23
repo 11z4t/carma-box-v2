@@ -1111,9 +1111,6 @@ class NightModeBatSmoothingConfig(BaseModel):
     """Bat SoC floor during night EV charging. Smoothing stops below this.
     Preserves bat for morning-peak arbitrage (06-09). Default 80%."""
 
-    window_s: float = Field(default=5.0, gt=0.0)
-    """Smoothing time window in seconds. Default 5 s."""
-
 
 class NightModeConfig(BaseModel):
     """Night-window EV charging configuration (R-natt, 22:00-06:00).

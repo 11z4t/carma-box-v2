@@ -494,7 +494,6 @@ ev_dispatch_v2:
       enabled: true       # R-natt-bat: Alt B smoothing
       cap_w: 500          # Max bat discharge for transient smoothing (W)
       soc_floor_pct: 80.0 # Bat SoC floor during night EV (preserves morning arbitrage)
-      window_s: 5.0       # Smoothing time window (s)
 
 # Health check
 health:
