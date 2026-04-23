@@ -66,7 +66,7 @@ def test_plat1790_full_night_cycle() -> None:
 
     ev_soc = 40.0
     ev_target_soc = 80.0
-    bat_soc = 98.0     # starts high (day charging done)
+    bat_soc = 98.0  # starts high (day charging done)
     bat_soc_start = bat_soc
 
     grid_incidents = 0
@@ -92,8 +92,8 @@ def test_plat1790_full_night_cycle() -> None:
         inputs = EVDispatchInputs(
             ev_status="connected",
             bat_soc=bat_soc,
-            surplus_w=0.0,           # no PV at night
-            grid_w=7000.0,           # ~7kW EV + house import (intentional)
+            surplus_w=0.0,  # no PV at night
+            grid_w=7000.0,  # ~7kW EV + house import (intentional)
             predicted_refill_kwh=0.0,  # R10 fails (irrelevant at night)
             predicted_bat_deficit_kwh=5.0,
             planned_window_min=0.0,  # R11 fails (irrelevant at night)
@@ -112,7 +112,8 @@ def test_plat1790_full_night_cycle() -> None:
 
         # Track reasons during charging
         if state.phase == EVPhase.CHARGING or result.action in (
-            EVActionType.EV_START, EVActionType.EV_STOP
+            EVActionType.EV_START,
+            EVActionType.EV_STOP,
         ):
             reasons_seen.append(result.reason)
 
@@ -142,17 +143,18 @@ def test_plat1790_full_night_cycle() -> None:
     )
 
     # 3. At least one 'R-natt: night_window_charge' reason was emitted
-    assert any("night_window_charge" in r for r in reasons_seen), (
-        f"Expected at least one 'night_window_charge' reason. Reasons seen: {reasons_seen}"
-    )
+    assert any(
+        "night_window_charge" in r for r in reasons_seen
+    ), f"Expected at least one 'night_window_charge' reason. Reasons seen: {reasons_seen}"
 
     # 4. Session ended via soc_target_reached (hour 4: ev_soc ≈ 80%+ → stop)
     #    OR outside_window (hour 6 not included in our sim, but soc target reached first)
-    assert any("soc_target_reached" in r or "outside_window" in r for r in reasons_seen), (
-        f"Expected soc_target_reached or outside_window stop reason. Reasons: {reasons_seen}"
-    )
+    assert any(
+        "soc_target_reached" in r or "outside_window" in r for r in reasons_seen
+    ), f"Expected soc_target_reached or outside_window stop reason. Reasons: {reasons_seen}"
 
     # 5. Final state is COMPLETING or IDLE (session ended cleanly)
-    assert state.phase in (EVPhase.COMPLETING, EVPhase.IDLE), (
-        f"Expected COMPLETING or IDLE at end of cycle, got {state.phase}"
-    )
+    assert state.phase in (
+        EVPhase.COMPLETING,
+        EVPhase.IDLE,
+    ), f"Expected COMPLETING or IDLE at end of cycle, got {state.phase}"

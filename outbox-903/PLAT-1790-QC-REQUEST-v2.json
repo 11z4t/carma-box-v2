@@ -1,0 +1,75 @@
+{
+  "issue_key": "PLAT-1790",
+  "agent_name": "Thor",
+  "timestamp": "2026-04-23T21:45:00+02:00",
+  "status": "ready_for_qc",
+
+  "summary": "PLAT-1790 portad till rätt repo: charlie-bot/carma-box-v2 (fix/PLAT-1790-v2). Alla 92 tester passerar. Inga regressioner.",
+
+  "repo": "gitea:charlie-bot/carma-box-v2.git",
+  "branch": "fix/PLAT-1790-v2",
+  "master_head": "17b6929",
+  "branch_tip": "0d97ac5",
+
+  "commits": [
+    "02b043c PLAT-1790: design-doc Fas 1→Fas 2 — Q1-Q5 besvarade, DoR klar",
+    "2b9ed9d PLAT-1790: config/schema.py — EVDispatchV2Config + WearLimits + ConsumerPriorityEntry",
+    "275511d PLAT-1790: core/ev_dispatch.py — pure function state machine R1-R12",
+    "20b2e99 PLAT-1790: core/forecast_integrator.py — Solcast P10 integration",
+    "e2c25f7 PLAT-1790: adapters/solcast.py — add get_hourly_p10_forecast() + get_power_now_kw()",
+    "8e26714 PLAT-1790: core/consumer_cascade_v2.py — ConsumerStateTracker + wear guards (R6)",
+    "96838a2 PLAT-1790: integration + regression tests — 92 tests",
+    "12240e8 PLAT-1790: main.py EV dispatch v2 integration (feature flag OFF by default)",
+    "0d97ac5 PLAT-1790: deprecate core/ev_night_controller.py (replaced by ev_dispatch.py)"
+  ],
+
+  "test_results": {
+    "plat1790_tests": "92/92 passed",
+    "full_suite": "1208 passed, 0 failed, 8 warnings (pre-existing)",
+    "ruff": "All checks passed",
+    "mypy_strict": "Success: no issues found in 44 source files"
+  },
+
+  "changes": [
+    "docs/stories/PLAT-1790.md (new)",
+    "config/schema.py: +WearLimits, +ConsumerPriorityEntry, +EVDispatchV2Config (Pydantic), +CarmaConfig.ev_dispatch_v2 field",
+    "core/ev_dispatch.py (new): pure function state machine R1-R12, no HA imports",
+    "core/forecast_integrator.py (new): P10 integration, sunset calc, bat deficit, parse_detailed_hourly",
+    "adapters/solcast.py: +get_hourly_p10_forecast() async, +get_power_now_kw() async",
+    "core/consumer_cascade_v2.py (new): ConsumerStateTracker + wear guards + evaluate_cascade",
+    "tests/unit/test_ev_dispatch.py (new, 48 tests)",
+    "tests/unit/test_consumer_cascade_v2.py (new, 18 tests)",
+    "tests/unit/test_forecast_integrator.py (new, 18 tests)",
+    "tests/unit/test_ev_dispatch_coordinator_compat.py (new, 8 tests)",
+    "tests/integration/test_ev_dispatch_cascade.py (new, 5 tests)",
+    "tests/regression/test_plat1790_oscillation.py (new, 5 tests)",
+    "main.py: +ev_dispatch imports, +_ev_dispatch_state/_prev_pv_power_w, +ev_dispatch_v2 path in _evaluate_ev",
+    "core/ev_night_controller.py: +deprecation notice in docstring",
+    "pyproject.toml: +astral to mypy overrides"
+  ],
+
+  "key_design_decisions": [
+    "EVDispatchV2Config konverterad till Pydantic BaseModel (matchar carma-box-v2 convention)",
+    "ev_night_controller.py behållen med deprecation notice (NightEVConfig importeras i main.py)",
+    "Forecast inputs = 0.0 default → konservativt: R9/R10/R11 blockerar EV tills Fas 2 implementeras",
+    "SolcastAdapter.get_power_now_kw() = async method (inte property, pga HAApiClient är async)",
+    "8 coordinator-compat tester skrivna som pure-function ekvivalenter (TestEVDispatchCoordinatorCompat)"
+  ],
+
+  "dod_status": {
+    "92_plat1790_tests_pass": true,
+    "master_baseline_no_regression": true,
+    "ruff_clean": true,
+    "mypy_strict_clean": true,
+    "branch_pushed_to_gitea": true,
+    "feature_flag_default_false": true
+  },
+
+  "needs_from_901": [
+    "Transition PLAT-1790 till In Review i Jira",
+    "Lägg Jira-kommentar: 'Port till charlie-bot/carma-box-v2 klar. branch fix/PLAT-1790-v2. 92 tester passerar. Redo för code review.'",
+    "Skapa PR: gitea charlie-bot/carma-box-v2 fix/PLAT-1790-v2 → master"
+  ],
+
+  "jira_comment": "PLAT-1790 portad till rätt repo (charlie-bot/carma-box-v2). Branch: fix/PLAT-1790-v2. Alla 92 PLAT-1790-tester passerar + 1208 master-tester utan regression. ruff + mypy --strict clean. Feature flag default=False — noll produktionspåverkan tills Fas 2 (forecast-wiring) är redo."
+}

@@ -18,7 +18,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from config.schema import EVDispatchV2Config, NightModeConfig
+    from config.schema import EVDispatchV2Config
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,13 +29,12 @@ EV_ACTIVE_STATUSES: frozenset[str] = frozenset(
 )
 """EV charger statuses that indicate a vehicle is plugged in and may charge."""
 
-EV_IDLE_STATUSES: frozenset[str] = frozenset(
-    {"disconnected", "unavailable", "unknown", "none", ""}
-)
+EV_IDLE_STATUSES: frozenset[str] = frozenset({"disconnected", "unavailable", "unknown", "none", ""})
 """EV charger statuses that indicate no vehicle or unknown state."""
 
 
 # ── Phase enum ──────────────────────────────────────────────────────────────
+
 
 class EVPhase(StrEnum):
     """EV dispatch state machine phases."""
@@ -61,6 +60,7 @@ class EVPhase(StrEnum):
 
 # ── Action enum ─────────────────────────────────────────────────────────────
 
+
 class EVActionType(StrEnum):
     """Actions that the coordinator should execute."""
 
@@ -81,6 +81,7 @@ class EVActionType(StrEnum):
 
 
 # ── Data classes ────────────────────────────────────────────────────────────
+
 
 @dataclass
 class EVDispatchState:
@@ -202,6 +203,7 @@ class EVDispatchResult:
 
 # ── Rejection helpers ───────────────────────────────────────────────────────
 
+
 def _reject(
     state: EVDispatchState,
     new_phase: EVPhase,
@@ -256,6 +258,7 @@ def _advance(
 
 
 # ── Acceptance formula helpers ──────────────────────────────────────────────
+
 
 def _check_r2_plug(ev_status: str) -> str | None:
     """R2: EV must be physically connected.
@@ -361,6 +364,7 @@ def _optimal_amps(surplus_w: float, cfg: EVDispatchV2Config) -> int:
 
 # ── R-natt helpers ──────────────────────────────────────────────────────────
 
+
 def _is_night_window(hour: int, start: int, end: int) -> bool:
     """Return True if hour falls within the night window [start, end) wrapping midnight.
 
@@ -433,6 +437,7 @@ def _compute_night_bat_smoothing(
 
 # ── Full acceptance check ───────────────────────────────────────────────────
 
+
 def _run_acceptance_formula(
     inputs: EVDispatchInputs,
     cfg: EVDispatchV2Config,
@@ -458,6 +463,7 @@ def _run_acceptance_formula(
 
 
 # ── Main entry point ────────────────────────────────────────────────────────
+
 
 def evaluate_ev_action(
     state: EVDispatchState,
@@ -555,7 +561,12 @@ def _evaluate_internal(
             reason = f"all criteria met — starting at {amps}A"
             _LOGGER.info("ev_dispatch_v2: CONNECTED → CHARGING day (%s)", reason)
             return _advance(
-                state, EVPhase.CHARGING, EVActionType.EV_START, amps, reason, inputs,
+                state,
+                EVPhase.CHARGING,
+                EVActionType.EV_START,
+                amps,
+                reason,
+                inputs,
                 night_charging=False,
             )
 
@@ -566,25 +577,31 @@ def _evaluate_internal(
             reason = f"R-natt: night_window_charge (hour={inputs.hour_of_day})"
             _LOGGER.info("ev_dispatch_v2: CONNECTED → CHARGING night (%s)", reason)
             return _advance(
-                state, EVPhase.CHARGING, EVActionType.EV_START, amps, reason, inputs,
+                state,
+                EVPhase.CHARGING,
+                EVActionType.EV_START,
+                amps,
+                reason,
+                inputs,
                 night_charging=True,
             )
 
         # Both paths failed — stay CONNECTED
-        _LOGGER.debug(
-            "ev_dispatch_v2: CONNECTED blocked day=%s night=%s", rejection, r_natt_fail
-        )
+        _LOGGER.debug("ev_dispatch_v2: CONNECTED blocked day=%s night=%s", rejection, r_natt_fail)
         return _reject(state, EVPhase.CONNECTED, EVActionType.NOOP, rejection, inputs)
 
     # ── CHARGING ────────────────────────────────────────────────────────────
     if phase == EVPhase.CHARGING:
-
         # ── Night charging path (R-natt) ─────────────────────────────────
         if state.night_charging:
             # R2: disconnect check
             if inputs.ev_status not in EV_ACTIVE_STATUSES:
-                reason = f"R2: plug disconnected during night charging (status={inputs.ev_status!r})"
-                _LOGGER.warning("ev_dispatch_v2: CHARGING(night) → COMPLETING (disconnect): %s", reason)
+                reason = (
+                    f"R2: plug disconnected during night charging " f"(status={inputs.ev_status!r})"
+                )
+                _LOGGER.warning(
+                    "ev_dispatch_v2: CHARGING(night) → COMPLETING (disconnect): %s", reason
+                )
                 return _advance(state, EVPhase.COMPLETING, EVActionType.EV_STOP, 0, reason, inputs)
 
             # R-natt exit: EV reached SoC target
@@ -610,7 +627,12 @@ def _evaluate_internal(
             night_bat_w = _compute_night_bat_smoothing(inputs, cfg)
             reason = f"R-natt: night_window_charge (hour={inputs.hour_of_day})"
             return _advance(
-                state, EVPhase.CHARGING, EVActionType.NOOP, state.ev_amps, reason, inputs,
+                state,
+                EVPhase.CHARGING,
+                EVActionType.NOOP,
+                state.ev_amps,
+                reason,
+                inputs,
                 bat_smoothing_w=night_bat_w,
                 night_charging=True,
             )
@@ -675,13 +697,23 @@ def _evaluate_internal(
                 f"(surplus={inputs.surplus_w:.0f}W)"
             )
             return _advance(
-                state, EVPhase.CHARGING, EVActionType.EV_ADJUST, optimal, reason, inputs,
+                state,
+                EVPhase.CHARGING,
+                EVActionType.EV_ADJUST,
+                optimal,
+                reason,
+                inputs,
                 bat_smoothing_w=bat_smoothing,
             )
 
         reason = f"charging at {optimal}A (surplus={inputs.surplus_w:.0f}W)"
         return _advance(
-            state, EVPhase.CHARGING, EVActionType.NOOP, optimal, reason, inputs,
+            state,
+            EVPhase.CHARGING,
+            EVActionType.NOOP,
+            optimal,
+            reason,
+            inputs,
             bat_smoothing_w=bat_smoothing,
         )
 

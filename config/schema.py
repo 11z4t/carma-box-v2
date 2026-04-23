@@ -1093,6 +1093,7 @@ class BudgetSection(BaseModel):
 # PLAT-1790: EV Dispatch v2 — consumer wear limits + feature config
 # ---------------------------------------------------------------------------
 
+
 class NightModeBatSmoothingConfig(BaseModel):
     """Battery smoothing configuration for R-natt-bat (Alt B).
 
@@ -1130,9 +1131,7 @@ class NightModeConfig(BaseModel):
     end_hour: int = Field(default=6, ge=0, le=23)
     """Hour when night window closes (exclusive). Default 6 = 06:00."""
 
-    bat_smoothing: NightModeBatSmoothingConfig = Field(
-        default_factory=NightModeBatSmoothingConfig
-    )
+    bat_smoothing: NightModeBatSmoothingConfig = Field(default_factory=NightModeBatSmoothingConfig)
     """R-natt-bat: battery smoothing config for night EV charging."""
 
     @model_validator(mode="after")
@@ -1149,6 +1148,7 @@ class NightModeConfig(BaseModel):
                 f"Example: start=22, end=6 means 22:00→06:00."
             )
         return self
+
 
 class WearLimits(BaseModel):
     """Per-consumer wear protection limits.
@@ -1238,13 +1238,9 @@ class EVDispatchV2Config(BaseModel):
     @model_validator(mode="after")
     def _validate_amps_and_phases(self) -> EVDispatchV2Config:
         if self.ev_max_amps < self.ev_min_amps:
-            raise ValueError(
-                f"ev_max_amps ({self.ev_max_amps}) < ev_min_amps ({self.ev_min_amps})"
-            )
+            raise ValueError(f"ev_max_amps ({self.ev_max_amps}) < ev_min_amps ({self.ev_min_amps})")
         if self.ev_phase_count not in (1, 3):
-            raise ValueError(
-                f"ev_phase_count must be 1 or 3, got {self.ev_phase_count}"
-            )
+            raise ValueError(f"ev_phase_count must be 1 or 3, got {self.ev_phase_count}")
         return self
 
 

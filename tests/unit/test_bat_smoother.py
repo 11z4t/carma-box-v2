@@ -10,6 +10,7 @@ from core.bat_smoother import compute_night_smoothing
 
 # ── Test 1: transient within cap → bat covers exactly ───────────────────────
 
+
 def test_night_bat_smoothing_covers_grid_transient_within_cap() -> None:
     """Grid transient 400 W < 500 W cap → bat provides exactly 400 W."""
     result = compute_night_smoothing(
@@ -23,6 +24,7 @@ def test_night_bat_smoothing_covers_grid_transient_within_cap() -> None:
 
 
 # ── Test 2: transient exceeds cap → bat capped at 500 W ─────────────────────
+
 
 def test_night_bat_smoothing_caps_at_500w() -> None:
     """Grid transient 800 W > 500 W cap → bat provides 500 W, grid takes the rest."""
@@ -38,11 +40,12 @@ def test_night_bat_smoothing_caps_at_500w() -> None:
 
 # ── Test 3: bat SoC at floor → smoothing disabled ────────────────────────────
 
+
 def test_night_bat_smoothing_stops_at_soc_floor() -> None:
     """bat_soc exactly at soc_floor_pct (80%) → smoothing disabled, returns 0."""
     result = compute_night_smoothing(
         grid_transient_w=400.0,
-        bat_soc_pct=80.0,   # at floor — not above it
+        bat_soc_pct=80.0,  # at floor — not above it
         cap_w=500,
         soc_floor_pct=80.0,
         enabled=True,
@@ -54,7 +57,7 @@ def test_night_bat_smoothing_stops_below_soc_floor() -> None:
     """bat_soc below soc_floor_pct → smoothing disabled, returns 0."""
     result = compute_night_smoothing(
         grid_transient_w=400.0,
-        bat_soc_pct=75.0,   # below floor
+        bat_soc_pct=75.0,  # below floor
         cap_w=500,
         soc_floor_pct=80.0,
         enabled=True,
@@ -63,6 +66,7 @@ def test_night_bat_smoothing_stops_below_soc_floor() -> None:
 
 
 # ── Test 4: transient passes (zero) → bat back to idle ──────────────────────
+
 
 def test_night_bat_smoothing_recovers_after_transient() -> None:
     """grid_transient_w=0 (transient resolved) → bat returns to idle (0 W)."""
@@ -78,11 +82,12 @@ def test_night_bat_smoothing_recovers_after_transient() -> None:
 
 # ── Test 5: smoothing disabled via config ────────────────────────────────────
 
+
 def test_night_bat_no_smoothing_when_config_disabled() -> None:
     """enabled=False → bat idle regardless of transient or SoC."""
     result = compute_night_smoothing(
         grid_transient_w=600.0,  # large transient
-        bat_soc_pct=99.0,        # bat nearly full — but config says no
+        bat_soc_pct=99.0,  # bat nearly full — but config says no
         cap_w=500,
         soc_floor_pct=80.0,
         enabled=False,

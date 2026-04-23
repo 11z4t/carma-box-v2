@@ -27,6 +27,7 @@ from core.ev_dispatch import (
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
+
 def _cfg(**kwargs: object) -> EVDispatchV2Config:
     """Build test config with feature enabled and all permissive defaults."""
     defaults: dict[str, object] = {
@@ -49,13 +50,13 @@ def _inputs(**kwargs: object) -> EVDispatchInputs:
     """Build test inputs where all acceptance criteria pass by default."""
     defaults: dict[str, object] = {
         "ev_status": "connected",
-        "bat_soc": 97.0,           # > 95% threshold (R12 OK)
-        "surplus_w": 3000.0,        # enough surplus
-        "grid_w": 50.0,             # within ±100W (R1 OK)
+        "bat_soc": 97.0,  # > 95% threshold (R12 OK)
+        "surplus_w": 3000.0,  # enough surplus
+        "grid_w": 50.0,  # within ±100W (R1 OK)
         "predicted_refill_kwh": 10.0,  # > deficit*1.2 (R10 OK)
         "predicted_bat_deficit_kwh": 5.0,  # 5 x 1.2 = 6.0, refill=10 → OK
-        "planned_window_min": 60.0,    # > 15 min (R11 OK)
-        "bat_soc_at_sunset": 100.0,    # (R9 OK)
+        "planned_window_min": 60.0,  # > 15 min (R11 OK)
+        "bat_soc_at_sunset": 100.0,  # (R9 OK)
         "pv_power_w": 3000.0,
         "prev_pv_power_w": 3000.0,
         "now_monotonic": 1000.0,
@@ -78,6 +79,7 @@ def _charging_state(amps: int = 8) -> EVDispatchState:
 
 # ── Test 1: feature flag OFF → always NOOP + IDLE ───────────────────────────
 
+
 def test_idle_when_feature_flag_off() -> None:
     """When enabled=False, evaluate_ev_action always returns NOOP in IDLE."""
     cfg = _cfg(enabled=False)
@@ -91,6 +93,7 @@ def test_idle_when_feature_flag_off() -> None:
 
 # ── Test 2: IDLE + disconnected → stays IDLE ────────────────────────────────
 
+
 def test_idle_when_disconnected() -> None:
     """Disconnected EV stays IDLE, no writes."""
     result = evaluate_ev_action(_idle_state(), _inputs(ev_status="disconnected"), _cfg())
@@ -99,6 +102,7 @@ def test_idle_when_disconnected() -> None:
 
 
 # ── Test 3: IDLE + connected → transition to CONNECTED ──────────────────────
+
 
 def test_connected_when_plugged_in() -> None:
     """IDLE state transitions to CONNECTED when plug detected."""
@@ -109,6 +113,7 @@ def test_connected_when_plugged_in() -> None:
 
 # ── Test 4: All active statuses accepted (R2) ────────────────────────────────
 
+
 @pytest.mark.parametrize("status", ["connected", "awaiting_start", "charging", "ready_to_charge"])
 def test_r2_all_active_statuses_reach_connected(status: str) -> None:
     """All active EV statuses transition from IDLE → CONNECTED."""
@@ -117,6 +122,7 @@ def test_r2_all_active_statuses_reach_connected(status: str) -> None:
 
 
 # ── Test 5: R12 — bat not ready blocks start ─────────────────────────────────
+
 
 def test_r12_bat_not_ready_blocks_start() -> None:
     """bat_soc below threshold keeps state in CONNECTED, reason contains R12."""
@@ -131,6 +137,7 @@ def test_r12_bat_not_ready_blocks_start() -> None:
 
 
 # ── Test 6: R10 — refill insufficient blocks start ───────────────────────────
+
 
 def test_r10_refill_insufficient_blocks_start() -> None:
     """Insufficient refill forecast keeps state CONNECTED, reason contains R10."""
@@ -148,6 +155,7 @@ def test_r10_refill_insufficient_blocks_start() -> None:
 
 # ── Test 7: R11 — window too short blocks start ──────────────────────────────
 
+
 def test_r11_window_too_short_blocks_start() -> None:
     """Planned window < min_session blocks start, reason contains R11."""
     result = evaluate_ev_action(
@@ -160,6 +168,7 @@ def test_r11_window_too_short_blocks_start() -> None:
 
 
 # ── Test 8: R9 — bat not full at sunset blocks start ─────────────────────────
+
 
 def test_r9_bat_not_full_at_sunset_blocks_start() -> None:
     """bat_soc_at_sunset < 100 blocks start, reason contains R9."""
@@ -174,6 +183,7 @@ def test_r9_bat_not_full_at_sunset_blocks_start() -> None:
 
 # ── Test 9: all criteria met → EV_START ──────────────────────────────────────
 
+
 def test_all_criteria_met_starts_ev() -> None:
     """When all R9+R10+R11+R12 pass from CONNECTED, EV_START is returned."""
     result = evaluate_ev_action(_connected_state(), _inputs(), _cfg())
@@ -184,6 +194,7 @@ def test_all_criteria_met_starts_ev() -> None:
 
 # ── Test 10: CHARGING continues when criteria met ────────────────────────────
 
+
 def test_charging_continues_when_criteria_met() -> None:
     """In CHARGING phase, when criteria still met, NOOP keeps charging."""
     result = evaluate_ev_action(_charging_state(amps=8), _inputs(), _cfg())
@@ -192,6 +203,7 @@ def test_charging_continues_when_criteria_met() -> None:
 
 
 # ── Test 11: CHARGING stops when criteria lost (R12) ─────────────────────────
+
 
 def test_charging_stops_when_r12_lost() -> None:
     """In CHARGING, if bat drops below threshold, transition to COMPLETING."""
@@ -205,6 +217,7 @@ def test_charging_stops_when_r12_lost() -> None:
 
 
 # ── Test 12: R1 incident during CHARGING ─────────────────────────────────────
+
 
 def test_r1_incident_during_charging_triggers_alert() -> None:
     """Grid > 100W during CHARGING → EV_INCIDENT_ALERT + ERROR phase."""
@@ -222,6 +235,7 @@ def test_r1_incident_during_charging_triggers_alert() -> None:
 
 # ── Test 13: R1 does NOT trigger when idle ───────────────────────────────────
 
+
 def test_r1_no_incident_when_idle() -> None:
     """Grid > 100W in IDLE phase does NOT trigger R1 incident."""
     result = evaluate_ev_action(_idle_state(), _inputs(grid_w=200.0), _cfg())
@@ -230,6 +244,7 @@ def test_r1_no_incident_when_idle() -> None:
 
 
 # ── Test 14: Disconnect during CHARGING → ERROR ──────────────────────────────
+
 
 def test_disconnect_during_charging() -> None:
     """EV disconnect during CHARGING → EV_STOP + ERROR phase."""
@@ -244,6 +259,7 @@ def test_disconnect_during_charging() -> None:
 
 # ── Test 15: ERROR → IDLE ────────────────────────────────────────────────────
 
+
 def test_error_transitions_to_idle() -> None:
     """ERROR phase always transitions to IDLE next cycle."""
     state = EVDispatchState(phase=EVPhase.ERROR)
@@ -254,6 +270,7 @@ def test_error_transitions_to_idle() -> None:
 
 # ── Test 16: COMPLETING → IDLE ───────────────────────────────────────────────
 
+
 def test_completing_transitions_to_idle() -> None:
     """COMPLETING phase transitions to IDLE next cycle."""
     state = EVDispatchState(phase=EVPhase.COMPLETING)
@@ -263,6 +280,7 @@ def test_completing_transitions_to_idle() -> None:
 
 
 # ── Test 17: Shadow mode — evaluate but mark as shadow ───────────────────────
+
 
 def test_shadow_mode_marks_result_as_shadow() -> None:
     """Shadow mode evaluates and returns action but marks is_shadow=True."""
@@ -284,6 +302,7 @@ def test_shadow_mode_noop_not_flagged() -> None:
 
 # ── Test 18: Battery smoothing computed for PV transient ─────────────────────
 
+
 def test_bat_smoothing_triggered_by_pv_dip() -> None:
     """PV dip > threshold during CHARGING triggers bat_smoothing_w > 0."""
     result = evaluate_ev_action(
@@ -297,6 +316,7 @@ def test_bat_smoothing_triggered_by_pv_dip() -> None:
 
 # ── Test 19: No bat smoothing when PV stable ─────────────────────────────────
 
+
 def test_bat_smoothing_not_triggered_when_stable() -> None:
     """Stable PV during CHARGING → bat_smoothing_w = 0."""
     result = evaluate_ev_action(
@@ -308,6 +328,7 @@ def test_bat_smoothing_not_triggered_when_stable() -> None:
 
 
 # ── Test 20: EV_ADJUST when surplus changes ───────────────────────────────────
+
 
 def test_ev_adjust_when_surplus_increases() -> None:
     """Surplus increase during CHARGING → EV_ADJUST to new optimal amps."""
@@ -324,6 +345,7 @@ def test_ev_adjust_when_surplus_increases() -> None:
 
 # ── Test 21: NOOP when amps already optimal ───────────────────────────────────
 
+
 def test_noop_when_amps_already_optimal() -> None:
     """No adjust if current amps == optimal for current surplus."""
     # surplus=1400W: 1400/(230*3)=2.03A → clamped to 6A
@@ -337,6 +359,7 @@ def test_noop_when_amps_already_optimal() -> None:
 
 
 # ── Test 22: Rejection reason always contains R-number ───────────────────────
+
 
 @pytest.mark.parametrize(
     ("test_inputs", "expected_r"),
@@ -358,6 +381,7 @@ def test_rejection_reason_contains_r_number(test_inputs: dict, expected_r: str) 
 
 
 # ── Unit tests for helpers ───────────────────────────────────────────────────
+
 
 def test_check_r2_plug_accepts_active_statuses() -> None:
     for status in ("connected", "awaiting_start", "charging", "ready_to_charge"):
@@ -438,6 +462,7 @@ def test_connected_plug_removed_returns_to_idle() -> None:
 
 # ── R-natt tests (PLAT-1790 Fas 2.5) ────────────────────────────────────────
 
+
 def _night_cfg(**kwargs: object) -> EVDispatchV2Config:
     """Build config with night_mode enabled and permissive day-criteria defaults.
 
@@ -445,6 +470,7 @@ def _night_cfg(**kwargs: object) -> EVDispatchV2Config:
     only R-natt can trigger charging in night tests.
     """
     from config.schema import NightModeConfig, NightModeBatSmoothingConfig
+
     defaults: dict[str, object] = {
         "enabled": True,
         "shadow_mode": False,
@@ -478,18 +504,18 @@ def _night_inputs(**kwargs: object) -> EVDispatchInputs:
     """
     defaults: dict[str, object] = {
         "ev_status": "connected",
-        "bat_soc": 97.0,           # R12 OK
-        "surplus_w": 0.0,          # no surplus (day path fails R10/R11)
-        "grid_w": 50.0,            # within deadband (irrelevant at night)
-        "predicted_refill_kwh": 0.0,     # R10 fails (intentional)
+        "bat_soc": 97.0,  # R12 OK
+        "surplus_w": 0.0,  # no surplus (day path fails R10/R11)
+        "grid_w": 50.0,  # within deadband (irrelevant at night)
+        "predicted_refill_kwh": 0.0,  # R10 fails (intentional)
         "predicted_bat_deficit_kwh": 5.0,
-        "planned_window_min": 0.0,       # R11 fails (intentional)
-        "bat_soc_at_sunset": 50.0,       # R9 fails (intentional)
+        "planned_window_min": 0.0,  # R11 fails (intentional)
+        "bat_soc_at_sunset": 50.0,  # R9 fails (intentional)
         "pv_power_w": 0.0,
         "prev_pv_power_w": 0.0,
         "now_monotonic": 1000.0,
-        "hour_of_day": 23,         # inside night window (22-06)
-        "ev_soc": 40.0,            # EV has charging need
+        "hour_of_day": 23,  # inside night window (22-06)
+        "ev_soc": 40.0,  # EV has charging need
         "ev_target_soc": 80.0,
         "grid_transient_w": 0.0,
     }
@@ -504,6 +530,7 @@ def _night_charging_state(amps: int = 10) -> EVDispatchState:
 
 # ── R-natt Test 1 ────────────────────────────────────────────────────────────
 
+
 def test_night_window_charges_when_plugged_low_soc_no_surplus() -> None:
     """23:00, SoC 40%, no PV surplus → R-natt triggers EV_START."""
     cfg = _night_cfg()
@@ -512,9 +539,9 @@ def test_night_window_charges_when_plugged_low_soc_no_surplus() -> None:
 
     result = evaluate_ev_action(state, inputs, cfg)
 
-    assert result.action == EVActionType.EV_START, (
-        f"expected EV_START, got {result.action} ({result.reason})"
-    )
+    assert (
+        result.action == EVActionType.EV_START
+    ), f"expected EV_START, got {result.action} ({result.reason})"
     assert result.new_state.phase == EVPhase.CHARGING
     assert result.new_state.night_charging is True
     assert result.amps == cfg.ev_max_amps  # night charging uses max amps
@@ -522,6 +549,7 @@ def test_night_window_charges_when_plugged_low_soc_no_surplus() -> None:
 
 
 # ── R-natt Test 2 ────────────────────────────────────────────────────────────
+
 
 def test_night_window_stops_at_06_00() -> None:
     """In night charging at 05:55, hour advances to 06 → EV_STOP with 'outside_window'."""
@@ -540,6 +568,7 @@ def test_night_window_stops_at_06_00() -> None:
 
 # ── R-natt Test 3 ────────────────────────────────────────────────────────────
 
+
 def test_night_window_respects_ev_target_soc() -> None:
     """23:00, ev_soc=90% already >= target=85% → R-natt does NOT start charging."""
     cfg = _night_cfg()
@@ -555,6 +584,7 @@ def test_night_window_respects_ev_target_soc() -> None:
 
 
 # ── R-natt Test 4 ────────────────────────────────────────────────────────────
+
 
 def test_day_no_surplus_does_not_charge() -> None:
     """14:00, no PV surplus → day path blocked, outside night window → NO CHARGE."""
@@ -580,6 +610,7 @@ def test_day_no_surplus_does_not_charge() -> None:
 
 # ── R-natt Test 5 ────────────────────────────────────────────────────────────
 
+
 def test_night_window_plug_out_stops() -> None:
     """In night charging at 23:30, ev_status → disconnected → EV_STOP immediately."""
     cfg = _night_cfg()
@@ -600,9 +631,11 @@ def test_night_window_plug_out_stops() -> None:
 
 # ── R-natt Test 6 ────────────────────────────────────────────────────────────
 
+
 def test_night_window_config_disabled() -> None:
     """night_mode.enabled=False → even at 23:00 with low SoC, NO CHARGE."""
     from config.schema import NightModeConfig, NightModeBatSmoothingConfig
+
     cfg = _night_cfg(
         night_mode=NightModeConfig(
             enabled=False,
