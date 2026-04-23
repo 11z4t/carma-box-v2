@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from adapters.ha_api import HAApiClient
 from core.day_plan import HourlyForecast
+from core.forecast_integrator import HourlyForecastEntry, parse_detailed_hourly
 
 logger = logging.getLogger(__name__)
 
@@ -174,3 +175,73 @@ class SolcastAdapter:
             return 0.0
         spread = p90 - p10
         return max(0.0, (1.0 - spread / estimate)) * _PCT_FACTOR
+
+    # ── PLAT-1790: EV dispatch v2 forecast helpers ──────────────────────────
+
+    async def get_hourly_p10_forecast(
+        self,
+        start: datetime,
+        end: datetime,
+    ) -> list[HourlyForecastEntry]:
+        """Return P10 hourly forecast entries covering the [start, end) window.
+
+        Reads detailedHourly from today and tomorrow sensors.
+        Falls back to empty list if attributes unavailable.
+
+        Args:
+            start: Window start (timezone-aware).
+            end: Window end (timezone-aware).
+
+        Returns:
+            List of HourlyForecastEntry within [start, end) by period_start.
+            Sorted by period_start ascending.
+        """
+        raw: list[dict[str, object]] = []
+        for entity_id in (self._entity_today, self._entity_tomorrow):
+            data = await self._api.get_state_with_attributes(entity_id)
+            if data is None:
+                continue
+            detailed = data.get("attributes", {}).get("detailedHourly", [])
+            if isinstance(detailed, list):
+                raw.extend(detailed)
+
+        entries = parse_detailed_hourly(raw)
+
+        # Filter to requested window and sort
+        start_utc = start.astimezone(UTC)
+        end_utc = end.astimezone(UTC)
+
+        filtered = [
+            e for e in entries
+            if start_utc <= e.period_start.astimezone(UTC) < end_utc
+        ]
+        filtered.sort(key=lambda e: e.period_start)
+        return filtered
+
+    async def get_power_now_kw(self) -> float:
+        """Current PV production in kW (P10 estimate for current hour).
+
+        Returns the P10 kW value for the current hour from detailedHourly.
+        Falls back to 0.0 if unavailable.
+        """
+        data = await self._api.get_state_with_attributes(self._entity_today)
+        if data is None:
+            return 0.0
+        detailed = data.get("attributes", {}).get("detailedHourly", [])
+        if not isinstance(detailed, list) or not detailed:
+            return 0.0
+        now_hour = datetime.now().hour
+        for entry in detailed:
+            if not isinstance(entry, dict):
+                continue
+            period_str = entry.get("period_start", "")
+            if not isinstance(period_str, str):
+                continue
+            try:
+                period_hour = datetime.fromisoformat(period_str).hour
+            except (ValueError, TypeError):
+                continue
+            if period_hour == now_hour:
+                kw = entry.get("pv_estimate10", entry.get("pv_estimate", 0.0))
+                return float(kw) if kw else 0.0
+        return 0.0
