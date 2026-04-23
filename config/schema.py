@@ -1090,6 +1090,105 @@ class BudgetSection(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# PLAT-1790: EV Dispatch v2 — consumer wear limits + feature config
+# ---------------------------------------------------------------------------
+
+class WearLimits(BaseModel):
+    """Per-consumer wear protection limits.
+
+    Prevents excessive on/off cycling that degrades hardware.
+    """
+
+    min_on_time_s: int = Field(default=0, ge=0)
+    """Minimum seconds a consumer must stay ON before it can be turned OFF."""
+
+    min_off_time_s: int = Field(default=0, ge=0)
+    """Minimum seconds a consumer must stay OFF before it can be turned ON."""
+
+    daily_max_cycles: int = Field(default=999, ge=1)
+    """Maximum on/off cycles per day (resets at midnight)."""
+
+
+class ConsumerPriorityEntry(BaseModel):
+    """Priority entry for one consumer in the cascade.
+
+    Lower priority number = higher priority (takes surplus first).
+    """
+
+    id: str
+    """Consumer identifier, matches SurplusConsumer.id."""
+
+    priority: int = Field(ge=1)
+    """Priority rank: 1=highest. bat=1, ev=2, vp_kontor=3, ..."""
+
+    wear_limits: WearLimits = Field(default_factory=WearLimits)
+    """Wear-guard parameters for this consumer."""
+
+
+class EVDispatchV2Config(BaseModel):
+    """Configuration for ev_dispatch_v2 feature (PLAT-1790).
+
+    Default: all flags OFF (safe — no behaviour change until explicitly enabled).
+    Load from site.yaml:ev_dispatch_v2.
+    """
+
+    enabled: bool = False
+    """Master enable flag. Default OFF — must be explicitly set to True."""
+
+    shadow_mode: bool = False
+    """Shadow mode: evaluate but do NOT write to HA entities.
+
+    Use during Fas 4 (48h shadow) to verify logic without side effects.
+    Only meaningful when enabled=True.
+    """
+
+    bat_ready_threshold_pct: float = Field(default=95.0, ge=50.0, le=100.0)
+    """Battery SoC must be >= this before EV charging is allowed (R12)."""
+
+    min_session_min: float = Field(default=15.0, gt=0)
+    """Minimum planned EV session length in minutes (R11)."""
+
+    margin_factor: float = Field(default=1.2, ge=1.0)
+    """Safety margin multiplier on P10 forecast (R10)."""
+
+    ev_min_amps: int = Field(default=6, ge=6)
+    """Minimum EV charging current in amps."""
+
+    ev_max_amps: int = Field(default=10, ge=6)
+    """Maximum EV charging current in amps (site-specific safety limit)."""
+
+    ev_phase_count: int = Field(default=3)
+    """Number of phases for EV charging (1 or 3)."""
+
+    charger_status_entity: str = "sensor.easee_home_12840_status"
+    """HA entity ID for EV charger status sensor."""
+
+    charger_prefix: str = "easee_home_12840"
+    """Prefix for EV charger entity IDs."""
+
+    bat_smoothing_threshold_w: float = Field(default=300.0, ge=0)
+    """Minimum PV dip (W) to trigger battery smoothing during EV charging (R3)."""
+
+    grid_incident_threshold_w: float = Field(default=100.0, ge=0)
+    """Grid export/import above this triggers a R1 incident log."""
+
+    consumer_priority: list[ConsumerPriorityEntry] = Field(default_factory=list)
+    """Priority chain for consumer cascade."""
+
+    @model_validator(mode="after")
+    def _validate_amps_and_phases(self) -> EVDispatchV2Config:
+        if self.ev_max_amps < self.ev_min_amps:
+            raise ValueError(
+                f"ev_max_amps ({self.ev_max_amps}) < ev_min_amps ({self.ev_min_amps})"
+            )
+        if self.ev_phase_count not in (1, 3):
+            raise ValueError(
+                f"ev_phase_count must be 1 or 3, got {self.ev_phase_count}"
+            )
+        return self
+
+
+# ---------------------------------------------------------------------------
 # Root Config
 # ---------------------------------------------------------------------------
 
@@ -1114,6 +1213,8 @@ class CarmaConfig(BaseModel):
     # PLAT-1674: Night EV controller + bat support controller (optional)
     night_ev: NightEVControllerConfig = Field(default_factory=NightEVControllerConfig)
     bat_support: BatSupportControllerConfig = Field(default_factory=BatSupportControllerConfig)
+    # PLAT-1790: EV dispatch v2 (feature flag, default OFF)
+    ev_dispatch_v2: EVDispatchV2Config = Field(default_factory=lambda: EVDispatchV2Config())
     control: ControlConfig = Field(default_factory=ControlConfig)
     guards: GuardsConfig = Field(default_factory=GuardsConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
