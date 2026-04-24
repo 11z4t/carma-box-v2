@@ -57,6 +57,9 @@ _PCT_FACTOR: float = 100.0
 _EV_W_PER_AMP: float = 3.0 * 230.0  # 690W per amp
 
 _RULE_ID: str = "BUDGET"
+# PLAT-NEW Story 1: oscillation monitor window (Rek B). Number of
+# consecutive applied bat-net values tracked for sign_flip_rate.
+_SIGN_FLIP_WINDOW: int = 20
 
 
 # ---------------------------------------------------------------------------
@@ -117,10 +120,14 @@ class BudgetConfig:
     # PLAT-1696 step 1 grid-smoothing window. Median-of-N rejects
     # single-cycle spurious readings from the HA grid sensor (observed
     # live: alternating 12.9 kW ↔ 2.5 kW every 15 s). Median (not mean)
-    # so one outlier in N is fully filtered. 3 is a good default — large
-    # enough to reject isolated spikes, small enough to react to real
-    # load shifts within ~2 cycles.
-    grid_smoothing_window: int = 3
+    # so one outlier in N is fully filtered. 2 = PLAT-NEW Story 1 default
+    # (halverat lag 30-60 s → 15-30 s at 15 s cycle).
+    grid_smoothing_window: int = 2
+    # PLAT-NEW Story 1: P-regulator gain for zero-grid controller.
+    # 0.75 closes 75 % of the gap per cycle (prev 0.7 = 70 %). Combined
+    # with reduced smoothing this is still conservative — 0.8 comes later.
+    # Override via site.yaml: budget.smoothing.correction_gain: 0.7 for rollback.
+    correction_gain: float = 0.75
     # PLAT-1737: tiered grid-sensor fine-tuner. Applied AFTER zero_grid so
     # zero_grid owns mode/direction (stable) while the tuner nudges the
     # allocated power to kill grid-drift within-cycle. Default disabled —
@@ -194,6 +201,12 @@ class BudgetState:
     # Updated EVERY cycle (regardless of grid_tuner.enabled) so the data
     # is ready the moment the tuner is enabled without a warm-up wait.
     grid_rolling: GridRollingState = field(default_factory=GridRollingState)
+    # PLAT-NEW Story 1: oscillation monitor (Rek B).
+    # Tracks the last _SIGN_FLIP_WINDOW applied bat-net values (W) from
+    # zero_grid. sign_flip_rate = fraction of consecutive pairs where the
+    # direction reversed (charge↔discharge). High rate → oscillation risk.
+    zg_applied_history: list[int] = field(default_factory=list)
+    sign_flip_rate: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -406,13 +419,36 @@ def allocate(
         # Do NOT remove the keyword argument: that would silently revert
         # to 5.0 and break the user invariant "SoC diff > 1 pp = P1"
         # (BudgetConfig.bat_aggressive_spread_pct defaults to 1.0).
+        # PLAT-NEW Story 1: correction_gain is config-driven (site.yaml
+        # budget.smoothing.correction_gain). Default 0.75; rollback to 0.7
+        # via site.yaml if oscillation observed on a specific site.
         zero_grid_plan = plan_zero_grid(
             grid_power_w=grid_smoothed_w,
             bats=zg_bats,
             limits_by_id=zg_limits,
             spread_aggressive_pct=cfg.bat_aggressive_spread_pct,
             need_based=cfg.bat_need_based_enabled,
+            gain=cfg.correction_gain,
         )
+
+        # PLAT-NEW Story 1: oscillation monitor (Rek B).
+        # Track applied bat-net direction; compute sign_flip_rate per window.
+        applied_w = zero_grid_plan.total_target_net_w
+        state.zg_applied_history.append(applied_w)
+        if len(state.zg_applied_history) > _SIGN_FLIP_WINDOW:
+            state.zg_applied_history.pop(0)
+        history = state.zg_applied_history
+        if len(history) >= 2:
+            flips = sum(
+                1
+                for i in range(1, len(history))
+                if (history[i] > 0) != (history[i - 1] > 0)
+                and history[i] != 0
+                and history[i - 1] != 0
+            )
+            state.sign_flip_rate = flips / (len(history) - 1)
+        else:
+            state.sign_flip_rate = 0.0
         bat_alloc = dict(zero_grid_plan.limits_w)
         bat_discharge = sum(
             lim

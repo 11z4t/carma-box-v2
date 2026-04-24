@@ -45,14 +45,28 @@ class TestBudgetGridTunerSection:
     """Schema model mirroring GridTunerConfig — from site.yaml."""
 
     def test_defaults_match_grid_tuner_config(self) -> None:
-        """Schema defaults must exactly match GridTunerConfig defaults."""
+        """Non-enabled schema defaults must exactly match GridTunerConfig defaults.
+
+        Note: ``enabled`` intentionally diverges (PLAT-NEW Story 1).
+        GridTunerConfig dataclass default = False (safe programmatic default).
+        BudgetGridTunerSection schema default = True  (site.yaml omission →
+        activate tuner by default so new installs benefit from PLAT-1737).
+        """
         schema = BudgetGridTunerSection()
         ref = GridTunerConfig()
-        assert schema.enabled == ref.enabled
+        # enabled diverges by design — tested separately below
         assert schema.tiers_w == list(ref.tiers_w)
         assert schema.corrections_w == list(ref.corrections_w)
         assert schema.rolling_window_s == ref.rolling_window_s
         assert schema.mode_change_stability_w == ref.mode_change_stability_w
+
+    def test_grid_tuner_schema_default_enabled_true(self) -> None:
+        """PLAT-NEW Story 1: BudgetGridTunerSection.enabled defaults True.
+
+        Sites that omit budget.grid_tuner: from site.yaml get PLAT-1737 tuner
+        active by default. Rollback: set budget.grid_tuner.enabled: false.
+        """
+        assert BudgetGridTunerSection().enabled is True
 
     def test_enabled_can_be_true(self) -> None:
         """enabled=true should be accepted."""
@@ -161,12 +175,47 @@ class TestBudgetSmoothingSection:
     """Grid smoothing sub-section."""
 
     def test_defaults_match_budget_config(self) -> None:
-        """Schema default must match BudgetConfig.grid_smoothing_window."""
+        """Schema defaults must match BudgetConfig defaults."""
         from config.schema import BudgetSmoothingSection
 
         s = BudgetSmoothingSection()
         ref = BudgetConfig()
         assert s.grid_smoothing_window == ref.grid_smoothing_window
+        assert s.correction_gain == ref.correction_gain
+
+    def test_smoothing_window_default_2(self) -> None:
+        """PLAT-NEW Story 1: grid_smoothing_window default 3→2 (halverat lag)."""
+        from config.schema import BudgetSmoothingSection
+
+        assert BudgetSmoothingSection().grid_smoothing_window == 2
+
+    def test_correction_gain_default_0_75(self) -> None:
+        """PLAT-NEW Story 1: correction_gain default is 0.75."""
+        from config.schema import BudgetSmoothingSection
+
+        assert BudgetSmoothingSection().correction_gain == pytest.approx(0.75)
+
+    def test_correction_gain_range_min(self) -> None:
+        """correction_gain must be >= 0.1."""
+        from config.schema import BudgetSmoothingSection
+
+        with pytest.raises(ValidationError):
+            BudgetSmoothingSection(correction_gain=0.09)
+
+    def test_correction_gain_range_max(self) -> None:
+        """correction_gain must be <= 1.5."""
+        from config.schema import BudgetSmoothingSection
+
+        with pytest.raises(ValidationError):
+            BudgetSmoothingSection(correction_gain=1.51)
+
+    def test_correction_gain_forwarded_to_budget_config(self) -> None:
+        """correction_gain from smoothing section is forwarded via to_budget_config()."""
+        section = BudgetSection(
+            smoothing={"correction_gain": 0.65},  # type: ignore[arg-type]
+        )
+        cfg = section.to_budget_config()
+        assert cfg.correction_gain == pytest.approx(0.65)
 
     def test_window_min(self) -> None:
         """grid_smoothing_window must be >= 1."""
@@ -422,14 +471,24 @@ class TestCarmaConfigBudgetField:
     def test_budget_defaults_without_yaml_section(
         self, minimal_config_dict: dict[str, Any], tmp_path: Path
     ) -> None:
-        """Missing budget: section in yaml must default to BudgetConfig defaults."""
+        """Missing budget: section in yaml → schema defaults apply.
+
+        PLAT-NEW Story 1: grid_tuner.enabled schema-default is True (tuner ON
+        when omitted), which intentionally differs from GridTunerConfig's own
+        dataclass default (False — safe programmatic default). Non-enabled
+        fields still match BudgetConfig defaults.
+        """
         assert "budget" not in minimal_config_dict
         config_file = tmp_path / "no_budget.yaml"
         config_file.write_text(yaml.dump(minimal_config_dict))
         config = load_config(str(config_file))
         ref = BudgetConfig()
         assert config.budget.ev_min_amps == ref.ev_min_amps
-        assert config.budget.grid_tuner.enabled == ref.grid_tuner.enabled
+        # enabled intentionally True in schema (PLAT-NEW Story 1) — rollback via yaml
+        assert config.budget.grid_tuner.enabled is True
+        # Smoothing and gain defaults align with BudgetConfig
+        assert config.budget.smoothing.grid_smoothing_window == ref.grid_smoothing_window
+        assert config.budget.smoothing.correction_gain == pytest.approx(ref.correction_gain)
 
     def test_budget_section_parses_from_yaml(
         self, minimal_config_dict: dict[str, Any], tmp_path: Path

@@ -579,7 +579,7 @@ def test_plan_contains_reason_for_logging() -> None:
 _MOMENTUM_SOC_START: float = 50.0
 _MOMENTUM_SOC_RISING: float = 52.0
 _MOMENTUM_SOC_RISING_2: float = 54.0
-_MOMENTUM_BASE_GAIN: float = 0.7
+_MOMENTUM_BASE_GAIN: float = 0.7  # explicit gain for momentum tests — independent of module default
 _MOMENTUM_SINGLE_STEP: float = 1.0
 _MOMENTUM_FALLING: float = 48.0
 _MOMENTUM_FALLING_2: float = 46.0
@@ -1455,3 +1455,38 @@ def test_need_based_emergency_recovery_unaffected() -> None:
     assert plan.limits_w["low_emergency"] == _DEFAULT_LIMITS.max_charge_w
     # Healthy bat still handles the grid target normally
     assert "healthy" not in plan.emergency_recovery
+
+
+# PLAT-NEW Story 1: _CORRECTION_GAIN default 0.75
+# -------------------------------------------------------------------
+
+
+def test_correction_gain_constant_is_0_75() -> None:
+    """PLAT-NEW Story 1: module-level _CORRECTION_GAIN is 0.75 (was 0.7).
+
+    This is the default used when plan_zero_grid() is called without
+    an explicit gain= keyword. The config-driven path (BudgetConfig.correction_gain)
+    always supplies gain= explicitly from allocate(), so this constant
+    is a safe fallback for direct callers and tests.
+    """
+    from core.zero_grid import _CORRECTION_GAIN
+
+    assert _CORRECTION_GAIN == pytest.approx(0.75)
+
+
+def test_plan_zero_grid_closes_75_pct_of_gap_by_default() -> None:
+    """plan_zero_grid() with default gain closes ~75% of the grid gap each cycle.
+
+    Example: grid import = 1000 W, bat currently at 0 W.
+    Expected: bat target = 0 + 1000 * 0.75 = 750 W (discharge).
+    """
+    bat = BatSnapshot(battery_id="b", power_w=0.0, soc_pct=50.0)
+    lim = BatLimits(max_charge_w=5000, max_discharge_w=5000, soc_min_pct=15.0, soc_max_pct=95.0)
+    plan = plan_zero_grid(
+        grid_power_w=1000.0,
+        bats=[bat],
+        limits_by_id={"b": lim},
+    )
+    # 75% of 1000 W gap → 750 W discharge
+    assert plan.total_target_net_w == pytest.approx(750, abs=1)
+    assert plan.modes["b"] == "discharge_pv"

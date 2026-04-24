@@ -35,12 +35,14 @@ from dataclasses import dataclass
 _TARGET_GRID_W: float = 0.0
 _DEAD_BAND_W: float = 50.0  # below this deviation, hold (avoid chatter)
 
-# PLAT-1696 step 1 — underdamp the correction so one cycle closes ~70 %
+# PLAT-1696 step 1 — underdamp the correction so one cycle closes ~75 %
 # of the gap instead of 100 %. At cycle=15 s + GoodWe internal ramp ~
-# 10 s, full-gain 1.0 overshot live (grid ±1.5 kW oscillation). P=0.7
-# gives a geometric series: after 3 cycles (45 s) we're within 3 % of
-# the set-point without ringing.
-_CORRECTION_GAIN: float = 0.7
+# 10 s, full-gain 1.0 overshot live (grid ±1.5 kW oscillation). P=0.75
+# (PLAT-NEW Story 1): combined with reduced smoothing (window 2) this is
+# still conservative — 0.8 will be evaluated iteratively if shadow OK.
+# Rollback: site.yaml budget.smoothing.correction_gain: 0.7 overrides
+# BudgetConfig.correction_gain, forwarded as gain= to plan_zero_grid().
+_CORRECTION_GAIN: float = 0.75
 
 # PLAT-1758 — SoC momentum dampening.
 # When SoC trends consistently (same sign delta every cycle), the current

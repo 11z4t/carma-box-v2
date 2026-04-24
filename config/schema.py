@@ -878,8 +878,10 @@ class BudgetGridTunerSection(BaseModel):
     """
 
     enabled: bool = Field(
-        default=False,
-        description="Enable tiered grid-sensor fine-tuner (PLAT-1737).",
+        default=True,
+        description=(
+            "Enable tiered grid-sensor fine-tuner (PLAT-1737). " "Default ON (PLAT-NEW Story 1)."
+        ),
     )
     tiers_w: list[float] = Field(
         default=[50.0, 75.0, 100.0],
@@ -955,12 +957,22 @@ class BudgetSmoothingSection(BaseModel):
     """Grid-sensor median smoothing — rejects spurious single-cycle spikes."""
 
     grid_smoothing_window: int = Field(
-        default=3,
+        default=2,
         ge=1,
         le=30,
         description=(
             "Median window size (cycles). Rejects isolated sensor spikes. "
-            "1 = no smoothing; 3 = good default."
+            "1 = no smoothing; 2 = default (PLAT-NEW Story 1 — halverat lag)."
+        ),
+    )
+    correction_gain: float = Field(
+        default=0.75,
+        ge=0.1,
+        le=1.5,
+        description=(
+            "Zero-grid proportional gain (P-regulator). "
+            "0.75 = 75 %% of the gap closed per cycle (PLAT-NEW Story 1). "
+            "Rollback: site.yaml override budget.smoothing.correction_gain: 0.7"
         ),
     )
 
@@ -1156,6 +1168,7 @@ class BudgetSection(BaseModel):
             cascade_sustained_cycles=self.cascade.sustained_cycles,
             bat_at_max_headroom_w=self.cascade.bat_at_max_headroom_w,
             grid_smoothing_window=self.smoothing.grid_smoothing_window,
+            correction_gain=self.smoothing.correction_gain,
             grid_tuner=self.grid_tuner.to_grid_tuner_config(),
             bat_need_based_enabled=self.bat_need_based_enabled,
         )
