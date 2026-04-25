@@ -24,6 +24,7 @@ from core.zero_grid import (
     ZeroGridState,
     _MOMENTUM_DAMPING_FACTOR,
     _MOMENTUM_WINDOW,
+    _distribute,
     _momentum_gain,
     plan_zero_grid,
     update_zero_grid_state,
@@ -800,3 +801,657 @@ def test_no_new_oscillation_with_momentum_state() -> None:
     # Oscillating history → same as no state (full gain)
     assert plan_oscillating.limits_w["k"] == plan_baseline.limits_w["k"]
     assert plan_oscillating.modes["k"] == plan_baseline.modes["k"]
+
+
+# -------------------------------------------------------------------
+# PLAT-1766: SoC need-based proportional charge distribution
+# -------------------------------------------------------------------
+
+_NB_LIMITS_15KWH = BatLimits(
+    max_charge_w=5000,
+    max_discharge_w=5000,
+    soc_min_pct=15.0,
+    soc_max_pct=95.0,
+)
+_NB_LIMITS_5KWH = BatLimits(
+    max_charge_w=5000,
+    max_discharge_w=5000,
+    soc_min_pct=15.0,
+    soc_max_pct=95.0,
+)
+
+
+def _nb_snap(bid: str, soc_pct: float, cap_kwh: float, power_w: float = 0.0) -> BatSnapshot:
+    """Helper: BatSnapshot with cap_kwh for need-based tests."""
+    return BatSnapshot(battery_id=bid, power_w=power_w, soc_pct=soc_pct, cap_kwh=cap_kwh)
+
+
+# --- Feature flag off = backward compat ---
+
+
+def test_need_based_off_matches_plat1755_cap_proportional() -> None:
+    """need_based=False (default) → identical output to PLAT-1755 cap-proportional.
+
+    Regression guard: the new code path must not change anything when the
+    feature flag is off. Uses spread_aggressive_pct=100.0 to force balanced path.
+    """
+    bats = [
+        _nb_snap("kontor", soc_pct=46.0, cap_kwh=15.0),
+        _nb_snap("forrad", soc_pct=51.0, cap_kwh=5.0),
+    ]
+    limits = {"kontor": _NB_LIMITS_15KWH, "forrad": _NB_LIMITS_5KWH}
+    plan_off = plan_zero_grid(
+        grid_power_w=-1032.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,  # disable aggressive path
+        gain=1.0,
+        need_based=False,
+    )
+    # PLAT-1755: 15/(15+5)=75 %, 5/20=25 %
+    assert plan_off.limits_w["kontor"] == pytest.approx(774, abs=1)
+    assert plan_off.limits_w["forrad"] == pytest.approx(258, abs=1)
+
+
+# --- Basic need-based charging ---
+
+
+def test_need_based_charge_lower_soc_gets_more() -> None:
+    """PLAT-1766 core: lower-SoC bat gets proportionally more charge power.
+
+    Live scenario: kontor 46 % (15 kWh), forrad 51 % (5 kWh), 1032 W surplus.
+    Need: kontor=0.54*15=8.1 kWh, forrad=0.49*5=2.45 kWh.
+    Split: 8.1/(8.1+2.45)=76.8 % → kontor gets more than PLAT-1755's 75 %.
+    Uses spread_aggressive_pct=100.0 to force the balanced path.
+    """
+    bats = [
+        _nb_snap("kontor", soc_pct=46.0, cap_kwh=15.0),
+        _nb_snap("forrad", soc_pct=51.0, cap_kwh=5.0),
+    ]
+    limits = {"kontor": _NB_LIMITS_15KWH, "forrad": _NB_LIMITS_5KWH}
+    plan = plan_zero_grid(
+        grid_power_w=-1032.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,  # disable aggressive path
+        gain=1.0,
+        need_based=True,
+    )
+    kontor_need = (1.0 - 46.0 / 100.0) * 15.0  # 8.1
+    forrad_need = (1.0 - 51.0 / 100.0) * 5.0  # 2.45
+    total = kontor_need + forrad_need
+    expected_kontor = 1032.0 * kontor_need / total
+    expected_forrad = 1032.0 * forrad_need / total
+    assert plan.limits_w["kontor"] == pytest.approx(expected_kontor, abs=1)
+    assert plan.limits_w["forrad"] == pytest.approx(expected_forrad, abs=1)
+    assert plan.modes["kontor"] == "charge_battery"
+    assert plan.modes["forrad"] == "charge_battery"
+
+
+def test_need_based_charge_gives_more_to_emptier_battery() -> None:
+    """Emptier battery (lower SoC) always gets a larger share when need_based=True."""
+    bats = [
+        _nb_snap("bat_low", soc_pct=30.0, cap_kwh=10.0),
+        _nb_snap("bat_high", soc_pct=70.0, cap_kwh=10.0),
+    ]
+    limits = {
+        "bat_low": _DEFAULT_LIMITS,
+        "bat_high": _DEFAULT_LIMITS,
+    }
+    plan = plan_zero_grid(
+        grid_power_w=-2000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,  # disable aggressive path
+        gain=1.0,
+        need_based=True,
+    )
+    # bat_low need=0.70*10=7.0, bat_high need=0.30*10=3.0 → 70 % vs 30 %
+    assert plan.limits_w["bat_low"] == pytest.approx(1400, abs=1)
+    assert plan.limits_w["bat_high"] == pytest.approx(600, abs=1)
+
+
+def test_need_based_charge_equal_soc_equal_cap_gives_50_50() -> None:
+    """When both bats have identical SoC and cap, split is 50/50."""
+    bats = [
+        _nb_snap("a", soc_pct=60.0, cap_kwh=10.0),
+        _nb_snap("b", soc_pct=60.0, cap_kwh=10.0),
+    ]
+    limits = {"a": _DEFAULT_LIMITS, "b": _DEFAULT_LIMITS}
+    plan = plan_zero_grid(
+        grid_power_w=-2000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        gain=1.0,
+        need_based=True,
+    )
+    assert plan.limits_w["a"] == pytest.approx(1000, abs=1)
+    assert plan.limits_w["b"] == pytest.approx(1000, abs=1)
+
+
+def test_need_based_charge_asymmetric_cap_and_soc() -> None:
+    """Both cap and SoC asymmetry combine correctly in need-based weights."""
+    # bat_a: 20 % SoC, 20 kWh → need = 0.80 * 20 = 16.0 kWh
+    # bat_b: 80 % SoC, 5 kWh  → need = 0.20 *  5 =  1.0 kWh
+    # split: 16/(16+1) = 94.1 %, 1/(17) = 5.9 %
+    bats = [
+        _nb_snap("bat_a", soc_pct=20.0, cap_kwh=20.0),
+        _nb_snap("bat_b", soc_pct=80.0, cap_kwh=5.0),
+    ]
+    limits = {
+        "bat_a": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000, soc_min_pct=15.0, soc_max_pct=95.0
+        ),
+        "bat_b": BatLimits(
+            max_charge_w=5000, max_discharge_w=5000, soc_min_pct=15.0, soc_max_pct=95.0
+        ),
+    }
+    plan = plan_zero_grid(
+        grid_power_w=-1700.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        gain=1.0,
+        need_based=True,
+    )
+    expected_a = 1700.0 * 16.0 / 17.0
+    expected_b = 1700.0 * 1.0 / 17.0
+    assert plan.limits_w["bat_a"] == pytest.approx(expected_a, abs=1)
+    assert plan.limits_w["bat_b"] == pytest.approx(expected_b, abs=1)
+
+
+# --- Basic need-based discharging ---
+
+
+def test_need_based_discharge_higher_soc_gets_more() -> None:
+    """Discharging need-based: higher-SoC bat supplies more (protects emptier one)."""
+    bats = [
+        _nb_snap("bat_low", soc_pct=30.0, cap_kwh=10.0),
+        _nb_snap("bat_high", soc_pct=70.0, cap_kwh=10.0),
+    ]
+    limits = {
+        "bat_low": _DEFAULT_LIMITS,
+        "bat_high": _DEFAULT_LIMITS,
+    }
+    plan = plan_zero_grid(
+        grid_power_w=2000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        gain=1.0,
+        need_based=True,
+    )
+    # bat_low discharge_need=0.30*10=3.0, bat_high=0.70*10=7.0 → 30 % vs 70 %
+    assert plan.limits_w["bat_high"] == pytest.approx(1400, abs=1)
+    assert plan.limits_w["bat_low"] == pytest.approx(600, abs=1)
+    assert plan.modes["bat_high"] == "discharge_pv"
+    assert plan.modes["bat_low"] == "discharge_pv"
+
+
+def test_need_based_discharge_equal_soc_equal_cap_gives_50_50() -> None:
+    """Equal SoC + cap → 50/50 discharge split when need_based=True."""
+    bats = [
+        _nb_snap("a", soc_pct=50.0, cap_kwh=10.0),
+        _nb_snap("b", soc_pct=50.0, cap_kwh=10.0),
+    ]
+    limits = {"a": _DEFAULT_LIMITS, "b": _DEFAULT_LIMITS}
+    plan = plan_zero_grid(
+        grid_power_w=2000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        gain=1.0,
+        need_based=True,
+    )
+    assert plan.limits_w["a"] == pytest.approx(1000, abs=1)
+    assert plan.limits_w["b"] == pytest.approx(1000, abs=1)
+
+
+# --- Fallback: all weights zero ---
+
+
+def test_need_based_all_bats_full_falls_back_to_cap_proportional() -> None:
+    """All bats at 100 % SoC → charge weights=0 → fallback to cap-proportional.
+
+    Prevents divide-by-zero and preserves a sane allocation.
+    """
+    bats = [
+        _nb_snap("kontor", soc_pct=100.0, cap_kwh=15.0),
+        _nb_snap("forrad", soc_pct=100.0, cap_kwh=5.0),
+    ]
+    limits = {"kontor": _NB_LIMITS_15KWH, "forrad": _NB_LIMITS_5KWH}
+    alloc = _distribute(
+        total_target_net_w=-1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        need_based=True,
+    )
+    # Fallback cap-proportional: 15/(15+5)=75 %, 25 %
+    assert alloc["kontor"] == pytest.approx(-750.0, abs=1)
+    assert alloc["forrad"] == pytest.approx(-250.0, abs=1)
+
+
+def test_need_based_all_bats_empty_discharge_falls_back_to_cap_proportional() -> None:
+    """All bats at 0 % SoC → discharge weights=0 → fallback to cap-proportional."""
+    bats = [
+        _nb_snap("kontor", soc_pct=0.0, cap_kwh=15.0),
+        _nb_snap("forrad", soc_pct=0.0, cap_kwh=5.0),
+    ]
+    limits = {"kontor": _NB_LIMITS_15KWH, "forrad": _NB_LIMITS_5KWH}
+    alloc = _distribute(
+        total_target_net_w=1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        need_based=True,
+    )
+    # Fallback cap-proportional: 75 % / 25 %
+    assert alloc["kontor"] == pytest.approx(750.0, abs=1)
+    assert alloc["forrad"] == pytest.approx(250.0, abs=1)
+
+
+def test_need_based_one_bat_at_100pct_excluded_from_charge_weights() -> None:
+    """One bat at 100 % SoC gets weight=0; the other bat takes all the charge."""
+    bats = [
+        _nb_snap("kontor", soc_pct=50.0, cap_kwh=15.0),
+        _nb_snap("forrad", soc_pct=100.0, cap_kwh=5.0),
+    ]
+    limits = {"kontor": _NB_LIMITS_15KWH, "forrad": _NB_LIMITS_5KWH}
+    alloc = _distribute(
+        total_target_net_w=-1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        need_based=True,
+    )
+    # forrad weight=0 → kontor takes 100 %
+    assert alloc["kontor"] == pytest.approx(-1000.0, abs=1)
+    assert alloc["forrad"] == pytest.approx(0.0, abs=1)
+
+
+def test_need_based_cap_kwh_zero_legacy_bat_excluded() -> None:
+    """cap_kwh=0 (legacy bat) → weight=0 → excluded from need-based split."""
+    bats = [
+        _nb_snap("modern", soc_pct=50.0, cap_kwh=10.0),
+        BatSnapshot(battery_id="legacy", power_w=0.0, soc_pct=30.0),  # cap_kwh=0.0
+    ]
+    limits = {
+        "modern": _DEFAULT_LIMITS,
+        "legacy": _DEFAULT_LIMITS,
+    }
+    alloc = _distribute(
+        total_target_net_w=-1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        need_based=True,
+    )
+    # legacy cap_kwh=0 → weight=0 → modern takes all
+    assert alloc["modern"] == pytest.approx(-1000.0, abs=1)
+    assert alloc["legacy"] == pytest.approx(0.0, abs=1)
+
+
+def test_need_based_single_bat_unchanged() -> None:
+    """Single battery: need_based=True has no effect (same as False)."""
+    bats = [_nb_snap("k", soc_pct=50.0, cap_kwh=10.0)]
+    limits = {"k": _DEFAULT_LIMITS}
+    alloc_off = _distribute(-1000.0, bats, limits, need_based=False)
+    alloc_on = _distribute(-1000.0, bats, limits, need_based=True)
+    assert alloc_on["k"] == alloc_off["k"]
+
+
+# --- Aggressive path unaffected ---
+
+
+def test_need_based_aggressive_path_unaffected_on_charge() -> None:
+    """When spread > threshold, aggressive path runs regardless of need_based.
+
+    need_based=True must NOT change aggressive P/S split — that path is
+    unaffected by the flag.
+    """
+    bats = [
+        _nb_snap("kontor", soc_pct=40.0, cap_kwh=15.0),
+        _nb_snap("forrad", soc_pct=51.0, cap_kwh=5.0),  # 11 pp spread
+    ]
+    limits = {"kontor": _NB_LIMITS_15KWH, "forrad": _NB_LIMITS_5KWH}
+    plan_off = plan_zero_grid(
+        grid_power_w=-3000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=5.0,
+        gain=1.0,
+        need_based=False,
+    )
+    plan_on = plan_zero_grid(
+        grid_power_w=-3000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=5.0,
+        gain=1.0,
+        need_based=True,
+    )
+    # Aggressive path: lower-SoC (kontor) gets all charge; forrad standby.
+    # Both flag states must produce identical results.
+    assert plan_off.modes["kontor"] == plan_on.modes["kontor"] == "charge_battery"
+    assert plan_off.modes["forrad"] == plan_on.modes["forrad"] == "battery_standby"
+    assert plan_off.limits_w["kontor"] == plan_on.limits_w["kontor"]
+
+
+def test_need_based_aggressive_path_unaffected_on_discharge() -> None:
+    """need_based=True doesn't touch aggressive discharge split."""
+    bats = [
+        _nb_snap("kontor", soc_pct=40.0, cap_kwh=15.0),
+        _nb_snap("forrad", soc_pct=55.0, cap_kwh=5.0),  # 15 pp spread
+    ]
+    limits = {"kontor": _NB_LIMITS_15KWH, "forrad": _NB_LIMITS_5KWH}
+    plan_off = plan_zero_grid(
+        grid_power_w=2000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=5.0,
+        gain=1.0,
+        need_based=False,
+    )
+    plan_on = plan_zero_grid(
+        grid_power_w=2000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=5.0,
+        gain=1.0,
+        need_based=True,
+    )
+    assert plan_off.modes["forrad"] == plan_on.modes["forrad"] == "discharge_pv"
+    assert plan_off.modes["kontor"] == plan_on.modes["kontor"] == "battery_standby"
+    assert plan_off.limits_w["forrad"] == plan_on.limits_w["forrad"]
+
+
+# --- Convergence: PLAT-1715 1 pp tolerance ---
+
+
+def test_need_based_convergence_reduces_soc_gap() -> None:
+    """PLAT-1766 AC2: SoC gap narrows faster with need_based=True vs False.
+
+    Simulate 10 charging cycles at 3000 W surplus with:
+      - kontor 46 %, 15 kWh  (lower SoC — needs more charge)
+      - forrad 51 %, 5 kWh   (higher SoC)
+
+    After N cycles need-based should have a smaller diff than cap-proportional.
+    Uses spread_aggressive_pct=100.0 to stay in balanced path throughout.
+    """
+    _sim_limits = BatLimits(
+        max_charge_w=5000, max_discharge_w=5000, soc_min_pct=15.0, soc_max_pct=95.0
+    )
+
+    def simulate_cycles(need_based: bool, cycles: int = 10, surplus_w: float = 3000.0) -> float:
+        """Return SoC diff (forrad - kontor) after N cycles."""
+        soc_kontor = 46.0
+        soc_forrad = 51.0
+        cap_kontor = 15.0  # kWh
+        cap_forrad = 5.0  # kWh
+
+        for _ in range(cycles):
+            bats = [
+                BatSnapshot("kontor", power_w=0.0, soc_pct=soc_kontor, cap_kwh=cap_kontor),
+                BatSnapshot("forrad", power_w=0.0, soc_pct=soc_forrad, cap_kwh=cap_forrad),
+            ]
+            plan = plan_zero_grid(
+                grid_power_w=-surplus_w,
+                bats=bats,
+                limits_by_id={"kontor": _sim_limits, "forrad": _sim_limits},
+                spread_aggressive_pct=100.0,  # balanced path only
+                gain=1.0,
+                need_based=need_based,
+            )
+            # Apply charge: SoC change = power_w * cycle_s / (cap_kwh * 3600 * 1000) * 100
+            cycle_s = 30.0
+            kontor_w = plan.limits_w["kontor"] if plan.modes["kontor"] == "charge_battery" else 0.0
+            forrad_w = plan.limits_w["forrad"] if plan.modes["forrad"] == "charge_battery" else 0.0
+            soc_kontor += kontor_w * cycle_s / (cap_kontor * 3_600_000.0) * 100.0
+            soc_forrad += forrad_w * cycle_s / (cap_forrad * 3_600_000.0) * 100.0
+
+        return soc_forrad - soc_kontor
+
+    diff_cap_based = simulate_cycles(need_based=False)
+    diff_need_based = simulate_cycles(need_based=True)
+
+    # Need-based must have a smaller (or equal) SoC gap after N cycles.
+    assert diff_need_based < diff_cap_based, (
+        f"Need-based gap {diff_need_based:.3f} pp must be less than "
+        f"cap-proportional gap {diff_cap_based:.3f} pp"
+    )
+
+
+def test_need_based_convergence_from_5pp_to_1pp_within_reasonable_cycles() -> None:
+    """PLAT-1766 AC3: starting at 5 pp diff, need-based reaches ≤1 pp.
+
+    Uses high surplus (5000 W) to make convergence observable within 200 cycles.
+    """
+    _sim_limits = BatLimits(
+        max_charge_w=5000, max_discharge_w=5000, soc_min_pct=15.0, soc_max_pct=95.0
+    )
+    soc_kontor = 40.0
+    soc_forrad = 45.0  # 5 pp ahead
+    cap_kontor = 15.0
+    cap_forrad = 5.0
+    cycle_s = 30.0
+    converged = False
+
+    for _ in range(200):
+        diff = soc_forrad - soc_kontor
+        if diff <= 1.0:
+            converged = True
+            break
+        bats = [
+            BatSnapshot("kontor", power_w=0.0, soc_pct=soc_kontor, cap_kwh=cap_kontor),
+            BatSnapshot("forrad", power_w=0.0, soc_pct=soc_forrad, cap_kwh=cap_forrad),
+        ]
+        plan = plan_zero_grid(
+            grid_power_w=-5000.0,
+            bats=bats,
+            limits_by_id={"kontor": _sim_limits, "forrad": _sim_limits},
+            spread_aggressive_pct=1.0,
+            gain=1.0,
+            need_based=True,
+        )
+        kontor_w = plan.limits_w["kontor"] if plan.modes["kontor"] == "charge_battery" else 0.0
+        forrad_w = plan.limits_w["forrad"] if plan.modes["forrad"] == "charge_battery" else 0.0
+        soc_kontor += kontor_w * cycle_s / (cap_kontor * 3_600_000.0) * 100.0
+        soc_forrad += forrad_w * cycle_s / (cap_forrad * 3_600_000.0) * 100.0
+
+    assert (
+        converged
+    ), f"Did not converge to ≤1 pp within 200 cycles; final diff={soc_forrad - soc_kontor:.3f} pp"
+
+
+# --- _distribute() direct unit tests ---
+
+
+def test_distribute_need_based_charge_weight_formula() -> None:
+    """_distribute need_based=True: weight = (1-soc/100)*cap_kwh for charging."""
+    bats = [
+        _nb_snap("a", soc_pct=20.0, cap_kwh=10.0),  # need=8.0
+        _nb_snap("b", soc_pct=60.0, cap_kwh=10.0),  # need=4.0
+    ]
+    limits = {"a": _DEFAULT_LIMITS, "b": _DEFAULT_LIMITS}
+    alloc = _distribute(
+        total_target_net_w=-1200.0,  # charging
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,  # force balanced path
+        need_based=True,
+    )
+    # weight_a=8.0, weight_b=4.0 → split 2:1
+    assert alloc["a"] == pytest.approx(-800.0, abs=1)
+    assert alloc["b"] == pytest.approx(-400.0, abs=1)
+
+
+def test_distribute_need_based_discharge_weight_formula() -> None:
+    """_distribute need_based=True: weight = (soc/100)*cap_kwh for discharging."""
+    bats = [
+        _nb_snap("a", soc_pct=20.0, cap_kwh=10.0),  # weight=2.0
+        _nb_snap("b", soc_pct=60.0, cap_kwh=10.0),  # weight=6.0
+    ]
+    limits = {"a": _DEFAULT_LIMITS, "b": _DEFAULT_LIMITS}
+    alloc = _distribute(
+        total_target_net_w=800.0,  # discharging
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,  # force balanced path
+        need_based=True,
+    )
+    # weight_b/weight_a = 3:1 → b gets 600, a gets 200
+    assert alloc["b"] == pytest.approx(600.0, abs=1)
+    assert alloc["a"] == pytest.approx(200.0, abs=1)
+
+
+def test_distribute_need_based_three_bats_charge() -> None:
+    """Three batteries: need-based allocates proportionally to energy needed."""
+    bats = [
+        _nb_snap("a", soc_pct=10.0, cap_kwh=10.0),  # need=9.0
+        _nb_snap("b", soc_pct=50.0, cap_kwh=10.0),  # need=5.0
+        _nb_snap("c", soc_pct=80.0, cap_kwh=10.0),  # need=2.0
+    ]
+    limits = {"a": _DEFAULT_LIMITS, "b": _DEFAULT_LIMITS, "c": _DEFAULT_LIMITS}
+    alloc = _distribute(
+        total_target_net_w=-1600.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,  # force balanced path (spread=70pp)
+        need_based=True,
+    )
+    # total_need = 9.0 + 5.0 + 2.0 = 16.0
+    assert alloc["a"] == pytest.approx(-1600.0 * 9.0 / 16.0, abs=1)
+    assert alloc["b"] == pytest.approx(-1600.0 * 5.0 / 16.0, abs=1)
+    assert alloc["c"] == pytest.approx(-1600.0 * 2.0 / 16.0, abs=1)
+
+
+def test_distribute_need_based_preserves_sign_convention() -> None:
+    """Charging allocation values must be negative (convention: negative = charging)."""
+    bats = [
+        _nb_snap("a", soc_pct=40.0, cap_kwh=10.0),
+        _nb_snap("b", soc_pct=60.0, cap_kwh=10.0),
+    ]
+    limits = {"a": _DEFAULT_LIMITS, "b": _DEFAULT_LIMITS}
+    alloc = _distribute(-500.0, bats, limits, spread_aggressive_pct=100.0, need_based=True)
+    assert alloc["a"] < 0.0
+    assert alloc["b"] < 0.0
+    assert alloc["a"] + alloc["b"] == pytest.approx(-500.0, abs=1)
+
+
+def test_distribute_need_based_discharge_preserves_sign_convention() -> None:
+    """Discharge allocation values must be positive."""
+    bats = [
+        _nb_snap("a", soc_pct=40.0, cap_kwh=10.0),
+        _nb_snap("b", soc_pct=60.0, cap_kwh=10.0),
+    ]
+    limits = {"a": _DEFAULT_LIMITS, "b": _DEFAULT_LIMITS}
+    alloc = _distribute(500.0, bats, limits, spread_aggressive_pct=100.0, need_based=True)
+    assert alloc["a"] > 0.0
+    assert alloc["b"] > 0.0
+    assert alloc["a"] + alloc["b"] == pytest.approx(500.0, abs=1)
+
+
+def test_distribute_need_based_total_allocation_matches_target() -> None:
+    """Sum of per-bat allocations must equal total_target (energy conservation)."""
+    bats = [
+        _nb_snap("a", soc_pct=33.0, cap_kwh=12.0),
+        _nb_snap("b", soc_pct=67.0, cap_kwh=8.0),
+        _nb_snap("c", soc_pct=50.0, cap_kwh=10.0),
+    ]
+    limits = {"a": _DEFAULT_LIMITS, "b": _DEFAULT_LIMITS, "c": _DEFAULT_LIMITS}
+    target = -2345.0
+    alloc = _distribute(target, bats, limits, spread_aggressive_pct=100.0, need_based=True)
+    assert sum(alloc.values()) == pytest.approx(target, abs=1)
+
+
+# --- plan_zero_grid with need_based: integration smoke ---
+
+
+def test_plan_zero_grid_need_based_flag_propagates_to_balanced_path() -> None:
+    """plan_zero_grid with need_based=True routes the flag into _distribute.
+
+    Uses spread_aggressive_pct=100.0 to force the balanced path for both runs,
+    so the only difference is the weighting algorithm.
+    """
+    bats = [
+        _nb_snap("kontor", soc_pct=46.0, cap_kwh=15.0),
+        _nb_snap("forrad", soc_pct=51.0, cap_kwh=5.0),
+    ]
+    limits = {"kontor": _NB_LIMITS_15KWH, "forrad": _NB_LIMITS_5KWH}
+    plan_off = plan_zero_grid(
+        grid_power_w=-1032.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,  # balanced path only
+        gain=1.0,
+        need_based=False,
+    )
+    plan_on = plan_zero_grid(
+        grid_power_w=-1032.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,  # balanced path only
+        gain=1.0,
+        need_based=True,
+    )
+    # With need_based=True, kontor (lower SoC) must get MORE charge than with False.
+    assert plan_on.limits_w["kontor"] > plan_off.limits_w["kontor"]
+    assert plan_on.limits_w["forrad"] < plan_off.limits_w["forrad"]
+
+
+def test_plan_zero_grid_need_based_false_is_default() -> None:
+    """Calling plan_zero_grid without need_based= behaves as need_based=False."""
+    bats = [
+        _nb_snap("kontor", soc_pct=46.0, cap_kwh=15.0),
+        _nb_snap("forrad", soc_pct=51.0, cap_kwh=5.0),
+    ]
+    limits = {"kontor": _NB_LIMITS_15KWH, "forrad": _NB_LIMITS_5KWH}
+    plan_default = plan_zero_grid(
+        grid_power_w=-1032.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        gain=1.0,
+    )
+    plan_off = plan_zero_grid(
+        grid_power_w=-1032.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        gain=1.0,
+        need_based=False,
+    )
+    assert plan_default.limits_w == plan_off.limits_w
+    assert plan_default.modes == plan_off.modes
+
+
+def test_need_based_emergency_recovery_unaffected() -> None:
+    """Emergency recovery (bat below floor) still runs at max even with need_based=True.
+
+    The need-based path must not interfere with the force-charge safety path —
+    a bat below the absolute SoC floor must always be recovered at full rate.
+    """
+    bats = [
+        _nb_snap("low_emergency", soc_pct=14.0, cap_kwh=15.0),  # below floor
+        _nb_snap("healthy", soc_pct=60.0, cap_kwh=5.0),
+    ]
+    limits = {
+        "low_emergency": _DEFAULT_LIMITS,
+        "healthy": _DEFAULT_LIMITS,
+    }
+    plan = plan_zero_grid(
+        grid_power_w=1000.0,
+        bats=bats,
+        limits_by_id=limits,
+        spread_aggressive_pct=100.0,
+        gain=1.0,
+        need_based=True,
+    )
+    # Emergency bat is force-charged at max regardless of need_based
+    assert "low_emergency" in plan.emergency_recovery
+    assert plan.modes["low_emergency"] == "charge_battery"
+    assert plan.limits_w["low_emergency"] == _DEFAULT_LIMITS.max_charge_w
+    # Healthy bat still handles the grid target normally
+    assert "healthy" not in plan.emergency_recovery

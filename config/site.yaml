@@ -550,6 +550,12 @@ budget:
     bat_spread_max_pct: 5.0          # PLAT-1749: 5 pp spread before P/S split (was 1.0)
     bat_aggressive_spread_pct: 5.0   # PLAT-1749: backward-compat alias (kept = bat_spread_max_pct)
 
+  # PLAT-NEW Story 5: Aktivera PLAT-1766 need-based SoC-spread distribution
+  # weight charging: (1-soc)*cap → mer laddning till tommare batteri
+  # weight discharging: soc*cap → mer urladdning från fullare batteri
+  # Rollback: ta bort eller sätt till false
+  bat_need_based_enabled: true
+
   # Emergency + capacity fallbacks
   emergency:
     bat_discharge_min_soc_pct: 15.0   # absolute floor (GoodWe cuts AC below 15%)
