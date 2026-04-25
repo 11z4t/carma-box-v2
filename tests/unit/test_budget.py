@@ -361,11 +361,11 @@ def test_evening_discharge_covers_house_load(cfg: BudgetConfig) -> None:
     )
     state = BudgetState()
     result = allocate(inp, cfg, state)
-    # PLAT-1696 proportional gain 0.7 → cycle closes 70 % of the gap.
-    expected = int(_EVENING_GRID_IMPORT_W * 0.7)
+    # PLAT-NEW Story 1: gain=0.75 → cycle closes 75 % of the gap.
+    expected = int(_EVENING_GRID_IMPORT_W * BudgetConfig().correction_gain)
     assert result.bat_discharge_w == expected, (
         f"discharge={result.bat_discharge_w}, expected gain-damped "
-        f"{expected} (0.7 × {_EVENING_GRID_IMPORT_W})"
+        f"{expected} ({BudgetConfig().correction_gain} × {_EVENING_GRID_IMPORT_W})"
     )
     assert "zero_grid" in result.reason
 
@@ -388,8 +388,10 @@ def test_evening_discharge_proportional(cfg: BudgetConfig) -> None:
     result = allocate(inp, cfg, state)
     k = result.bat_allocations.get("kontor", 0)
     f = result.bat_allocations.get("forrad", 0)
-    # 15/(15+5) * 1400 = 1050 W kontor, 5/20 * 1400 = 350 W förråd (gain=0.7).
-    total = int(_EVENING_GRID_IMPORT_W * 0.7)
+    # PLAT-NEW Story 1: gain=0.75.
+    # 15/(15+5) * 1500 = 1125 W kontor, 5/20 * 1500 = 375 W förråd.
+    gain = BudgetConfig().correction_gain
+    total = int(_EVENING_GRID_IMPORT_W * gain)
     assert k == pytest.approx(total * 15 / 20, abs=1)
     assert f == pytest.approx(total * 5 / 20, abs=1)
 
@@ -1126,12 +1128,12 @@ def test_emergency_bat_gets_fast_charging_true_via_allocate() -> None:
 
     # PLAT-1751: emergency bat is reported via emergency_recovery, NOT via
     # a direct SET_FAST_CHARGING=True command (mode_change_manager handles it).
-    assert "kontor" in result.emergency_recovery, (
-        "Emergency bat (SoC=10 < floor=15) must appear in BudgetResult.emergency_recovery"
-    )
-    assert "forrad" not in result.emergency_recovery, (
-        "Healthy bat must NOT be in emergency_recovery"
-    )
+    assert (
+        "kontor" in result.emergency_recovery
+    ), "Emergency bat (SoC=10 < floor=15) must appear in BudgetResult.emergency_recovery"
+    assert (
+        "forrad" not in result.emergency_recovery
+    ), "Healthy bat must NOT be in emergency_recovery"
 
     fc_cmds = [c for c in result.commands if c.command_type == CommandType.SET_FAST_CHARGING]
     fc_map = {c.target_id: c.value for c in fc_cmds}
@@ -1147,9 +1149,9 @@ def test_emergency_bat_gets_fast_charging_true_via_allocate() -> None:
         "Expected SET_FAST_CHARGING also emitted for non-emergency bat "
         "(INV-3: explicit OFF elsewhere)"
     )
-    assert fc_map["forrad"] is False, (
-        f"Non-emergency bat must get fast_charging=False (INV-3), got {fc_map['forrad']!r}"
-    )
+    assert (
+        fc_map["forrad"] is False
+    ), f"Non-emergency bat must get fast_charging=False (INV-3), got {fc_map['forrad']!r}"
     normal_cmd = next(c for c in fc_cmds if c.target_id == "forrad")
     assert "INV-3" in normal_cmd.reason or "OFF" in normal_cmd.reason
 
@@ -1178,8 +1180,7 @@ def test_emergency_recovery_not_emitted_as_direct_mode_command() -> None:
         if c.command_type == CommandType.SET_EMS_MODE and c.target_id == "kontor"
     }
     assert not mode_cmds, (
-        f"Budget must NOT emit SET_EMS_MODE for emergency bat 'kontor', "
-        f"got {mode_cmds}"
+        f"Budget must NOT emit SET_EMS_MODE for emergency bat 'kontor', " f"got {mode_cmds}"
     )
 
 
@@ -1196,9 +1197,9 @@ def test_budget_result_has_empty_emergency_recovery_when_no_emergency() -> None:
     )
     result = allocate(inp, cfg)
 
-    assert result.emergency_recovery == frozenset(), (
-        f"No emergency → emergency_recovery must be empty, got {result.emergency_recovery}"
-    )
+    assert (
+        result.emergency_recovery == frozenset()
+    ), f"No emergency → emergency_recovery must be empty, got {result.emergency_recovery}"
 
 
 def test_normal_bat_gets_fast_charging_false_via_allocate() -> None:
@@ -1804,11 +1805,15 @@ def test_plat1738_cascade_reason_reflects_soc_state() -> None:
 
 
 def test_grid_smoothing_window_filled_over_cycles(cfg: BudgetConfig) -> None:
-    """allocate() pushes grid_power_w into state.grid_history_w each cycle."""
+    """allocate() pushes grid_power_w into state.grid_history_w each cycle.
+
+    Uses explicit window=3 to test the fill-behaviour with 3 readings.
+    """
+    cfg3 = BudgetConfig(grid_smoothing_window=3)
     state = BudgetState()
     for gw in (500.0, 600.0, 700.0):
         inp = _inp(hour=14, pv_w=1000, house_w=500, grid_w=gw)
-        allocate(inp, cfg, state)
+        allocate(inp, cfg3, state)
     assert state.grid_history_w == [500.0, 600.0, 700.0]
 
 
@@ -1829,13 +1834,18 @@ def test_grid_spike_rejected_by_median(cfg: BudgetConfig) -> None:
     Simulates the live observation (23:26-23:27): real grid ≈ 2.5 kW,
     sensor reported 12.9 kW for one cycle. With median-of-3 the spike
     is rejected and bat allocation follows the real value.
+
+    Uses explicit window=3 and gain=0.7 to pin the original test semantics.
+    Spike rejection requires window >= 3 — see test_grid_smoothing_window=2
+    for the new default behaviour.
     """
+    cfg3 = BudgetConfig(grid_smoothing_window=3, correction_gain=0.7)
     state = BudgetState()
     # Prime the history with two quiet readings, then inject a spike.
     for gw in (2500.0, 2500.0):
         allocate(
             _inp(hour=14, pv_w=0, house_w=2500, grid_w=gw, bat_k_soc=60.0, bat_f_soc=60.0),
-            cfg,
+            cfg3,
             state,
         )
     # Spike cycle — sorted history = [2500, 2500, 12900] → median = 2500.
@@ -1847,7 +1857,7 @@ def test_grid_spike_rejected_by_median(cfg: BudgetConfig) -> None:
         bat_k_soc=60.0,
         bat_f_soc=60.0,
     )
-    spike_result = allocate(spike_inp, cfg, state)
+    spike_result = allocate(spike_inp, cfg3, state)
     assert state.grid_history_w == [2500.0, 2500.0, 12900.0]
     # bat_discharge should reflect the 2500 W MEDIAN, not the 12900 W spike.
     # With gain=0.7: discharge ≈ 0.7 × 2500 = 1750 W.
@@ -2186,3 +2196,151 @@ def test_plat1752_guard_no_op_when_mode_already_matches() -> None:
     assert (
         not mode_cmds
     ), "PLAT-1752: plan==current → no SET_EMS_MODE (idempotency, guard must not break this)"
+
+
+# -------------------------------------------------------------------
+# PLAT-NEW Story 1: Parameter tuning — defaults + sign_flip_rate
+# -------------------------------------------------------------------
+
+
+def test_budget_config_default_smoothing_window_2() -> None:
+    """PLAT-NEW Story 1: BudgetConfig default grid_smoothing_window is 2 (was 3).
+
+    Halves the median-smoothing lag from 30-60 s → 15-30 s at 15 s cycle.
+    Rollback: site.yaml budget.smoothing.grid_smoothing_window: 3.
+    """
+    assert BudgetConfig().grid_smoothing_window == 2
+
+
+def test_budget_config_default_correction_gain_0_75() -> None:
+    """PLAT-NEW Story 1: BudgetConfig default correction_gain is 0.75 (was 0.7).
+
+    Conservative increase — closes 75% of gap per cycle instead of 70%.
+    Rollback: site.yaml budget.smoothing.correction_gain: 0.7.
+    """
+    assert BudgetConfig().correction_gain == pytest.approx(0.75)
+
+
+def test_correction_gain_forwarded_to_plan_zero_grid() -> None:
+    """PLAT-NEW Story 1: allocate() must forward cfg.correction_gain as gain= to plan_zero_grid.
+
+    Verification: patch plan_zero_grid inside core.budget and assert gain kwarg matches cfg.
+    """
+    from unittest.mock import patch
+
+    from core.zero_grid import ZeroGridPlan
+
+    custom_gain = 0.65
+    cfg = BudgetConfig(correction_gain=custom_gain)
+    fake_plan = ZeroGridPlan(
+        modes={"kontor": "charge_pv", "forrad": "charge_pv"},
+        limits_w={"kontor": 0, "forrad": 0},
+        total_target_net_w=0,
+        reason="test",
+        emergency_recovery=frozenset(),
+    )
+    with patch("core.budget.plan_zero_grid", return_value=fake_plan) as mock_pgz:
+        allocate(_inp(hour=10), cfg, BudgetState())
+
+    mock_pgz.assert_called_once()
+    forwarded_gain = mock_pgz.call_args.kwargs.get("gain")
+    assert forwarded_gain == pytest.approx(custom_gain), (
+        f"allocate() forwarded gain={forwarded_gain!r} but expected cfg.correction_gain "
+        f"{custom_gain!r}. The gain must be config-driven for site.yaml rollback to work."
+    )
+
+
+def test_sign_flip_rate_initial_zero() -> None:
+    """sign_flip_rate is 0.0 before any cycles run."""
+    state = BudgetState()
+    assert state.sign_flip_rate == pytest.approx(0.0)
+
+
+def test_sign_flip_rate_stays_zero_after_one_cycle() -> None:
+    """sign_flip_rate is 0.0 after a single cycle (need >= 2 readings)."""
+    state = BudgetState()
+    cfg = BudgetConfig()
+    allocate(_inp(hour=10, grid_w=500.0, pv_w=0, house_w=500), cfg, state)
+    assert state.sign_flip_rate == pytest.approx(0.0)
+
+
+def test_sign_flip_rate_zero_no_flips() -> None:
+    """All cycles in same direction (discharge) → sign_flip_rate = 0.0."""
+    cfg = BudgetConfig()
+    state = BudgetState()
+    # Sustained grid import → bat always discharges → no sign change
+    imp = _inp(hour=10, grid_w=500.0, pv_w=0, house_w=500, bat_k_soc=60, bat_f_soc=60)
+    for _ in range(5):
+        allocate(imp, cfg, state)
+    assert state.sign_flip_rate == pytest.approx(0.0)
+
+
+def test_sign_flip_rate_one_when_fully_alternating() -> None:
+    """Alternating charge↔discharge every cycle → sign_flip_rate = 1.0.
+
+    Uses grid_smoothing_window=1 (raw passthrough) to avoid median-of-2
+    interference: with window=2 the median of [-500,+500] is +500 (max)
+    which prevents alternation from propagating into the smoothed signal.
+    """
+    cfg = BudgetConfig(grid_smoothing_window=1)
+    state = BudgetState()
+    # Alternate: export (grid<0 → charge) then import (grid>0 → discharge)
+    for i in range(6):
+        gw = -500.0 if i % 2 == 0 else 500.0
+        pv = 5000 if gw < 0 else 0
+        allocate(
+            _inp(hour=10, grid_w=gw, pv_w=pv, house_w=500, bat_k_soc=60, bat_f_soc=60),
+            cfg,
+            state,
+        )
+    # All consecutive pairs flip direction → rate = 1.0
+    assert state.sign_flip_rate == pytest.approx(1.0)
+
+
+def test_sign_flip_rate_partial() -> None:
+    """Mixed pattern: 3 discharge cycles then 1 charge → 0 < rate < 1.
+
+    Uses grid_smoothing_window=1 so raw values reach zero_grid unsmoothed.
+    """
+    cfg = BudgetConfig(grid_smoothing_window=1)
+    state = BudgetState()
+    # 3 import cycles → discharge, then 1 export cycle → charge
+    imp = _inp(hour=10, grid_w=500.0, pv_w=0, house_w=500, bat_k_soc=60, bat_f_soc=60)
+    exp = _inp(hour=10, grid_w=-500.0, pv_w=5000, house_w=500, bat_k_soc=60, bat_f_soc=60)
+    for _ in range(3):
+        allocate(imp, cfg, state)
+    allocate(exp, cfg, state)
+    # history = [+ + + -]. flips = 1 (pair 3→4). pairs = 3. rate = 1/3.
+    assert 0.0 < state.sign_flip_rate < 1.0
+
+
+def test_sign_flip_rate_zero_values_not_counted_as_flips() -> None:
+    """Zero applied_w (deadband) does not count as a sign flip."""
+    cfg = BudgetConfig()
+    state = BudgetState()
+    imp = _inp(hour=10, grid_w=500.0, pv_w=0, house_w=500, bat_k_soc=60, bat_f_soc=60)
+    zero = _inp(hour=10, grid_w=0.0, pv_w=500, house_w=500, bat_k_soc=60, bat_f_soc=60)
+    exp = _inp(hour=10, grid_w=-500.0, pv_w=5000, house_w=500, bat_k_soc=60, bat_f_soc=60)
+    # First: discharge (import)
+    allocate(imp, cfg, state)
+    # Second: zero (grid within deadband — no bat action)
+    allocate(zero, cfg, state)
+    # Third: charge (export)
+    allocate(exp, cfg, state)
+    # Zero in middle skips counting → at most 0 flips from [+, 0, -]
+    # (flip only counted when BOTH values are nonzero and opposite signs)
+    assert state.sign_flip_rate == pytest.approx(0.0)
+
+
+def test_sign_flip_rate_window_bounded_at_20() -> None:
+    """sign_flip_rate history is bounded to 20 readings (_SIGN_FLIP_WINDOW)."""
+    from core.budget import _SIGN_FLIP_WINDOW
+
+    cfg = BudgetConfig()
+    state = BudgetState()
+    assert _SIGN_FLIP_WINDOW == 20
+    # Push 25 identical readings
+    imp = _inp(hour=10, grid_w=500.0, pv_w=0, house_w=500, bat_k_soc=60, bat_f_soc=60)
+    for _ in range(25):
+        allocate(imp, cfg, state)
+    assert len(state.zg_applied_history) == _SIGN_FLIP_WINDOW
