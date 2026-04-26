@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 _CELL_TEMP_DEFAULT_C: float = 20.0
 _SOH_DEFAULT_PCT: float = 100.0
 
+# H6 fix: maximum age for SoC sensor data.
+# If last_updated is older than this, SoC is considered stale and -1.0 is
+# returned so the caller can detect unreliable data (sensors_ready=False).
+_MAX_SOC_AGE_S: int = 120
+
 # EMS mode strings as used by the GoodWe HACS integration
 # Allowed EMS modes — "auto" intentionally excluded (B10/B14)
 # PLAT-1714: charge_battery (mode 11) + discharge_battery added — RESPECT ems_power_limit
@@ -113,8 +118,45 @@ class GoodWeAdapter(InverterAdapter):
         return state == "on"
 
     async def get_battery_soc(self) -> float:
-        """Get battery SoC (0.0-100.0). Returns 0.0 if unavailable."""
-        return await self._read_float(self._entities.soc, default=0.0)
+        """Get battery SoC (0.0-100.0).
+
+        Returns -1.0 if the SoC sensor data is stale (last_updated older than
+        _MAX_SOC_AGE_S). Callers must treat -1.0 as sensors_ready=False and
+        fall back to battery_standby — never act on stale SoC data (H6 fix).
+
+        Returns 0.0 if the entity is unavailable/unknown.
+        """
+        state_obj = await self._api.get_state_with_attributes(self._entities.soc)
+        if state_obj is None:
+            return 0.0
+        state_val = state_obj.get("state")
+        if not isinstance(state_val, str) or state_val in ("unavailable", "unknown"):
+            return 0.0
+        try:
+            soc = float(state_val)
+        except (ValueError, TypeError):
+            self._log.warning(
+                "Cannot parse SoC=%r as float for %s", state_val, self.battery_id
+            )
+            return 0.0
+
+        last_updated_str = state_obj.get("last_updated")
+        if last_updated_str:
+            try:
+                last_updated = datetime.fromisoformat(
+                    last_updated_str.replace("Z", "+00:00")
+                )
+                age_s = (datetime.now(tz=timezone.utc) - last_updated).total_seconds()
+                if age_s > _MAX_SOC_AGE_S:
+                    self._log.warning(
+                        "H6 STALE SOC: %s age=%.0fs > %ds — returning -1.0",
+                        self.battery_id, age_s, _MAX_SOC_AGE_S,
+                    )
+                    return -1.0
+            except (ValueError, AttributeError):
+                pass
+
+        return soc
 
     async def get_battery_power(self) -> float:
         """Get battery power (W). Positive=discharge, negative=charge."""

@@ -59,6 +59,7 @@ def mock_api() -> AsyncMock:
     """Create a mock HAApiClient."""
     api = AsyncMock(spec=HAApiClient)
     api.get_state = AsyncMock(return_value=None)
+    api.get_state_with_attributes = AsyncMock(return_value=None)
     api.get_states_batch = AsyncMock(return_value={})
     api.call_service = AsyncMock(return_value=True)
     return api
@@ -138,10 +139,15 @@ class TestReadSuccess:
     async def test_get_battery_soc(
         self, adapter: GoodWeAdapter, mock_api: AsyncMock
     ) -> None:
-        mock_api.get_state.return_value = "72.5"
+        from datetime import datetime, timezone
+        fresh_ts = datetime.now(tz=timezone.utc).isoformat()
+        mock_api.get_state_with_attributes.return_value = {
+            "state": "72.5",
+            "last_updated": fresh_ts,
+        }
         result = await adapter.get_battery_soc()
         assert result == 72.5
-        mock_api.get_state.assert_awaited_with(
+        mock_api.get_state_with_attributes.assert_awaited_with(
             "sensor.goodwe_battery_state_of_charge_kontor"
         )
 
@@ -645,3 +651,94 @@ class TestCoverageGaps:
             "number", "set_value",
             {"entity_id": "number.test_export_limit", "value": 3000},
         )
+
+
+# ---------------------------------------------------------------------------
+# H6 regression tests: stale SoC guard + floor+PV charge trigger
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestH6StaleSocGuard:
+    """PLAT-1828 H6: SoC freshness guard in get_battery_soc()."""
+
+    async def test_stale_soc_triggers_safe_mode_not_standby_with_pv(
+        self, adapter: GoodWeAdapter, mock_api: AsyncMock
+    ) -> None:
+        """Stale SoC (last_updated > 120s ago) must return -1.0 (sensors_ready=False).
+
+        Regression: H6 — 2026-04-26 incident where 3-min-old SoC=15 caused
+        the system to remain in standby despite active PV surplus.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        stale_ts = (datetime.now(tz=timezone.utc) - timedelta(minutes=3)).isoformat()
+        mock_api.get_state_with_attributes.return_value = {
+            "state": "15.0",
+            "last_updated": stale_ts,
+        }
+        result = await adapter.get_battery_soc()
+        assert result == -1.0, (
+            "Stale SoC must return -1.0 so callers treat as sensors_ready=False"
+        )
+
+    async def test_fresh_soc_returns_value(
+        self, adapter: GoodWeAdapter, mock_api: AsyncMock
+    ) -> None:
+        """Fresh SoC (last_updated within 120s) must return the actual value."""
+        from datetime import datetime, timedelta, timezone
+
+        fresh_ts = (datetime.now(tz=timezone.utc) - timedelta(seconds=30)).isoformat()
+        mock_api.get_state_with_attributes.return_value = {
+            "state": "50.0",
+            "last_updated": fresh_ts,
+        }
+        result = await adapter.get_battery_soc()
+        assert result == 50.0
+
+
+class TestH6FloorPvChargeTrigger:
+    """PLAT-1828 H6: _floor_pv_charge_needed() pure function tests."""
+
+    def test_soc_at_floor_with_pv_surplus_charges(self) -> None:
+        """SoC at floor + PV surplus → must trigger charge_pv (not standby).
+
+        Regression: H6 — system was in standby while SoC=15% and pv=3kW export.
+        """
+        from main import _floor_pv_charge_needed
+
+        assert _floor_pv_charge_needed(
+            soc_pct=15.0,
+            min_soc_pct=15.0,
+            pv_surplus_w=3000.0,
+        ) is True
+
+    def test_soc_above_floor_normal_logic_not_triggered(self) -> None:
+        """SoC well above floor → floor+PV trigger must NOT fire (normal logic applies)."""
+        from main import _floor_pv_charge_needed
+
+        assert _floor_pv_charge_needed(
+            soc_pct=50.0,
+            min_soc_pct=15.0,
+            pv_surplus_w=3000.0,
+        ) is False
+
+    def test_stale_soc_never_triggers(self) -> None:
+        """soc_pct=-1.0 (stale) must never trigger charge_pv."""
+        from main import _floor_pv_charge_needed
+
+        assert _floor_pv_charge_needed(
+            soc_pct=-1.0,
+            min_soc_pct=15.0,
+            pv_surplus_w=3000.0,
+        ) is False
+
+    def test_pv_below_threshold_no_trigger(self) -> None:
+        """PV surplus below threshold → no trigger even at floor."""
+        from main import _floor_pv_charge_needed
+
+        assert _floor_pv_charge_needed(
+            soc_pct=15.0,
+            min_soc_pct=15.0,
+            pv_surplus_w=100.0,
+        ) is False

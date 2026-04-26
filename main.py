@@ -81,6 +81,39 @@ _W_TO_KW: float = 1000.0
 _MS_PER_S: int = 1000
 _PCT_TO_RATIO: float = 100.0
 
+# H6 fix: SoC sensor freshness threshold.
+# If the SoC entity's last_updated is older than this, the reading is stale.
+# Stale SoC → soc_pct set to -1.0 → sensors_ready=False → battery_standby.
+_MAX_SOC_AGE_S: int = 120
+
+# H6 fix: PV surplus threshold to trigger charge_pv when SoC is at floor.
+_FLOOR_PV_CHARGE_THRESHOLD_W: float = 500.0
+
+# H6 fix: SoC margin above floor that qualifies for forced charge_pv trigger.
+_FLOOR_CHARGE_SOC_MARGIN_PCT: float = 5.0
+
+def _floor_pv_charge_needed(
+    soc_pct: float,
+    min_soc_pct: float,
+    pv_surplus_w: float,
+    threshold_w: float = _FLOOR_PV_CHARGE_THRESHOLD_W,
+    margin_pct: float = _FLOOR_CHARGE_SOC_MARGIN_PCT,
+) -> bool:
+    """H6 fix: Return True when battery is at floor AND PV surplus is available.
+
+    When SoC is at or near the floor with active PV export, always charge —
+    there is no reason to be in standby when free energy is available and
+    the battery is nearly empty.
+
+    soc_pct < 0 means stale/unknown — never triggers (sensors_ready=False path).
+    """
+    return (
+        soc_pct >= 0.0
+        and soc_pct <= min_soc_pct + margin_pct
+        and pv_surplus_w >= threshold_w
+    )
+
+
 # DayPlan generation fallback constants (PLAT-1627)
 _DEFAULT_SOC_PCT: float = 50.0
 _PV_P10_RATIO: float = 0.7
@@ -633,6 +666,34 @@ class CarmaBoxService:
         # Phase 1.6: MANUAL OVERRIDE — read HA helpers, set on state machine
         await self._apply_manual_override()
 
+        # Phase 1.7: H6 fix — floor+PV charge_pv trigger.
+        # If any battery is at/near its SoC floor AND PV surplus is available,
+        # force charge_pv immediately. Prevents standby-while-exporting edge case
+        # that caused the 2026-04-26 charge-failure incident.
+        # soc_pct < 0 (stale) is explicitly excluded by _floor_pv_charge_needed().
+        if self._engine is not None:
+            pv_surplus_w = -snapshot.grid.grid_power_w
+            for bat in snapshot.batteries:
+                bat_cfg_match = next(
+                    (b for b in self._config.batteries if b.id == bat.battery_id), None
+                )
+                if bat_cfg_match is None:
+                    continue
+                if _floor_pv_charge_needed(
+                    soc_pct=bat.soc_pct,
+                    min_soc_pct=bat_cfg_match.min_soc_pct,
+                    pv_surplus_w=pv_surplus_w,
+                ):
+                    logger.info(
+                        "H6 floor+PV trigger: %s soc=%.0f%% floor=%.0f%% pv=%.0fW → charge_pv",
+                        bat.battery_id, bat.soc_pct, bat_cfg_match.min_soc_pct, pv_surplus_w,
+                    )
+                    self._engine._mode_manager.request_change(
+                        battery_id=bat.battery_id,
+                        target_mode="charge_pv",
+                        reason=f"H6: floor+PV soc={bat.soc_pct:.0f}% pv={pv_surplus_w:.0f}W",
+                    )
+
         # Phases 2-6: delegated to ControlEngine
         data_age_s = (datetime.now(tz=timezone.utc) - snapshot.timestamp).total_seconds()
         cycle_result = await self._engine.run_cycle(
@@ -921,6 +982,28 @@ class CarmaBoxService:
                 ents = bat_cfg.entities
 
                 soc = _float(ents.soc)
+
+                # H6 fix: SoC freshness guard.
+                # Check last_updated from the batch response. If the SoC entity
+                # has not been updated within _MAX_SOC_AGE_S seconds, the value
+                # is stale — set soc=-1.0 so downstream sees sensors_ready=False.
+                soc_last_updated = bat_batch.get(ents.soc, {}).get("last_updated")
+                if soc_last_updated and soc >= 0.0:
+                    try:
+                        soc_ts = datetime.fromisoformat(
+                            soc_last_updated.replace("Z", "+00:00")
+                        )
+                        soc_age_s = (
+                            datetime.now(tz=timezone.utc) - soc_ts
+                        ).total_seconds()
+                        if soc_age_s > _MAX_SOC_AGE_S:
+                            logger.warning(
+                                "H6 STALE SOC: %s age=%.0fs > %ds — sensors_ready=False",
+                                bat_cfg.id, soc_age_s, _MAX_SOC_AGE_S,
+                            )
+                            soc = -1.0
+                    except (ValueError, AttributeError):
+                        pass
 
                 # PLAT-1539: Detect GoodWe bridge offline
                 soc_state = bat_batch.get(ents.soc, {}).get("state")
