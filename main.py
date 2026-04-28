@@ -18,6 +18,7 @@ import argparse
 import asyncio
 from collections import deque
 import logging
+import os
 import signal
 import sys
 import time
@@ -133,6 +134,34 @@ _CYCLE_P95_LOG_INTERVAL: int = 20
 # headroom path in core.ev_controller is disabled — EV charging is driven
 # by EVSurplusController + NightEV only. Permanent fix in PLAT-1790.
 _EV_HEADROOM_DISABLED_W: float = 1_000_000.0
+
+
+def _apply_addon_overrides(config: CarmaConfig) -> None:
+    """Apply HA addon environment-variable overrides to the loaded config.
+
+    When carma-box runs as a Home Assistant Supervisor addon, the entrypoint
+    script (run.sh) sets these variables so addon-managed paths (/data/) take
+    precedence over whatever the user wrote in site.yaml.
+
+    In standalone (non-addon) mode these env vars are not set, so this
+    function is a no-op and normal site.yaml values are used unchanged.
+
+    Variables honoured:
+        CARMA_OVERRIDE_LOG_FILE   — overrides config.logging.file
+        CARMA_OVERRIDE_LOG_LEVEL  — overrides config.logging.level
+        CARMA_OVERRIDE_DB_PATH    — overrides config.storage.sqlite.path
+    """
+    log_file = os.environ.get("CARMA_OVERRIDE_LOG_FILE", "")
+    if log_file:
+        config.logging.file = log_file
+
+    log_level = os.environ.get("CARMA_OVERRIDE_LOG_LEVEL", "")
+    if log_level:
+        config.logging.level = log_level.upper()
+
+    db_path = os.environ.get("CARMA_OVERRIDE_DB_PATH", "")
+    if db_path:
+        config.storage.sqlite.path = db_path
 
 
 def setup_logging(config: CarmaConfig) -> None:
@@ -1726,6 +1755,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     except Exception as exc:
         print(f"ERROR: Configuration invalid: {exc}", file=sys.stderr)
         return 1
+
+    # Apply HA addon overrides (no-op in standalone mode)
+    _apply_addon_overrides(config)
 
     # Setup logging
     setup_logging(config)

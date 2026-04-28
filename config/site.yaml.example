@@ -1,0 +1,192 @@
+# CARMA Box — Site Configuration Example
+# Copy this file to /homeassistant/carmabox/site.yaml and edit to match your site.
+#
+# When running as a Home Assistant addon:
+#   - homeassistant.url MUST be "http://supervisor/core"
+#   - Secrets (tokens, API keys) come from addon options (HA UI), NOT this file
+#   - log/db paths are managed by the addon (/data/) — do NOT set them here
+#
+# Full schema reference: https://github.com/11z4t/carma-box-v2
+
+# ---------------------------------------------------------------------------
+# Site identification (all fields required)
+# ---------------------------------------------------------------------------
+
+site:
+  id: "my-home"                    # Unique identifier (alphanumeric, hyphens OK)
+  name: "My Home"                  # Human-readable name
+  timezone: "Europe/Stockholm"     # IANA timezone string
+  latitude: 59.33                  # Decimal degrees (required for PV forecast)
+  longitude: 18.07
+  altitude_m: 20                   # Metres above sea level (optional, default 0)
+
+# ---------------------------------------------------------------------------
+# Home Assistant connection
+# When running as addon, ALWAYS use: url: "http://supervisor/core"
+# ---------------------------------------------------------------------------
+
+homeassistant:
+  url: "http://supervisor/core"    # Addon mode: use this exact URL
+  # url: "http://192.168.5.22:8123"  # Standalone mode: your HA IP
+  token_env: "CARMA_HA_TOKEN"      # Env var holding the token (set by addon)
+  verify_ssl: false
+  timeout_s: 10
+  retry_count: 3
+  retry_delay_s: 2
+
+# ---------------------------------------------------------------------------
+# Grid configuration
+# ---------------------------------------------------------------------------
+
+grid:
+  main_fuse_a: 25                  # Main fuse amperage
+  main_fuse_phases: 3              # Number of phases
+  voltage_v: 230                   # Grid voltage
+  max_import_kw: 17.25             # 25A × 3ph × 230V = 17.25 kW
+
+  ellevio:                         # Ellevio peak-shaving tariff (SE)
+    cost_per_kw_month: 81.25       # SEK/kW/month
+    top_n: 3                       # Average of top-N hourly peaks
+    tak_kw: 3.0                    # Target peak cap (kW)
+    night_start_hour: 22           # Night window start (inclusive)
+    night_end_hour: 6              # Night window end (exclusive, crosses midnight)
+    entity_weighted_avg: "sensor.ellevio_weighted_hourly_avg"
+    entity_current_peak: "sensor.ellevio_current_month_peak"
+    entity_dynamic_tak: "sensor.ellevio_dynamic_cap"
+
+# ---------------------------------------------------------------------------
+# Batteries (list — supports multiple inverters)
+# ---------------------------------------------------------------------------
+
+batteries:
+  - id: "bat1"                     # Unique battery ID
+    name: "GoodWe Battery"
+    type: "goodwe_et"
+    cap_kwh: 13.0                  # Total usable capacity (kWh)
+    min_soc_pct: 15.0              # Safety floor (%; GoodWe cuts output below ~15%)
+    min_soc_cold_pct: 20.0         # Winter floor when temp < cold_temp_c
+    cold_temp_c: 4.0               # Temperature threshold for cold floor (°C)
+    max_discharge_kw: 5.0
+    max_charge_kw: 5.0
+    efficiency: 0.90
+    ct_placement: "house_grid"     # "house_grid" or "local_load" — depends on CT wiring
+    goodwe_device_id: ""           # GoodWe device ID from HA integration (optional)
+
+    entities:
+      soc: "sensor.battery_state_of_charge"
+      power: "sensor.battery_power"
+      cell_temp: "sensor.battery_temperature"      # optional
+      pv_power: "sensor.pv_power"                  # optional
+      grid_power: "sensor.grid_power"              # optional
+      load_power: "sensor.load_power"              # optional
+      ems_mode: "select.goodwe_ems_mode"
+      ems_power_limit: "number.goodwe_ems_power_limit"
+      fast_charging: "switch.goodwe_fast_charging"
+      fast_charging_power: "number.goodwe_fast_charging_power"  # optional
+      export_limit: "number.goodwe_export_limit"   # optional
+      soh: "sensor.battery_state_of_health"        # optional
+
+# ---------------------------------------------------------------------------
+# EV Charger (Easee)
+# ---------------------------------------------------------------------------
+
+ev_charger:
+  id: "easee1"
+  name: "Easee Home"
+  type: "easee"
+  charger_id: "EH000000"           # Easee charger ID (NOT device_id)
+  max_amps: 10                     # Maximum charging current (A)
+  min_amps: 6                      # Minimum current (6A = Easee minimum)
+  phases: 3
+  voltage_v: 230
+
+  entities:
+    status: "sensor.easee_status"
+    power: "sensor.easee_power"
+    current: "sensor.easee_current"
+    enabled: "switch.easee_is_enabled"
+    dynamic_charger_limit: "number.easee_dynamic_charger_limit"   # optional
+    smart_charging: "switch.easee_smart_charging"                  # optional
+    cable_locked: "binary_sensor.easee_cable_locked"               # optional
+
+# ---------------------------------------------------------------------------
+# Electric Vehicle
+# ---------------------------------------------------------------------------
+
+ev:
+  id: "car1"
+  name: "My EV"
+  battery_kwh: 75.0                # EV battery capacity (kWh)
+  daily_target_soc_pct: 80.0       # Target SoC for morning departure
+  entities:
+    soc: "sensor.car_battery_level"
+
+# ---------------------------------------------------------------------------
+# Pricing
+# ---------------------------------------------------------------------------
+
+pricing:
+  source: "nordpool"
+  entity: "sensor.nordpool_kwh_se3_sek_3"    # Nordpool HA integration entity
+  cheap_ore: 30                    # Threshold below which price is "cheap" (öre/kWh)
+  expensive_ore: 80                # Threshold above which price is "expensive"
+
+# ---------------------------------------------------------------------------
+# PV Forecast (Solcast)
+# ---------------------------------------------------------------------------
+
+pv_forecast:
+  source: "solcast"
+  entity_today: "sensor.solcast_pv_forecast_today"
+  entity_tomorrow: "sensor.solcast_pv_forecast_tomorrow"
+  api_calls_per_day: 10
+
+# ---------------------------------------------------------------------------
+# Night planning
+# ---------------------------------------------------------------------------
+
+night_plan:
+  window_start_hour: 22
+  window_end_hour: 6
+  house_baseload_kw: 0.5           # Estimated overnight base load (kW)
+  grid_charge_price_threshold_ore: 60   # Only grid-charge if price < this
+
+# ---------------------------------------------------------------------------
+# Control loop
+# ---------------------------------------------------------------------------
+
+control:
+  cycle_interval_s: 30             # Main cycle: every 30 seconds
+  plan_interval_s: 300             # Re-plan: every 5 minutes
+
+  battery_gate:
+    charge_stop_soc_pct: 95.0      # Stop charging at 95% SoC
+
+# ---------------------------------------------------------------------------
+# Storage
+# NOTE: When running as addon, paths are overridden to /data/ automatically.
+# You do NOT need to set these here in addon mode.
+# ---------------------------------------------------------------------------
+
+storage:
+  sqlite:
+    path: "/data/carma.db"         # Addon: managed automatically
+    retention_days: 30
+
+# ---------------------------------------------------------------------------
+# Logging
+# NOTE: When running as addon, log path and level are managed by addon options.
+# You do NOT need to set these here in addon mode.
+# ---------------------------------------------------------------------------
+
+logging:
+  level: "INFO"
+  file: "/data/logs/carma.log"     # Addon: managed automatically
+
+# ---------------------------------------------------------------------------
+# Health check endpoint
+# ---------------------------------------------------------------------------
+
+health:
+  port: 8412
+  path: "/health"

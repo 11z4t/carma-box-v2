@@ -1,0 +1,111 @@
+# CARMA Box — Home Assistant Supervisor Addon
+# PLAT-1813: HA-addon packaging
+# Version includes PLAT-1828 H6 stale-SoC guard fix (commit 6af8e6c)
+#
+# Configuration philosophy:
+#   - Secrets (tokens, API keys) come from addon options → environment variables
+#   - Full site configuration lives at /homeassistant/carmabox/site.yaml
+#     (editable via HA File Editor or SSH addon)
+#   - /data/ is the persistent volume for state.db and logs
+#
+# Reference: https://developers.home-assistant.io/docs/add-ons/configuration
+
+name: "CARMA Box"
+description: >-
+  Energy optimization daemon for GoodWe battery inverters, Easee EV chargers and
+  dispatchable loads. Includes PLAT-1828 H6 stale-SoC guard (never acts on stale
+  battery data). Requires a site.yaml at /homeassistant/carmabox/site.yaml.
+version: "2.1.0"
+slug: "carmabox"
+url: "https://github.com/11z4t/carma-box-v2"
+codenotary: ""
+
+# Supported architectures
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+
+# Startup order — carma-box must start after HA core is fully up
+startup: application
+boot: auto
+
+# Persistent data directory — state.db and logs survive addon restarts/updates
+map:
+  - homeassistant:rw   # /homeassistant/ → site.yaml lives here
+  - data:rw            # /data/ → state.db + logs (persistent)
+
+# Health check port — carma-box exposes /health on this port
+ports:
+  8412/tcp: 8412
+
+ports_description:
+  8412/tcp: "CARMA Box health check endpoint (/health)"
+
+# ---------------------------------------------------------------------------
+# Options — secrets and feature flags only.
+# Full site config is in /homeassistant/carmabox/site.yaml.
+# ---------------------------------------------------------------------------
+
+options:
+  # HA long-lived access token.
+  # When running as addon, the Supervisor token is used automatically
+  # (SUPERVISOR_TOKEN env var). Set this ONLY if you need a custom token
+  # (e.g., pointing carma-box at a different HA instance).
+  ha_token: ""
+
+  # Solcast API key (PV forecast). Leave empty to disable Solcast forecasting.
+  solcast_api_key: ""
+
+  # Nordpool API key. Leave empty to use the HA Nordpool integration entity.
+  nordpool_api_key: ""
+
+  # Slack webhook URL for notifications. Leave empty to disable.
+  slack_webhook_url: ""
+
+  # PostgreSQL hub sync (optional). Leave host empty to disable hub sync.
+  pg_host: ""
+  pg_port: 5432
+  pg_database: "energy"
+  pg_user: ""
+  pg_password: ""
+
+  # Log level: DEBUG | INFO | WARNING | ERROR
+  log_level: "INFO"
+
+schema:
+  ha_token: str?
+  solcast_api_key: str?
+  nordpool_api_key: str?
+  slack_webhook_url: str?
+  pg_host: str?
+  pg_port: "int(1,65535)"
+  pg_database: str?
+  pg_user: str?
+  pg_password: str?
+  log_level: "list(DEBUG|INFO|WARNING|ERROR)"
+
+# ---------------------------------------------------------------------------
+# Environment — passed to the addon container as env vars.
+# run.sh reads these and forwards them to carma-box as CARMA_* vars.
+# ---------------------------------------------------------------------------
+
+environment:
+  LOG_LEVEL: "{{log_level}}"
+
+# Addon panel in HA sidebar (optional, shows health endpoint)
+panel_icon: "mdi:lightning-bolt-circle"
+panel_title: "CARMA Box"
+
+# Resources — carma-box is I/O-bound (async), not CPU-heavy
+# Typical: 50-150 MB RAM, <5% CPU on RPi5 or x86 host
+#
+# image: "ghcr.io/11z4t/carma-box-v2/{arch}"
+# When `image` is commented out, HA Supervisor builds the Docker image locally
+# from the Dockerfile in this addon directory. This is the local-install path.
+# Uncomment `image` when publishing to GHCR for production distribution.
+
+# Addon runs without any special host privileges
+privileged: []
+host_network: false

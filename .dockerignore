@@ -1,0 +1,31 @@
+# CARMA Box — Docker build exclusions
+# PLAT-1813: HA-addon packaging
+
+# Python bytecode (never copy cache into image)
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+
+# Test infrastructure (not needed at runtime)
+tests/
+htmlcov/
+.coverage
+coverage.json
+
+# Development + CI files
+.git/
+.github/
+*.md
+Makefile
+pyproject.toml
+scripts/
+docs/
+
+# Build artifacts
+addon/
+
+# Secrets and local config overrides
+config/site.yaml
+.env
+*.env

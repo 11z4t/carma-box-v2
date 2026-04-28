@@ -1,0 +1,12 @@
+---
+# CARMA Box — HA Supervisor Addon Repository descriptor
+# PLAT-1813: HA-addon packaging
+#
+# Add this repository to HA via:
+#   Settings → Add-ons → ⋮ → Repositories → https://github.com/11z4t/carma-box-v2
+#
+# HA Supervisor reads this file to list available addons in the store.
+
+name: "CARMA Box"
+url: "https://github.com/11z4t/carma-box-v2"
+maintainer: "4Reconciliation AB <dev@4recon.se>"
